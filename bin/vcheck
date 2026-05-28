@@ -3617,7 +3617,7 @@ main() { # utility_function
       o) output_file=$OPTARG     ; output_file_set=true ; output_mode=json ; output_mode_set=true ;;
       j) output_file=/dev/stdout ; output_file_set=true ; output_mode=json ; output_mode_set=true ;;
       t) output_file=/dev/stdout ; output_file_set=true ; output_mode=text ; output_mode_set=true ;;
-      m) output_mode=mqtt ; output_mode_set=true ; unset output_file ; output_file_set=true ;;
+      m) output_file=/dev/stdout ; output_file_set=true ; output_mode=mqtt ; output_mode_set=true ;;
       i) include_invalid=true ; include_invalid_set=true ;;
       T) printonly=true ;;
 
@@ -3718,6 +3718,7 @@ main() { # utility_function
           echo "  password: mypassword"
           echo "  host_name: hostname"
           echo "  ink_topic: topicname"
+          echo "  prepend_name: true/false      # defaults to false"
           echo
           echo "  [github|codeberg|forgejo|gitea|gitlab]"
           echo "  token: github_pat_TOKEN"
@@ -3776,7 +3777,7 @@ main() { # utility_function
   (( $# == 0 )) && usage
 
   # Validate output_mode
-  case "$output_mode" in json|mqtt);; *)output_mode=text;; esac
+  case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
   # Read configuration settings
   if [[ -z "$exec_user" && -s "$rcfile" ]]; then
@@ -3822,13 +3823,20 @@ main() { # utility_function
       done
     fi
 
-    mapfile -t mqtt_server < <(get_config_value "$rcfile" mqtt server)
-    mapfile -t mqtt_username < <(get_config_value "$rcfile" mqtt username)
-    mapfile -t mqtt_password < <(get_config_value "$rcfile" mqtt password)
+    local rcmqtt_server=() rcmqtt_username=() rcmqtt_password=()
+    mapfile -t rcmqtt_server < <(get_config_value "$rcfile" mqtt server)
+    (( ${#rcmqtt_server[@]} -gt 0 )) && mqtt_server=${rcmqtt_server[-1]}
+    mapfile -t rcmqtt_username < <(get_config_value "$rcfile" mqtt username)
+    (( ${#rcmqtt_username[@]} -gt 0 )) && mqtt_username=${rcmqtt_username[-1]}
+    mapfile -t rcmqtt_password < <(get_config_value "$rcfile" mqtt password)
+    (( ${#rcmqtt_password[@]} -gt 0 )) && mqtt_password=${rcmqtt_password[-1]}
+
     ! $host_name_set && mapfile -t rchost_name < <(get_config_value "$rcfile" mqtt host_name)
-    [[ -n "${rchost_name[*]}" && ${rchost_name[-1]} =~ ^[0-9]+$ ]] && host_name=$rchost_name
+    [[ ${#rchost_name[@]} -gt 0 && ${rchost_name[-1]} =~ ^[0-9]+$ ]] && host_name=$rchost_name
     ! $ink_topic_set && mapfile -t rcink_topic < <(get_config_value "$rcfile" mqtt ink_topic)
-    [[ -n "${rcink_topic[*]}" && ${rcink_topic[-1]} =~ ^[0-9]+$ ]] && ink_topic=$rcink_topic
+    [[ ${#rcink_topic[@]} -gt 0 && ${rcink_topic[-1]} =~ ^[0-9]+$ ]] && ink_topic=$rcink_topic
+    ! $prepend_name_set && mapfile -t rcprepend_name < <(get_config_value "$rcfile" mqtt prepend_name)
+    [[ ${#rcprepend_name[@]} -gt 0 && ${rcprepend_name[-1]} =~ ^[0-9]+$ ]] && prepend_name=$rcprepend_name
 
   fi # if [[ -s "$rcfile" ]]; then
 
@@ -3858,17 +3866,16 @@ main() { # utility_function
     log -d "[GLOBAL SETTINGS] docker_seconds=$docker_seconds"
     log -d "[GLOBAL SETTINGS] retry_delay=$retry_delay"
     log -d "[GLOBAL SETTINGS] printer=$PRINTER"
-    log -d "[GLOBAL SETTINGS] ink_topic=$ink_topic"
     log -d "[GLOBAL SETTINGS] include_invalid=$include_invalid"
     log -d "[GLOBAL SETTINGS] force_all=$force_all"
     (( ${#force_list[@]} > 0 ))     && log -d "[GLOBAL SETTINGS] force_list=${force_list[*]}"
     [[ -n "$sudo_user" ]]           && log -d "[GLOBAL SETTINGS] sudo_user=$sudo_user"
     (( ${#sudo_regexes[@]} > 0 ))   && printf "[DEBUG] [GLOBAL SETTINGS]" && set | grep ^sudo_regexes= >&2
-    [[ -z "${mqtt_server[*]}" ]]    && log -d "[GLOBAL SETTINGS] mqtt_server=${mqtt_server[-1]}"
-    [[ -z "${mqtt_username[*]}" ]]  && log -d "[GLOBAL SETTINGS] mqtt_username=${mqtt_username[-1]}"
-    [[ -z "${mqtt_password[*]}" ]]  && log -d -d -d "[GLOBAL SETTINGS] mqtt_password='${mqtt_password[-1]}'"
-    [[ -z "${prepend_name[*]}" ]]   && log -d "[GLOBAL SETTINGS] prepend_name=${prepend_name[-1]}"
-    [[ -z "${prepend_set[*]}" ]]    && log -d "[GLOBAL SETTINGS] prepend_set=${prepend_set[1]}"
+    [[ -n "$mqtt_server" ]]         && log -d "[GLOBAL SETTINGS] mqtt_server=$mqtt_server"
+    [[ -n "$mqtt_username" ]]       && log -d "[GLOBAL SETTINGS] mqtt_username=$mqtt_username"
+    [[ -n "$mqtt_password" ]]       && log -d -d -d "[GLOBAL SETTINGS] mqtt_password='$mqtt_password'"
+    [[ -n "$mqtt_server" && -n "$prepend_name" ]] && log -d "[GLOBAL SETTINGS] prepend_name=$prepend_name"
+    [[ -n "$mqtt_server" && -n "$ink_topic" ]]    && log -d "[GLOBAL SETTINGS] ink_topic=$ink_topic"
     echo
     (( debug > 3 )) && exit
   fi
@@ -3933,7 +3940,8 @@ main() { # utility_function
     if [[ -s "$rcfile" ]]; then
       # output_mode
       ! $output_mode_set && mapfile -t rcoutput_mode < <(get_config_value "$rcfile" "$PROGNAME":"$list" output_mode)
-      (( ${#rcoutput_mode[@]} > 0 )) && output_mode=${rcoutput_mode[-1]}
+      (( ${#rcoutput_mode[@]} > 0 )) && output_mode=${rcoutput_mode[-1]} && \
+        case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
       # output_file
       ! $output_file_set && mapfile -t rcoutput_file < <(get_config_value "$rcfile" "$PROGNAME":"$list" output_file)
@@ -4021,7 +4029,8 @@ main() { # utility_function
       if [[ -s "$rcfile" ]]; then
         # output_mode
         ! $output_mode_set && mapfile -t rcoutput_mode < <(get_config_value "$rcfile" "$PROGNAME":"$list" output_mode)
-        (( ${#rcoutput_mode[@]} > 0 )) && output_mode=${rcoutput_mode[-1]}
+        (( ${#rcoutput_mode[@]} > 0 )) && output_mode=${rcoutput_mode[-1]} && \
+          case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
         # output_file
         ! $output_file_set && mapfile -t rcoutput_file < <(get_config_value "$rcfile" "$PROGNAME":"$sw" output_file)
@@ -4187,7 +4196,7 @@ main() { # utility_function
       log -d "$list:$sw printing $output_mode to $output_file"
 
       # Output text immediately and go to next software
-      if (( quiet == 0 )) && [[ "$output_mode" = "text" || "$output_file" != "/dev/stdout" ]]; then
+      if (( quiet == 0 )) && [[ "$output_mode" == "text" || "$output_file" != "/dev/stdout" ]]; then
         if [[ "$sw" == "printer_ink_check" ]]; then
           jq -rn --arg n "$sw" --argjson j "$version" \
             '$j | "\($n): \(.printer) - cyan=\(.cyan) magenta=\(.magenta) yellow=\(.yellow) black=\(.black) photoblack=\(.photoblack)"'
@@ -4195,7 +4204,44 @@ main() { # utility_function
           echo "$sw: $version"
         fi
       fi
-      [[ "$output_mode" = "text" ]] && continue
+      [[ "$output_mode" == "text" ]] && continue
+      if [[ "$output_mode" == "mqtt" ]]; then
+        local mqtt_output
+        check_prog mosquitto_pub || continue
+        log -d -d "Publishing MQTT version info for ${list:+$list:}$sw"
+        printf -v mqtt_output '{ "$version": "%s" }' "$version"
+        [[ "$sw" == "printer_ink_check" ]] && mqtt_output=$version
+
+        # TODO Need to see if this is needed (or how best to do this)
+        if ! $prepend_set && [[ "$sw" == *"_latest" || " ${remote_list[*]} " == *" $sw "* ]]; then
+          prepend_name=false
+        fi
+
+        # TODO Need to see if this is needed (or how best to do this)
+        if ! $prepend_set && [[ " ${app_list[*]} " == *" $sw "* ]]; then
+          prepend_name=true
+        fi
+
+        # Set up MQTT topic
+        if $prepend_name; then
+          topic="software_versions/${host_name}_$sw"
+        else
+          topic="software_versions/$sw"
+        fi
+        [[ "$sw" == "printer_ink_check" ]] && topic="$ink_topic/$printer"
+
+        log -d -d "$sw = $mqtt_output"
+        if $mqtt_test; then
+          printf '%s: %s\n' "$topic" "$version"
+        else
+          log -v "$sw: $version"
+          mosquitto_pub -r -h "${mqtt_server:?}" -u "${mqtt_username:?}" -P "${mqtt_password:?}" \
+            -i "$PROGNAME" -t "${topic:?}" -m "${mqtt_output:?}"
+        fi
+        log -v "Version published to MQTT"
+        ! $mqtt_test && log -v "Updated $topic: $version"
+        continue
+      fi
 
       # Printing to screen
       if [[ "$output_file" == "/dev/stdout" ]]; then
