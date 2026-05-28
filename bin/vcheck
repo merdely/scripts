@@ -466,7 +466,12 @@ usage_fold() { # utility_function
 alpine_docker_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  [[ -z "$COMPOSE_FILE" || ! -r "$COMPOSE_FILE" ]] && { log -e "Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
+  if [[ -z "$COMPOSE_FILE" ]]; then
+    log -e "${FUNCNAME[1]}: COMPOSE_FILE not set"
+    [[ -n "$SUDO_USER" ]] && log -e "Check sudoers: add COMPOSE_FILE to env_keep for $LOGNAME"
+    return 1
+  fi
+  [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
   local package=$1 containername out
   log -d "Checking alpine_docker_package for $package"
   containername=$(get_container_name "${FUNCNAME[1]}") || return 1
@@ -594,7 +599,12 @@ curl_api() { # helper_function
 docker_compose_exec() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  [[ -z "$COMPOSE_FILE" || ! -r "$COMPOSE_FILE" ]] && { log -e "Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
+  if [[ -z "$COMPOSE_FILE" ]]; then
+    log -e "${FUNCNAME[1]}: COMPOSE_FILE not set"
+    [[ -n "$SUDO_USER" ]] && log -e "Check sudoers: add COMPOSE_FILE to env_keep for $LOGNAME"
+    return 1
+  fi
+  [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
   local copy_mode=false i=0 containername
   [[ "$1" == "--copy" ]] && copy_mode=true && shift
   (( $# < 1 )) && return 1
@@ -605,21 +615,18 @@ docker_compose_exec() { # helper_function
   log -d -d "containername = $containername"
 
   if ! $copy_mode; then
-    log "MWE: $SUDO_USER: Executing: docker compose -f $COMPOSE_FILE exec -u nobody $containername $*"
     log -d -d "Executing: docker compose -f $COMPOSE_FILE exec -u nobody $containername $*"
-    docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" "$@"
+    docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" "$@" >&2
     return $?
   else
     (( $# != 2 )) && echo "usage: ${FUNCNAME[1]} CONTAINER:SRC_PATH DEST_PATH" >&2 && return 1
-    log "MWE: $SUDO_USER: Executing: docker compose -f $COMPOSE_FILE cp $containername:$1 $2"
     log -d -d "Executing: docker compose -f $COMPOSE_FILE cp $containername:$1 $2"
-    docker compose -f "$COMPOSE_FILE" cp "$containername":"$1" "$2"
+    docker compose -f "$COMPOSE_FILE" cp "$containername":"$1" "$2" >&2
   fi
 }
 
 docker_compose_cp() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  log "MWE: $SUDO_USER: Running docker_compose_exec --copy $*"
   docker_compose_exec --copy "$@"
 }
 
@@ -693,7 +700,12 @@ docker_inspect() { # helper_function
 docker_logs() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  [[ -z "$COMPOSE_FILE" || ! -r "$COMPOSE_FILE" ]] && { log -e "Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
+  if [[ -z "$COMPOSE_FILE" ]]; then
+    log -e "${FUNCNAME[1]}: COMPOSE_FILE not set"
+    [[ -n "$SUDO_USER" ]] && log -e "Check sudoers: add COMPOSE_FILE to env_keep for $LOGNAME"
+    return 1
+  fi
+  [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
   (( $# < 1 )) && { log -e "You must supply docker name" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: docker_logs dockername" ; return 0 ; }
 
@@ -787,7 +799,7 @@ docker_tags() { # helper_function
   esac
 
   local cmdout authfile hash skopeoargs=()
-  if ${useskopeo:-false} && command -v skopeo &> /dev/null ; then
+  if ${useskopeo:-false} && command -v skopeo ; then
     if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
       authfile=$(maketemp)
       hash=$(printf "${username[-1]}:${token[-1]}" | base64 | tr -d '\n')
@@ -1187,7 +1199,7 @@ printer_ink_check() { # remote_host
       }' 2> /dev/null || log -e "Could not generate ink command error json")
 
   log -d -d "Running: ping -c 5 $PRINTER"
-  if ! ping -c 5 "$PRINTER" &> /dev/null; then
+  if ! ping -c 5 "$PRINTER"; then
     jq -n --arg n "${FUNCNAME[0]}" --arg ip "$PRINTER" \
       --arg t "$(date +%s)" --arg e "Cannot connect to $PRINTER" '{
         "name": $n,
@@ -1309,7 +1321,7 @@ booklore_docker() {
 
   local tmp out
   tmp=$(maketemp -d)
-  docker_compose_cp /app/app.jar "$tmp/" &> /dev/null
+  docker_compose_cp /app/app.jar "$tmp/"
   out=$(unzip -p "$tmp"/app.jar BOOT-INF/classes/application.yaml)
   log -d -d "Unzip output: $out"
   [[ -n "$out" ]] && yq -r '.app.version' <<< "$out"
@@ -1467,8 +1479,7 @@ dockhand_docker() {
   check_prog jq || return 1
   local tmp
   tmp=$(maketemp -d)
-  log "MWE: $SUDO_USER: Running dockhand_docker"
-  docker_compose_cp /app/build/server/chunks "$tmp" &> /dev/null
+  docker_compose_cp /app/build/server/chunks "$tmp"
   if [[ -d "$tmp"/chunks ]]; then
     # shellcheck disable=SC2016
     grep '^const [a-z][a-z0-9A-Z_]*=JSON.parse(`' "$tmp"/chunks/_server*.js | \
@@ -1528,7 +1539,7 @@ etherpad_latest() { # no_auto
 
 IMAGE_SEARCH+=("fcgiwrap_docker|fcgiwrap")
 fcgiwrap_docker() {
-  if docker_compose_exec test -f /etc/alpine-release &> /dev/null; then
+  if docker_compose_exec test -f /etc/alpine-release; then
     alpine_docker_package
   else
     docker_compose_exec fcgiwrap -h | awk '/^fcgiwrap version/{print $3;exit}'
@@ -1548,7 +1559,7 @@ IMAGE_SEARCH+=("feishin_docker|jeffvli/feishin")
 feishin_docker() {
   local tmp
   tmp=$(maketemp -d)
-  docker_compose_cp /usr/share/nginx/html/assets "$tmp" &> /dev/null
+  docker_compose_cp /usr/share/nginx/html/assets "$tmp"
     grep -ohP '(?<=")[0-9.]+(?="[^}]*\{version:)' "$tmp"/assets/index-*.js
 }
 
@@ -2481,7 +2492,7 @@ pagefind_latest() {
 
 IMAGE_SEARCH+=("php_fpm_docker|php.*fpm")
 php_fpm_docker() {
-  if docker_compose_exec test -f /etc/alpine-release &> /dev/null; then
+  if docker_compose_exec test -f /etc/alpine-release; then
     alpine_docker_package "php[0-9]+-fpm"
   else
     docker_compose_exec php-fpm -v | awk '/^PHP [0-9]/ {print "php-" $2;exit}'
