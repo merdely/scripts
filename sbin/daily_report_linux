@@ -121,11 +121,11 @@ fi
 
 if [ -z "$1" -o "$1" = "scripts" ]; then
   if [ -d /srv/scripts/.git ]; then
-    [ -x /usr/local/bin/rw ] && /usr/local/bin/rw
     ! $quiet && echo "Updating /srv/scripts from git:"
-    env HOME=/root git -C /srv/scripts pull -q
-    env HOME=/root git -C /srv/scripts diff --name-only ORIG_HEAD HEAD | sed 's#^# - #'
-    [ -x /usr/local/bin/ro ] && sleep 1 && sync && sleep 1 && /usr/local/bin/ro
+    git -C /srv/scripts -q pull
+  elif [ -d /opt/scripts/.git ]; then
+    ! $quiet && echo "Updating /opt/scripts from git:"
+    git -C /opt/scripts -q pull
   fi
 fi
 
