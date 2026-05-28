@@ -504,10 +504,11 @@ alpine_repo_package() { # helper_function
   url="https://pkgs.alpinelinux.org/packages?name=$pkg&branch=$ALPINE_VER&arch=x86_64"
   log -d "DEBUG (${FUNCNAME[0]}): URL = $url"
 
-  out=$(curl -sL "$url" | \
-    xmllint --html --xpath '//strong[@aria-label="Package version"]/text()' - 2>/dev/null)
-  log -d -d "$out"
-  [[ -n "$out" ]] && sort -V <<< "$out" \
+  out=$(maketemp)
+  curl -sLo "$out" "$url" | \
+    xmllint --html --xpath '//strong[@aria-label="Package version"]/text()' - 2>/dev/null
+  log -d -d "Curl output: $(cat "$out")"
+  [[ -s "$out" ]] && sort -V < "$out" \
     | tail -n1
 }
 
@@ -516,9 +517,10 @@ aur_package() { # helper_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local pkg=$1 out
 
-  out=$(curl -sL "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD")
-  log -d -d -d "Curl output: $out"
-  [[ -n "$out" ]] && awk -F= '
+  out=$(maketemp)
+  curl -sLo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
+  log -d -d -d "Curl output: $(cat "$out")"
+  [[ -s "$out" ]] && awk -F= '
       /^_major=/ { m = $2 }
       /^_subver=/ { s = $2 }
       /^pkgver=/ { pv = $2 }
@@ -530,7 +532,7 @@ aur_package() { # helper_function
         o=sprintf("%s-%s\n",pv,pr)
       gsub(/"/,"",o)
       print o
-    }' <<< "$out"
+    }' "$out"
 }
 
 codeberg_project() { # helper_function
@@ -554,10 +556,11 @@ codeberg_project() { # helper_function
   local authstring=()
   mapfile -t authstring < <(gen_authstring "$section")
 
-  out=$(curl "${authstring[@]}" --no-progress-meter "$uri")
-  log -d -d -d "Curl output: $out"
-  if [[ -n "$out" ]]; then
-    awk -F'["/]' '{print $7;exit}' <<< "$out"
+  out=$(maketemp)
+  curl "${authstring[@]}" --no-progress-meter -Lo "$out" "$uri"
+  log -d -d -d "Curl output: $(cat "$out")"
+  if [[ -s "$out" ]]; then
+    awk -F'["/]' '{print $7;exit}' "$out"
     return 0
   fi
   log -e "Invalid curl output"
@@ -578,23 +581,24 @@ curl_api() { # helper_function
   mapfile -t password < <(get_config_value "$rcfile" "${FUNCNAME[1]}" password)
   mapfile -t apikey   < <(get_config_value "$rcfile" "${FUNCNAME[1]}" apikey)
 
+  out=$(maketemp)
   (( ${#url[@]} == 0 ))      && { log -e "Could not read ${FUNCNAME[1]} URL from $rcfile" ; return 1 ; }
   if (( ${#apikey[@]} > 0 )); then
-    curl -s -L -X GET -H \
+    curl -sLo "$out" -X GET -H \
       "Authorization: Bearer ${apikey[-1]}" \
       "${url[-1]}"
   elif (( ${#username[@]} > 0 || ${#password[@]} > 0 )); then
     (( ${#username[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[1]} Username from $rcfile" ; return 1 ; }
     (( ${#password[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[1]} Password from $rcfile" ; return 1 ; }
 
-    out=$(curl -s -L -X GET -H \
+    curl -sLo "$out" -X GET -H \
       "Authorization: Basic $(printf '%s:%s' "${username[-1]}" "${password[-1]}"|base64|tr -d '\n')" \
-      "${url[-1]}")
+      "${url[-1]}"
   else
-    out=$(curl -s -L -X GET "${url[-1]}")
+    curl -sLo "$out" -X GET "${url[-1]}"
   fi
   log -d -d "Curl output: $out"
-  echo "$out"
+  cat "$out"
 }
 
 docker_compose_exec() { # helper_function
@@ -829,11 +833,12 @@ docker_tags() { # helper_function
       docker.io)
         if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
           log -d -d "Connecting to hub.docker.com to get token"
-          out=$(curl -sf --max-time 15 -X POST -H "Content-Type: application/json" \
+          out=$(maketemp)
+          curl -sfo "$out" --max-time 15 -X POST -H "Content-Type: application/json" \
             -d "{\"username\": \"${username[-1]}\", \"password\": \"${token[-1]}\"}" \
-            "https://hub.docker.com/v2/users/login")
-          if [[ -n "$out" ]]; then
-            out=$(jq -rn --argjson j "$out" '$j.token // ""' 2>/dev/null)
+            "https://hub.docker.com/v2/users/login"
+          if [[ -s "$out" ]]; then
+            out=$(jq -r '.token // ""' "$out" 2>/dev/null)
             [[ -n "$out" ]] && authstring=("-H" "Authorization: JWT $out") && \
               log -d -d "Using downloaded token"
           fi
@@ -847,10 +852,11 @@ docker_tags() { # helper_function
       ghcr.io)
         if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
           log -d -d "Connecting to ghcr.io to get token"
-          out=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:${org:+$org/}$repo:pull" \
-             -u "${username[-1]}:${token[-1]}")
-          if [[ -n "$out" ]]; then
-            out=$(jq -rn --argjson j "$out" '$j.token // ""' 2>/dev/null)
+          out=$(maketemp)
+          curl -sLo "$out" "https://ghcr.io/token?service=ghcr.io&scope=repository:${org:+$org/}$repo:pull" \
+             -u "${username[-1]}:${token[-1]}"
+          if [[ -s "$out" ]]; then
+            out=$(jq -r '$j.token // ""' "$out" 2>/dev/null)
             [[ -n "$out" ]] && authstring=("-H" "Authorization: Bearer $out") && \
               log -d -d "Using downloaded token"
           fi
@@ -953,9 +959,10 @@ flatpak_appstream() { # helper_function
   [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} application_id" ; return 0 ; }
 
   local out
-  out=$(curl -s "https://flathub.org/api/v2/appstream/$1")
-  log -d -d -d "Curl output: $out"
-  [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j.releases[0].version' 2> /dev/null
+  out=$(maketemp)
+  curl -sLo "$out" "https://flathub.org/api/v2/appstream/$1"
+  log -d -d -d "Curl output: $(cat "$out")"
+  [[ -s "$out" ]] && jq -r '.releases[0].version' "$out" 2> /dev/null
 }
 
 flatpak_version() { # helper_function
@@ -1025,11 +1032,12 @@ github_project() { # helper_function
   mapfile -t authstring < <(gen_authstring github)
 
   err=$(maketemp)
+  out=$(maketemp)
   echo "Looking up latest release for $1 using github api" >> "$err"
-  out=$(curl "${authstring[@]}" --no-progress-meter \
-    "https://api.github.com/repos/$1/releases/latest" 2>> "$err")
-  log -d -d -d "curl output: $out"
-  out=$(jq -rn --argjson j "$out" '$j.tag_name' 2> /dev/null)
+  curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
+    "https://api.github.com/repos/$1/releases/latest" 2>> "$err"
+  log -d -d -d "curl output: $(cat "$out")"
+  out=$(jq -r '.tag_name' "$out" 2> /dev/null)
   errmsg=$(cat "$err")
   [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
   echo "$out"
@@ -1072,10 +1080,11 @@ github_tags() { # helper_function
   while ! $done && (( page < maxpages )); do
     page=$(( page + 1 ))
     echo "Looking up tags for $project_name using github_api" >> "$err"
-    out=$(curl "${authstring[@]}" --no-progress-meter \
-      "https://api.github.com/repos/$project_name/tags?per_page=100&page=$page" 2> "$err")
-    [[ -z "$out" || "$(echo "$out" | jq 'length' 2> /dev/null)" -eq 0 ]] && done=true && break
-    out=$(jq -rn --argjson j "$out" '$j.[].name' 2> /dev/null)
+    out=$(maketemp)
+    curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
+      "https://api.github.com/repos/$project_name/tags?per_page=100&page=$page" 2> "$err"
+    [[ ! -s "$out" || "$(jq 'length' 2> /dev/null "$out")" -eq 0 ]] && done=true && break
+    out=$(jq -r '.[].name' "$out" 2> /dev/null)
     log -d -d -d "Jq output: $out"
     [[ -n "$search_grep" ]] && out=$(grep -E -- "(${search_grep#|})" <<< "$out")
     log -d -d -d "search grep output: $out"
@@ -1640,7 +1649,7 @@ flip_2_dnd_pro() {
 }
 
 flip_2_dnd_latest() {
-  github_project robinsrk/flip-2-dnd
+  github_project robinsrk/flip_2_dnd
 }
 
 IMAGE_SEARCH+=("forgejo_docker|forgejo/forgejo")
