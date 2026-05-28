@@ -3825,11 +3825,11 @@ main() { # utility_function
 
     local rcmqtt_server=() rcmqtt_username=() rcmqtt_password=()
     mapfile -t rcmqtt_server < <(get_config_value "$rcfile" mqtt server)
-    (( ${#rcmqtt_server[@]} -gt 0 )) && mqtt_server=${rcmqtt_server[-1]}
+    (( ${#rcmqtt_server[@]} > 0 )) && mqtt_server=${rcmqtt_server[-1]}
     mapfile -t rcmqtt_username < <(get_config_value "$rcfile" mqtt username)
-    (( ${#rcmqtt_username[@]} -gt 0 )) && mqtt_username=${rcmqtt_username[-1]}
+    (( ${#rcmqtt_username[@]} > 0 )) && mqtt_username=${rcmqtt_username[-1]}
     mapfile -t rcmqtt_password < <(get_config_value "$rcfile" mqtt password)
-    (( ${#rcmqtt_password[@]} -gt 0 )) && mqtt_password=${rcmqtt_password[-1]}
+    (( ${#rcmqtt_password[@]} > 0 )) && mqtt_password=${rcmqtt_password[-1]}
 
     ! $host_name_set && mapfile -t rchost_name < <(get_config_value "$rcfile" mqtt host_name)
     [[ ${#rchost_name[@]} -gt 0 && ${rchost_name[-1]} =~ ^[0-9]+$ ]] && host_name=$rchost_name
