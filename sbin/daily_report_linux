@@ -122,10 +122,10 @@ fi
 if [ -z "$1" -o "$1" = "scripts" ]; then
   if [ -d /srv/scripts/.git ]; then
     ! $quiet && echo "Updating /srv/scripts from git:"
-    git -C /srv/scripts -q pull
+    git -C /srv/scripts pull -q
   elif [ -d /opt/scripts/.git ]; then
     ! $quiet && echo "Updating /opt/scripts from git:"
-    git -C /opt/scripts -q pull
+    git -C /opt/scripts pull -q
   fi
 fi
 
