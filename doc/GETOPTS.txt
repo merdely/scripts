@@ -1,0 +1,130 @@
+#############################
+
+
+## Simple Claude example:
+while getopts ":ab:" opt; do
+  case $opt in
+    a) a=true ;;
+    b) b=$OPTARG ;;
+    h) echo usage ; exit ;;
+    :) echo "-$OPTARG requires an argument" ; exit 1 ;;
+    \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
+  esac
+done
+shift $(( OPTIND - 1 ))
+
+
+
+# Example of built in getopts
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h] [-s] [-a ARG] [-b [ARG]]"
+  echo "  -h           : This help text"
+  echo "  -s           : Help for -s (can be used more than once)"
+  echo "  -a ARG       : Help for -a (can be used more than once)"
+  echo "  -b [ARG]     : Help for -b"
+  exit $1
+}
+
+for a in $*; do [ $a = --help -o $a = -h ] && usage; done
+sswitch=false
+sswitch_plus=false
+sswitch_plusplus=false
+bswitch=false
+aarg=()
+unset barg
+while getopts ":hsa:b:" opt; do
+  case $opt in
+    # Handle options that are both -b and -b ARG
+    :) case $OPTARG in
+         b) bswitch=true ;;
+         *) echo "ERROR: -$OPTARG requires an argument" > /dev/stderr ; exit 1 ;;
+       esac ;;
+    # Handle an option that can be passed more than once: -s -s -s
+    s) $sswitch_plus && $sswitch_plusplus=true ; $sswitch && sswitch_plus=true ; sswitch=true ;;
+    # Handle options that require an arg: -a ARG
+    a) case $OPTARG in
+         -*) echo "Error: -$opt requires an argument" > /dev/stderr && exit 1 ;;
+             # By using an array, -a can be used more than once
+          *) aarg+=("$OPTARG") ;;
+       esac ;;
+    b) case $OPTARG in
+         -*) echo "WARNING: -$opt has an unused optional argument" > /dev/stderr; unset barg ; OPTIND=$((OPTIND - 1)) ;;
+          *) bswitch=true ; barg=$OPTARG ;;
+       esac ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+## NOTE: You can overload -h with this:
+#   h)
+#      [ -z "$2" ] || [ ${2:0:1} = - ] && usage
+#      hswitch=true ;;
+
+## NOTE: When used inside a function, set "local OPTIND"
+
+##############################################################
+# Example of manually made get opts that supports long options
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [options] [operation] [value]"
+  echo
+  echo "Options:"
+  echo "  -l, --long                   option (can be used more than once)"
+  echo "  -a, --arg ARG                option with argument (can be used more than once)"
+  echo "  -h, --help                   print this help"
+  echo "  -V, --version                print version and exit"
+  exit $1
+}
+
+shopt -s extglob
+long_count=0
+aarg=()
+args=("$0")
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -l|--long)
+      # An example of how to use -l more than once
+      # Can be used in the script with:
+      ## ((long_count >= 1)) && echo level 1
+      ## ((long_count >= 2)) && echo level 2
+      ## ((long_count >= 3)) && echo level 3
+
+      (( long_count++ ))
+      shift
+      ;;
+    -a|--arg)
+      # Verify an argument was actually passed to -a
+      [[ -z "$2" || $2 == -?* ]] && { echo "Error: Missing argument"; usage 1; }
+      # By using an array, -a can be used more than once
+      aarg+=("$2")
+      shift 2
+      ;;
+    -V|--version)
+      echo ${progversion:-0.0.0}
+      exit
+      ;;
+    --) shift; args+=("$@"); break ;;
+    -h|--help|-*)
+      # Remove "|-*" from above to allow having "-*" in follow on args not processed as switches
+      usage 0
+      ;;
+    *)
+      # Add non-switch args to args[]
+      args+=("$1")
+      shift
+      ;;
+    # To have the first non-switch arg stop processing switches and take rest of args literally
+    #   remove '*)' case code above and use this instead:
+    #     *) [ "$1" = "--" ] && shift ; break ;;
+    #   Also get rid of 'args=("$0")' above and just use arguments like $1 normally
+  esac
+done
+# In the rest of the script, instead of using $1,..., use ${args[1]},...
+
+# vim:set ft=sh:

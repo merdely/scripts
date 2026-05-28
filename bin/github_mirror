@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+
+mirror_dir="/share/software/github"
+
+usage() {
+  echo "usage: ${0##*/} [-h|-d|-t] [-D DESTDIR] REPO"
+  echo "        -h         : This help text"
+  echo "        -d         : Print debugging information"
+  echo "        -t         : Print files to be downloaded; do not download"
+  echo "        -D DESTDIR : Base destionation directory; REPO will be appended (default $mirror_dir)"
+  echo "        REPO       : Repository to mirror (example: arendst/Tasmota)"
+  exit 1
+}
+
+debug=false
+dotest=false
+
+while getopts ":hdtD:" opt; do
+  case $opt in
+    d)
+      debug=true
+      ;;
+    t)
+      dotest=true
+      ;;
+    D)
+      mirror_dir=$OPTARG
+      ;;
+    S)
+      src_url=$OPTARG
+      ;;
+    h|\?) usage
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+repo=$1
+[ -z "$1" ] && usage
+echo "$1" | grep -Eq ".*/.*" || { echo "Error: Invalid REPO"; usage; }
+author=${repo%/*}
+project=${repo#*/}
+
+$debug && echo author=$author
+$debug && echo project=$project
+
+dest="$mirror_dir/$repo"
+src_url="https://api.github.com/repos/$repo/releases"
+
+$debug && echo Fetching $repo data...
+releases=$(curl -s $src_url | jq '[.[] | {tag_name: .tag_name, draft: .draft, assets: [.assets[].browser_download_url]}]')
+latest_release=$(curl -s https://api.github.com/repos/arendst/Tasmota/releases/latest | jq -r .tag_name)
+
+for release in $(echo $releases | jq -r '.[] | @base64'); do
+  draft=$(echo $release | base64 --decode | jq -r '.draft')
+  version=$(echo $release | base64 --decode | jq -r '.tag_name')
+  urls=$(echo $release | base64 --decode | jq -r '.assets | .[]')
+
+  if [[ "$draft" != "false" ]]; then
+    continue
+  fi
+
+  if [ $version = $latest_release ]; then
+    $debug && echo updating release link to $version
+    ! $dotest && ln -sfn $version $dest/release
+  fi
+
+  if $dotest; then
+    echo $version
+    echo $urls
+    echo dest=$dest/$version
+    echo =============================
+    continue
+  fi
+
+  release_dest=$dest/$version
+  if [[ -d $release_dest ]]; then
+    $debug && echo $version already downloaded
+    continue
+  fi
+  
+  mkdir -p $release_dest
+  $debug && printf "Downloading $project $version files:"
+  wget -qP $release_dest --progress=bar --no-verbose $urls
+  $debug && echo .
+done

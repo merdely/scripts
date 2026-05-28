@@ -1,0 +1,7 @@
+# Should be run from: alias nohist='. ~/bin/nohist'
+
+export HISTFILE=/dev/null
+[[ $SHELL == *bash ]] && [ `uname -s` = "Linux" ] && history -c
+[[ $SHELL == *ksh ]] && [ `uname -s` = "Linux" ] && history -c
+[[ $SHELL == *zsh ]] && unsetopt share_history && history -p
+[ X"${TMUX}" != "X" ] && tmux rename-window "nohist"

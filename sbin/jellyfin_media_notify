@@ -1,0 +1,76 @@
+#!/bin/sh
+
+progname=${0##*/}
+progname=${progname%.sh}
+jellyfinapirc=$HOME/.plexapi_rc
+
+[ "$1" = "-h" ] && echo "usage $progname [-h] [jellyfinapircfile]" && exit 1
+
+mode=wait
+[ "$1" = "-m" ] && mode=movies && shift
+[ "$1" = "-t" ] && mode=tv && shift
+[ -n "$1" ] && jellyfinapirc="$1" && shift
+
+libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
+PATH="$libpath" . _config 2> /dev/null || { echo "Error: Cannot load _config library" >&2; exit 1; }
+
+[ ! -e $jellyfinapirc ] && echo "Error: Could not find $jellyfinapirc" && exit 1
+jellyfin_debug=$(get_config_value "$jellyfinapirc" plexapi debug)
+jellyfin_token=$(get_config_value "$jellyfinapirc" plexapi token)
+jellyfin_url=$(get_config_value "$jellyfinapirc" plexapi url)
+jellyfin_movielib=$(get_config_value "$jellyfinapirc" plexapi movielib)
+jellyfin_moviedir=$(get_config_value "$jellyfinapirc" plexapi moviedir)
+jellyfin_tvlib=$(get_config_value "$jellyfinapirc" plexapi tvlib)
+jellyfin_tvdir=$(get_config_value "$jellyfinapirc" plexapi tvdir)
+jellyfin_exclude=$(get_config_value "$jellyfinapirc" plexapi exclude_regex)
+
+[ -z "$jellyfin_token" ] && echo "Error: Could not read plex token from $jellyfinapirc" && exit 1
+[ -z "$jellyfin_url" ] && echo "Error: Could not read plex url from $jellyfinapirc" && exit 1
+[ -z "$jellyfin_movielib" -a -z "$jellyfin_tvlib" ] && echo "Error: At least one of movielib or tvlib must be defined in $jellyfinapirc" && exit 1
+[ -n "$jellyfin_movielib" -a -z "$jellyfin_moviedir" ] && echo "Error: Must define moviedir if movielib defined in $jellyfinapirc" && exit 1
+[ -n "$jellyfin_tvlib" -a -z "$jellyfin_tvdir" ] && echo "Error: Must define tvdir if tvlib defined in $jellyfinapirc" && exit 1
+
+if [ $mode = tv ]; then
+  echo Refreshing TV Library
+  flock -n /tmp/.$(id -un)_jellyfin_refresh_tv_library curl -sf "$jellyfin_url/library/sections/$jellyfin_tvlib/refresh?X-Plex-Token=$jellyfin_token"
+  exit
+fi
+if [ $mode = movies ]; then
+  echo Refreshing Movie Library
+  flock -n /tmp/.$(id -un)_jellyfin_refresh_movie_library curl -sf "$jellyfin_url/library/sections/$jellyfin_movielib/refresh?X-Plex-Token=$jellyfin_token"
+  exit
+fi
+
+# Alias which to 'command -v' if which does not exist
+! which which > /dev/null 2>&1 && alias which='command -v'
+
+which inotifywait > /dev/null 2>&1
+[ $? != 0 ] && echo "Error: Could not find inotifywait (apt install inotify-tools)" && exit 1
+which flock > /dev/null 2>&1
+[ $? != 0 ] && echo "Error: Could not find flock (apt install util-linux)" && exit 1
+which curl > /dev/null 2>&1
+[ $? != 0 ] && echo "Error: Could not find curl (apt install curl)" && exit 1
+
+if [ -n "$jellyfin_debug" ]; then
+  echo jellyfin_url=$jellyfin_url
+  echo jellyfin_token=$jellyfin_token
+  echo jellyfin_movielib=$jellyfin_movielib
+  echo jellyfin_moviedir=$jellyfin_moviedir
+  echo jellyfin_tvlib=$jellyfin_tvlib
+  echo jellyfin_tvdir=$jellyfin_tvdir
+  echo jellyfin_exclude=$jellyfin_exclude
+fi
+
+[ -n "$jellyfin_exclude" ] && jellyfin_exclude="--exclude $jellyfin_exclude"
+
+# inotifywait -q -m -e moved_to -r --exclude "\/share\/media\/(TV|Movies)\/\.(xfer|delete|ignore)" /share/media/TV /share/media/Movies | \
+inotifywait -q -m -e moved_to -r $jellyfin_exclude $jellyfin_tvdir $jellyfin_moviedir | \
+while read -r directory; do
+  if echo "$directory" | grep -q "^${jellyfin_tvdir:=/nonexistent}"; then
+    echo Refreshing TV Library
+    flock -n /tmp/.$(id -un)_jellyfin_refresh_tv_library curl -sf "$jellyfin_url/library/sections/$jellyfin_tvlib/refresh?X-Plex-Token=$jellyfin_token"
+  else
+    echo Refreshing Movie Library
+    flock -n /tmp/.$(id -un)_jellyfin_refresh_movie_library curl -sf "$jellyfin_url/library/sections/$jellyfin_movielib/refresh?X-Plex-Token=$jellyfin_token"
+  fi
+done

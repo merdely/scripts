@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+
+venv = '/srv/venv'
+if os.path.isdir(venv) and "NOVENV" not in os.environ.keys():
+    for subdir in os.listdir(venv + '/lib'):
+        sys.path.append(venv + '/lib/' + subdir + '/site-packages')
+
+from datetime import datetime
+from time import mktime
+import feedparser
+
+# initialize variable
+newtime = 0
+# Read previous_time from timestamp file
+timestamp_filename = os.path.expanduser('~/.cache/arch_rss.latest')
+if not os.path.isfile(timestamp_filename):
+    previous_time = 0
+else:
+    timestamp_file = open(timestamp_filename, 'r')
+    previous_time = timestamp_file.read().strip()
+    timestamp_file.close()
+if not str(previous_time).isnumeric or not previous_time:
+    previous_time = 0
+else:
+    previous_time = int(previous_time)
+
+#previous_time = 1612357001
+
+d = feedparser.parse('https://archlinux.org/feeds/news/')
+# for item in d.entries:
+for item in range(len(d.entries)-1,-1,-1):
+    newtime = int(datetime.fromtimestamp(mktime(d.entries[item].published_parsed)).strftime("%s"))
+    if newtime > previous_time:
+        print(d.entries[item].title)  #data being dumped into a database
+        print('  - ' + d.entries[item].published)
+        print('  - ' + d.entries[item].link)
+        print()
+
+if newtime > previous_time:
+    timestamp_file = open(timestamp_filename, 'w')
+    timestamp_file.write(str(newtime))
+    timestamp_file.close()
+

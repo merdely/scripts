@@ -1,0 +1,47 @@
+#!/bin/sh
+
+if [ "$(id -u)" != 0 ]; then
+  echo "UNKONWN - mdadm must be run as root"
+  exit 3
+fi
+
+code=0
+label=OK
+
+for array in $(mdadm --detail --scan | awk '$1 == "ARRAY" { print $2 }'); do
+  unset state rebuild failed
+  eval $(mdadm --detail "$array" | awk '
+    $1 == "Failed" && $2 == "Devices" { printf "failed=\"%s\"\n", $4 }
+    $1 == "Rebuild" && $2 == "Status" { printf "rebuild=\"%s\"\n", substr($0, index($0, ":") + 2) }
+    $1 == "State" { printf "state=\"%s\"\n", substr($0, index($0, ":") + 2) }')
+
+  [ -n "$failed"  ] && failed=$(echo "$failed"   | sed 's/ +$//')
+  [ -n "$rebuild" ] && rebuild=$(echo "$rebuild" | sed 's/ +$//')
+  [ -n "$state"   ] && state=$(echo "$state"     | sed 's/ +$//')
+
+  if [ -z "$state" ]; then
+    echo "UNKONWN - mdadm command error"
+    exit 3
+  fi
+
+  if [ "$state" = "clean" ] || [ "$state" = "active" ]; then
+    msg="$msg$array OK ($state); "
+  fi
+
+  if [ "$state" != "clean" ] && [ "$state" != "active" ] && [ "$failed" = 0 ]; then
+    [ "$code" = 0 ] && code=1 && label=WARNING
+    if [ -z "$rebuild" ]; then
+      msg="$msg$array WARNING ($state); "
+    else
+      msg="$msg$array WARNING ($state, $rebuild); "
+    fi
+  fi
+
+  if [ "$state" != "clean" ] && [ "$state" != "active" ] && [ "$failed" != 0 ]; then
+    code=2 && label=CRITICAL
+    msg="$msg$array CRITICAL ($failed drives failed; $state); "
+  fi
+done
+
+echo "$label - $(echo $msg | sed 's/; $//')"
+exit "$code"

@@ -1,0 +1,4301 @@
+#!/usr/bin/env bash
+
+# Define variables for this program
+PROGNAME=vcheck
+PROGVER=1.1.0
+PROGDATA=/etc/"$PROGNAME"
+ALPINE_VER=""
+
+# Define check for this program
+eval "$PROGNAME() { echo \$PROGVER; }" # { # utility_function
+
+TMPFILES=()
+trap 'rm -Rf -- "${TMPFILES[@]}"' EXIT
+trap 'exit 1' INT TERM
+
+# Add $HOME/.local/bin to the PATH
+export PATH=$PATH:$HOME/.local/bin
+
+# Handle temp files
+TEMPDIR=$(mktemp -d)
+_cleanup() { # utility_function
+  local ret=$?
+  log -d -d -d "Cleaning up $TEMPDIR"
+  rm -Rf -- "$TEMPDIR"
+  exit "$ret"
+}
+trap '_cleanup' EXIT
+trap 'exit 1' INT TERM
+
+## FUNCTIONS
+
+# Older versions of bash don't have mapfile
+if ! command -v mapfile &> /dev/null; then
+  mapfile() { # utility_function
+    [[ "$1" == "-t" ]] && shift
+    local arr=$1 i=0 line
+    # shellcheck disable=SC2034
+    while IFS= read -r line; do
+      eval "${arr}[i]=\"\$line\""
+      i=$(( i + 1 ))
+    done
+  }
+fi
+
+# Function to log messages respecting -d, -v, -q, and -e
+log() { # utility_function
+  # Comment out printing Running here because it is too noisy
+  # (( debug == 3 )) && echo "[DEBUG] (${FUNCNAME[0]}) Running: ${FUNCNAME[0]} $*" >&2
+  local OPTIND=1 opt OPTARG
+  local print_error=false check_debug=0 check_quiet=0 check_verbose=0 prepend
+  while getopts ":edwqv" opt; do
+    case "$opt" in
+      e) print_error=true ; prepend="[ERROR] (${FUNCNAME[1]}): " ;;
+      d) check_debug=$(( check_debug + 1 )) ; ! $print_error && prepend="[DEBUG] (${FUNCNAME[1]}): " ;;
+      q) check_quiet=$(( check_quiet + 1 )) ;;
+      v) check_verbose=$(( check_verbose + 1 )) ;;
+      w) prepend="[WARNING] (${FUNCNAME[1]}): " ;;
+      *) echo "[WARNING] Invalid flag ($OPTARG)" >&2 ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  ! $print_error && (( check_quiet < quiet )) && return 0
+  ! $print_error && (( check_debug > debug )) && return 0
+  ! $print_error && (( check_verbose > verbose && check_verbose > quiet )) && ! $mqtt_test && return 0
+  echo "${prepend}$*" >&2
+  return 0
+}
+
+# Use get_config_value from my _config library
+get_config_value() {
+  # No section: variable=( $(get_config_value file key) )
+  # Section:    variable=( $(get_config_value file section key) )
+
+  local opt OPTARG OPTIND=1 ltrim=1 rtrim=1
+
+  # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
+  local localdebug=${debug:-false} ncm=false
+  shopt -q nocasematch && ncm=true ; shopt -s nocasematch
+  case "$localdebug" in true|debug|y|yes|on|[1-9]|[1-9]0|[0-9][1-9]|[1-9][0-9]0|[0-9][0-9][1-9])localdebug=true;;*)localdebug=false;;esac
+  ! $ncm && shopt -u nocasematch ; unset ncm
+
+  # Handle options -L and -T for preserving leading/trailing whitespace in values
+  while getopts ":LT" opt;do case "$opt" in L)ltrim=0;;T)rtrim=0;;*);;esac;done;shift $((OPTIND-1))
+
+  # Require at least two arguments (file and key with section being optional)
+  (( $# < 2 )) && return 1
+
+  local configfile=$1 section="" key=$2
+  # Replace ^~ with $HOME
+  [[ "$configfile" == ~* ]] && configfile=$HOME${configfile#~}
+
+  # If 3 arguments provided
+  (( $# >= 3 )) && section=$2 && key=$3
+
+  # Validate that configfile can be read
+  if [[ ! -r "$configfile" ]]; then
+    $localdebug && echo "Warning: Cannot read ${configfile##*/} for ${section:+[$section] }$key" >&2
+    return 1
+  fi
+  if [[ -n "$section" ]]; then
+    awk -v section="$section" -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
+      BEGIN {
+        in_section = 0
+      }
+      $0 ~ /^[[:space:]]*\[/ {
+        in_section = 0
+      }
+      $0 ~ "^[[:space:]]*\\["section"\\]" {
+        in_section = 1
+      }
+      in_section == 1 && $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
+        sub(/^[^:=]+[:=]/, "")
+        if (ltrim == 1) sub(/^[[:space:]]+/, "")
+        if (rtrim == 1) sub(/[[:space:]]+$/,"")
+        print
+      }' "$configfile"
+  else
+    awk -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
+      $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
+        sub(/^[^:=]+[:=]/, "")
+        if (ltrim == 1) sub(/^[[:space:]]+/, "")
+        if (rtrim == 1) sub(/[[:space:]]+$/, "")
+        print
+      }' "$configfile"
+  fi
+}
+
+# Function to find which index matches "$1" in a array passed as $2...
+arr_index() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# < 1 )) && { log -e "usage: ${FUNCNAME[0]} needle stack1 [stack2 stack3...]" ; echo "-1" ; return 1 ; }
+  local needle=$1 i=0
+  shift
+  local arr=("$@")
+  for (( i = 0 ; i < $# ; i++ )) do
+    if [[ "$needle" == "${arr[i]}" ]]; then
+      echo "$i"
+      return 0
+    fi
+  done
+  echo "-1"
+  return 1
+}
+
+# Function to calculate the number of seconds from docker's CREATED field
+calc_seconds() { # utility_function
+  [[ ! "$1" =~ ^[0-9]+" "[^[:space:]]+" ago"$ ]] && return 1
+
+  case "$1" in
+    *second*) echo "${1%% *}" ;;
+    *minute*) echo $((${1%% *}*60)) ;;
+    *hour*)   echo $((${1%% *}*60*60)) ;;
+    *day*)    echo $((${1%% *}*60*60*24)) ;;
+    *week*)   echo $((${1%% *}*60*60*24*7)) ;;
+    *month*)  echo $((${1%% *}*60*60*24*30)) ;;
+    *)        echo $((${1%% *}*60*60*24*365)) ;;  # everything else should be years
+  esac
+}
+
+# Function to check if a program exists and print an error message
+check_prog() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# < 1 )) && { echo "usage: check_prog prog" ; return 1 ; }
+  local dirs dir prog=$1 func=" (needed for ${FUNCNAME[1]})"
+  [[ -n "$2" ]] && func=" (needed for $2)"
+  [[ -z "$2" && "${FUNCNAME[1]}" == "main" ]] && unset func
+  IFS=: read -ra dirs <<< "$PATH"
+  for dir in "${dirs[@]}"; do
+    if [[ -x "$dir"/"$prog" ]]; then
+      return 0
+    fi
+  done
+  log -e "$prog command not found$func"
+  return 1
+}
+
+# Function to get a list of docker checks with name|image|state|age
+# shellcheck disable=SC2120
+docker_checks() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  ! command -v docker &> /dev/null && { log -d "docker command not found" ; return 1 ; }
+  local checks=() check name image state
+  while IFS='|' read -r name image state; do
+    [[ "$state" != "running" ]] && continue
+    check=$(image_search -c "$image")
+    [[ -z "$check" ]] && log -v "Could not find check for $name" >&2
+    checks+=("$check")
+  done < <(docker container ls --format='{{.Names}}|{{.Image}}|{{.State}}')
+  mapfile -t checks < <(printf '%s\n' "${checks[@]}" | sort -u)
+  printf '%s\n' "${checks[@]}"
+}
+
+# Function to drop privileges and run this program as $exec_user
+drop_privs() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# < 2 )) && { log -d "Not enough arguments" ; return 1 ; }
+  local exec_user=$1 user_id=0
+  shift
+  user_id=$(id -u 2> /dev/null)
+  if [[ "$user_id" != "0" ]] || ! id "$exec_user" &> /dev/null; then
+    log -d -d -d "Executing user must be root (is $user_id) and $exec_user must exist"
+    return 1
+  fi
+  local args=() prev=false arg full_command
+  for arg in "$@"; do
+    [[ "$arg" =~ ^-(u|c)$ ]] && prev=true && continue
+    $prev && prev=false && continue
+    args+=("$arg")
+  done
+
+  full_command=$(realpath "$0")
+  echo "Dropping privileges to $exec_user to run '$full_command ${args[*]}'"
+
+  cd /
+  if command -v sudo &> /dev/null; then
+    exec sudo -i -u "$exec_user" "$full_command" "${args[@]}"
+  else
+    case "$(uname -s)" in
+      Linux)
+        if command -v runuser &> /dev/null; then
+          exec runuser -l -u "$exec_user" -- "$full_command" "${args[@]}"
+        else
+          exec su - -s "$(command -v bash)" "$exec_user" -c "$full_command ${args[*]}"
+        fi ;;
+      *)
+        exec su - -m "$exec_user" -c "$full_command ${args[*]}" ;;
+    esac
+  fi
+}
+
+# Function to ensure that a check function exists
+function_exists() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# < 1 )) && { log -e "Missing argument for ${FUNCNAME[0]}" ; return 1 ; }
+  [[ "$1" == "$PROGNAME" ]] && return 0
+  [[ ! " ${function_list[*]} ${function_alias_list[*]} " == *" $1 "* ]] && return 1
+  return 0
+}
+
+# Function to generate an authstring for curl from a token in the config file
+# Called with 'gen_authstring github'
+gen_authstring() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Site parameter missing" ; return 1 ; }
+  local section=$1 key=${2:-token} file=${3:-$rcfile}
+  [[ ! -s "$file" ]] && { log -e "Cannot read config file ($file)" ; return 1 ; }
+  local token authstring=()
+  mapfile -t token < <(get_config_value "$file" "$section" "$key")
+  if (( ${#token[@]} > 0 )); then
+    echo "-H"
+    echo "Authorization: Bearer ${token[-1]}"
+    return 0
+  fi
+  log -d -d -d "Cannot get '$section' $key from '$file'"
+  return 1
+}
+
+# Function to return the running system architecture
+get_arch() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  if command -v dpkg > /dev/null 2>&1; then
+    dpkg --print-architecture
+  else
+    case $(uname -m) in
+      x86_64)
+        echo amd64 ;;
+      aarch64|armv7l)
+        echo arm64 ;;
+      *)
+        echo error ;;
+    esac
+  fi
+}
+
+# Print the length of the longest element
+get_longest() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} from ${FUNCNAME[1]}"
+  (( $# < 1 )) && { echo 0 ; return 0 ; }
+  local max=0 s
+  for s in "$@"; do
+    (( ${#s} > max )) && max=${#s}
+  done
+  echo "$max"
+}
+
+# Function to wrap mktemp and add tmpfile/tmpdir to TEMPFILES
+maketemp() { # utility_function
+  local tmpfile args=()
+  local OPTIND=1 OPTARG opt
+  # Pass all args back to mktemp except -p (and arg)
+  while getopts ":p:dqut:" opt; do
+    case "$opt" in
+      d|q|u) args+=("-$opt") ;;
+      t) args+=("-$opt" "$OPTARG") ;;
+      p) [[ "$OPTARG" == -* ]] && args+=("$OPTARG") ;;
+      *) ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  # Re-set args
+  set -- "${args[@]}" "$@"
+  tmpfile=$(mktemp -p "$TEMPDIR" "$@")
+  echo "$tmpfile"
+}
+
+# Function to make sure program can write to cache directory/create directory
+prepare_cache_dir() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} from ${FUNCNAME[1]}"
+  $CACHE_DIR_PREPARED && return 0
+  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local cache_dir=$1 cache_parent
+  if [[ -n "$cache_dir" ]]; then
+    if [[ ! -d "$cache_dir" ]]; then
+      [[ -e "$cache_dir" ]] && log -e "Cache directory '$cache_dir' exists but is not a directory" && exit 1
+      mkdir -p "$cache_dir" &> /dev/null
+      # If cache_dir does not exist, ensure parent is writable
+      cache_parent=$(realpath "$cache_dir")
+      cache_parent=${cache_parent%/*}
+      if [[ ! -w "$cache_parent" ]]; then
+        log -e "Cannot write to $cache_parent to create cache dir: $cache_dir"
+        exit 1
+      fi
+    else
+      # If cache_dir exists, make sure it is writable
+      if [[ ! -w "$cache_dir" ]]; then
+        log -e "Cannot write to cache dir: $cache_dir"
+        exit 1
+      fi
+    fi
+    [[ ! -d "$cache_dir" ]] && mkdir -p "$cache_dir"
+  fi
+  log -d "Cache directory prepared"
+  CACHE_DIR_PREPARED=true
+}
+
+# Function to print arrays
+# Usage: print_list [-n 14] -l "Label" "${arr1[@]}"
+# Where -n tells print_list to pad for each string being 14 characters
+# -n could be passed with $(get_longest "${arr1[@]}" "${arr2[@]}" ...) to have multiple lists line up
+print_list() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  local opt OPTARG OPTIND=1
+  local maxlen=0 mark_sudo=false single=false label="List Items" arr=()
+  while getopts ":n:l:sm1" opt; do
+    case "$opt" in
+      n) [[ ! $OPTARG =~ ^[0-9]+$ ]] && { log -e "-n requires a number" ; return 1 ; } || maxlen=$OPTARG ;;
+      l) label=$OPTARG ;;
+      s) mark_sudo=true ;;
+      m) single=false ;;
+      1) single=true ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# < 1 )) && return 1
+
+  (( maxlen == 0 )) && maxlen=$(get_longest "$@")
+  local term_width=100
+  term_width=$(tput cols 2>/dev/null) || term_width=100
+  local col_width=$(( maxlen + 2 ))   # +2 for minimum padding
+  local indent=4
+  local usable=$(( term_width - indent ))
+  local num_cols=$(( usable / col_width ))
+  (( num_cols < 1 )) && num_cols=1
+  ( (( num_cols < 1 )) || $single ) && num_cols=1
+
+  # Sort array
+  mapfile -t arr < <(printf '%s\n' "$@" | sort -u)
+
+  local item_type="items"
+  [[ "$label" == *" "* ]] && item_type=${label#* }
+
+  printf "%s (%s %s):" "$label" "$#" "$item_type"
+  local i=0
+  for (( i = 0; i < ${#arr[@]}; i++ )); do
+    (( i % num_cols == 0 )) && printf '\n%*s' "$indent" ""
+    unset needs_sudo
+    $mark_sudo && for regex in "${sudo_regexes[@]}"; do
+      [[ "${arr[i]}" =~ $regex ]] && needs_sudo=" *"
+    done
+    printf '%-*s' "${col_width}" "${arr[i]}$needs_sudo"
+  done
+  printf '\n\n'
+}
+
+# Function to allow a user to run a specific function with sudo
+sudo_exec() { # utility_function
+  local saved_debug=$debug saved_trap
+  saved_trap=$(trap -p RETURN)
+  trap 'debug="$saved_debug";${saved_trap:-trap - RETURN}' RETURN
+  local arg args=() dflags=()
+  debug=0
+
+  # Check to see if this is called with -d
+  for arg in "$@"; do
+    [[ "$arg" == "-d" ]] && { debug=$(( debug + 1 )) ; dflags+=(-d) ; continue ; }
+    args+=("$arg")
+  done
+  set -- "${args[@]}"
+
+  log -d "Running: ${FUNCNAME[0]} $* ${dflags[*]}"
+
+  # Check to see if function is in app_list
+  [[ " ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
+  log -d "Executing $1 as $(id -un)"
+  # Execute check function
+  "$1"
+}
+
+# Function to fold the usage lines
+usage_fold() { # utility_function
+  local opt OPTARG OPTIND=1
+  local first=2 second=4 cols=100 first_set=false second_set=false
+  cols=${COLUMNS:-$(tput cols < /dev/tty 2>/dev/null || echo 100)}
+
+  while getopts ":f:s:c:" opt; do
+    case "$opt" in
+      f) [[ $OPTARG =~ ^[0-9]+$ ]] && first=$OPTARG  && first_set=true ;;
+      s) [[ $OPTARG =~ ^[0-9]+$ ]] && second=$OPTARG && second_set=true ;;
+      c) [[ $OPTARG =~ ^[0-9]+$ ]] && cols=$OPTARG ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+
+  # If -f passed but not -s, update second to be first + 2
+  ! $second_set && $first_set && second=$(( first + 2 ))
+
+  # Set up padding
+  local pad1 pad2
+  printf -v pad1 '%*s' "$first" ''
+  printf -v pad2 '%*s' "$second" ''
+
+  # Pass output through fold with settings
+  local string clean
+  if (( $# > 0 )); then
+    string="$*"
+  elif [[ ! -t 0 ]]; then
+    string=$(cat)
+  else
+    return 1
+  fi
+  clean=$(printf '%s' "$string" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g')
+  cols=$(( cols + ${#string} - ${#clean} - 1 ))
+
+  # Deal with 2 level folds properly
+  local first_width=$(( cols - first ))
+  local rest_width=$(( cols - second ))
+
+  # Fold at first-line width, split head from tail
+  local folded line1 rest
+  folded=$(printf '%s\n' "$string" | fold -s -w "$first_width")
+  line1=$(printf '%s\n' "$folded" | head -1)
+  rest=$(printf '%s\n' "$folded" | tail -n +2 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+
+  # Print first line
+  printf '%s\n' "${pad1}${line1}"
+  # Print remaining lines
+  if [[ -n "$rest" ]]; then
+    printf '%s\n' "$rest" | fold -s -w "$rest_width" | sed "s/^/$pad2/"
+  fi
+}
+
+## helper functions
+alpine_docker_package() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  [[ -z "$COMPOSE_FILE" || ! -r "$COMPOSE_FILE" ]] && { log -e "Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
+  local package=$1 containername out
+  log -d "Checking alpine_docker_package for $package"
+  containername=$(get_container_name "${FUNCNAME[1]}") || return 1
+  [[ -z "$package" ]] && package=$containername
+  log -d -d "Executing docker compose -f $COMPOSE_FILE exec -u nobody $containername apk list --installed"
+  out=$(docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" apk list --installed 2>&1)
+  log -d -d -d "docker compose output: $out"
+  log -d -d "Searching output for '$package'"
+  [[ -n "$out" ]] && awk -v p="$package" '$0 ~ "^" p {sub("^" p "-?","",$1);print $1;exit}' 2>/dev/null <<< "$out"
+}
+
+alpine_package_latest() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog xmllint "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local pkg=$1 url out
+
+  if [[ -z "$ALPINE_VER" ]]; then
+    ALPINE_VER=$(curl -s "https://pkgs.alpinelinux.org/packages" \
+      | xmllint --html --xpath '//select[@id="branch"]/option/text()' - 2>/dev/null | \
+      awk '/v[0-9]/{gsub(/^ +/,"");gsub(/ +$/,"");print}' | \
+      sort -V | \
+      tail -n1)
+  fi
+
+  [[ -z "$ALPINE_VER" ]] && { log -q "Warning: Could not determine alpine version" ; return 1 ; }
+
+  url="https://pkgs.alpinelinux.org/packages?name=$pkg&branch=$ALPINE_VER&arch=x86_64"
+  log -d "DEBUG (${FUNCNAME[0]}): URL = $url"
+
+  out=$(curl -sL "$url" | \
+    xmllint --html --xpath '//strong[@aria-label="Package version"]/text()' - 2>/dev/null)
+  log -d -d "$out"
+  [[ -n "$out" ]] && sort -V <<< "$out" \
+    | tail -n1
+}
+
+aur_package() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local pkg=$1 out
+
+  out=$(curl -sL "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD")
+  log -d -d -d "Curl output: $out"
+  [[ -n "$out" ]] && awk -F= '
+      /^_major=/ { m = $2 }
+      /^_subver=/ { s = $2 }
+      /^pkgver=/ { pv = $2 }
+      /^pkgrel=/ { pr = $2 }
+    END {
+      if (m != "" && s != "")
+        o=sprintf("%s.%s-%s\n",m,s,pr)
+      else if (pv != "")
+        o=sprintf("%s-%s\n",pv,pr)
+      gsub(/"/,"",o)
+      print o
+    }' <<< "$out"
+}
+
+codeberg_project() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  local site="https://codeberg.org" section=codeberg out
+  local opt OPTARG OPTIND=1
+  while getopts ":f" opt; do
+    case "$opt" in
+      f) section=forgejo
+         site="https://code.forgejo.org"
+         ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# < 1 )) && { log -d "${FUNCNAME[0]} requires a project argument" ; return 1 ; }
+
+  local uri="$site/$1/releases/latest"
+  log -d "uri: $uri"
+
+  local authstring=()
+  mapfile -t authstring < <(gen_authstring "$section")
+
+  out=$(curl "${authstring[@]}" --no-progress-meter "$uri")
+  log -d -d -d "Curl output: $out"
+  if [[ -n "$out" ]]; then
+    awk -F'["/]' '{print $7;exit}' <<< "$out"
+    return 0
+  fi
+  log -e "Invalid curl output"
+  return 1
+}
+
+# To use this function, there must be a section in $rcfile
+# The section should be named after the check using curl_api
+# The section must include url and optionally username & password or apikey
+curl_api() { # helper_function
+  log -d "Running ${FUNCNAME[0]} for ${FUNCNAME[1]}"
+  local url username password apikey out
+
+  # shellcheck disable=SC2154
+  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[1]}" ; return 1; }
+  mapfile -t url      < <(get_config_value "$rcfile" "${FUNCNAME[1]}" url)
+  mapfile -t username < <(get_config_value "$rcfile" "${FUNCNAME[1]}" username)
+  mapfile -t password < <(get_config_value "$rcfile" "${FUNCNAME[1]}" password)
+  mapfile -t apikey   < <(get_config_value "$rcfile" "${FUNCNAME[1]}" apikey)
+
+  (( ${#url[@]} == 0 ))      && { log -e "Could not read ${FUNCNAME[1]} URL from $rcfile" ; return 1 ; }
+  if (( ${#apikey[@]} > 0 )); then
+    curl -s -L -X GET -H \
+      "Authorization: Bearer ${apikey[-1]}" \
+      "${url[-1]}"
+  elif (( ${#username[@]} > 0 || ${#password[@]} > 0 )); then
+    (( ${#username[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[1]} Username from $rcfile" ; return 1 ; }
+    (( ${#password[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[1]} Password from $rcfile" ; return 1 ; }
+
+    out=$(curl -s -L -X GET -H \
+      "Authorization: Basic $(printf '%s:%s' "${username[-1]}" "${password[-1]}"|base64|tr -d '\n')" \
+      "${url[-1]}")
+  else
+    out=$(curl -s -L -X GET "${url[-1]}")
+  fi
+  log -d -d "Curl output: $out"
+  echo "$out"
+}
+
+docker_compose_exec() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  [[ -z "$COMPOSE_FILE" || ! -r "$COMPOSE_FILE" ]] && { log -e "Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
+  local copy_mode=false i=0 containername
+  [[ "$1" == "--copy" ]] && copy_mode=true && shift
+  (( $# < 1 )) && return 1
+  for (( i=1; i < ${#FUNCNAME[@]}; i++ )); do
+    [[ ! ${FUNCNAME[-$i]} =~ ^(main|sudo_exec) ]] && break
+  done
+  containername=$(get_container_name "${FUNCNAME[-$i]}") || return 1
+  log -d -d "containername = $containername"
+
+  if ! $copy_mode; then
+    log -d -d "Executing: docker compose -f $COMPOSE_FILE exec -u nobody $containername $*"
+    docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" "$@"
+    return $?
+  else
+    (( $# != 2 )) && echo "usage: ${FUNCNAME[1]} CONTAINER:SRC_PATH DEST_PATH" >&2 && return 1
+    log -d -d "Executing: docker compose -f $COMPOSE_FILE cp $containername:$1 $2"
+    docker compose -f "$COMPOSE_FILE" cp "$containername":"$1" "$2"
+  fi
+}
+
+docker_compose_cp() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  docker_compose_exec --copy "$@"
+}
+
+docker_inspect() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  local byimage=false byname=false image version
+  local OPTIND=1 opt OPTARG
+  while getopts ":cin" opt; do
+    case "$opt" in
+      c) shift
+         log -d "Printing container names"
+         docker ps --format '{{.Image}}|{{.Names}}' | \
+           grep -E "^[^|]*$1[^|]*\|" | \
+           sed -r 's/^[^|]+\|//' | \
+           paste -sd ' ' >&2
+         return 0;;
+      i) byimage=true ;;
+      n) byname=true ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+
+  local searchname=$1
+  [[ -z "$searchname" ]] && searchname=$(image_search "${FUNCNAME[1]}")
+
+  if $byname; then
+    [[ -z "$searchname" ]] && log -e "'docker_inspect -n' needs a container name" && return 1
+    log -d "Running: docker inspect --format='{{.Config.Image}}' \"$searchname\""
+    image=$(docker inspect --format='{{.Config.Image}}' "$searchname")
+    echo "$image"
+    return
+  fi
+
+  local parts search
+  IFS=/ read -ra parts <<< "$searchname"
+  case "${#parts[@]}" in
+    1) search="${parts[0]}" ;;
+    2) search="${parts[0]}/${parts[1]}" ;;
+    3) search="${parts[1]}/${parts[2]}" ;;
+    *) log -e "Invalid image name format ($searchname)" && return 1 ;;
+  esac
+  local out container
+  out=$(docker ps --format '{{.Image}}|{{.Names}}')
+  log -d -d "docker ps out: $(echo "$out" | paste -sd ' ')"
+  out=$(echo "$out" | grep -E "^[^|]*${search}[^|]*\|")
+  log -d "grep -E '^[^|]*${search}[^|]*\\|': $(echo "$out" | paste -sd ' ')"
+  container=$(echo "$out" | head -n1)
+  log -d "container name: $container"
+  [[ -z "$container" ]] && log -d "No container name found from docker ps" && return 1
+
+  if $byimage; then
+    log -d "Running: docker inspect --format='{{.Config.Image}}' ${container##*\|}"
+    docker inspect --format='{{.Config.Image}}' "${container##*\|}" 2> /dev/null | awk -F: '{print $2;exit}'
+  else
+    log -d "Running: docker inspect --format='{{index .Config.Labels \"org.opencontainers.image.version\"}}' ${container##*\|}"
+    version=$(docker inspect --format='{{index .Config.Labels "org.opencontainers.image.version"}}' "${container##*\|}" 2> /dev/null)
+
+    log -d "Container version: $version"
+    [[ -n "$version" ]] && echo "$version" && return 0
+    version=$(docker inspect --format='{{index .Config.Labels "version"}}' "${container##*\|}" 2> /dev/null)
+
+    log -d "Container version: $version"
+    [[ -n "$version" ]] && echo "$version" && return 0
+    log -q "Warning: Could not determine version for ${container##*\|} from org.opencontainers.image.version or version labels"
+    return 1
+  fi
+}
+
+docker_logs() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  [[ -z "$COMPOSE_FILE" || ! -r "$COMPOSE_FILE" ]] && { log -e "Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
+  (( $# < 1 )) && { log -e "You must supply docker name" ; return 1 ; }
+  [[ "$1" == "-h" ]] && { log "usage: docker_logs dockername" ; return 0 ; }
+
+  local name
+  name=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Name}}' "$1" 2> /dev/null)
+  docker logs "$name" 2> /dev/null
+}
+
+docker_printenv() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  local i containername imagename
+  for (( i = 1; i < ${#FUNCNAME[@]}; i++ )); do
+    [[ ! "${FUNCNAME[-${i}]}" =~ ^(main|sudo_exec) ]] && break
+  done
+  containername=$(get_container_name "${FUNCNAME[-$i]}")
+  imagename=$(docker_inspect -n "$containername")
+  if [[ -n "$1" ]]; then
+    docker image inspect --format \
+      '{{ range .Config.Env -}}
+       {{ if (eq (index (split . "=") 0) "'"$1"'") -}}
+       {{ index (split . "=") 1 -}}
+       {{ end -}}
+       {{ end -}}' \
+      "$imagename"
+  else
+    docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$imagename"
+  fi
+}
+
+docker_tags() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+
+  local OPTIND=1 OPTARG opt dosort=true removegrep searchgrep useskopeo=true
+  while getopts ":r:s:S" opt; do
+    case "$opt" in
+      #  remove matchings strings from output, can be specified more than once
+      r) removegrep="$removegrep|$OPTARG" && removegrep="${removegrep#|}" ;;
+      #  search for matching strings in output, can be specified more than once
+      s) searchgrep="$searchgrep|$OPTARG" && searchgrep="${searchgrep#|}" ;;
+      #  Do not perform version sort
+      S) dosort=false ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  local parts site org repo
+  IFS=/ read -ra parts <<< "$1"
+  case "${#parts[@]}" in
+    1) site=docker.io ; repo=${parts[0]} ;;
+    2) if [[ "${parts[0]}" == *"."* ]]; then
+         site=${parts[0]} ; repo=${parts[1]}
+       else
+         site=docker.io ; org=${parts[0]} ; repo=${parts[1]}
+       fi ;;
+    3) site=${parts[0]} ; org=${parts[1]} ; repo=${parts[2]} ;;
+    *) log -e "Invalid image name format ($1)" && return 1 ;;
+  esac
+
+  local token authfile
+  local foundstop=false maxpages=200 pagesize=100 jqfilter='.results[].name'
+  [[ "$site" == "quay.io" ]] && site=docker.io
+  case "$site" in
+    code.forgejo.org)
+      mapfile -t username < <(get_config_value "$rcfile" forgejo username)
+      mapfile -t token    < <(get_config_value "$rcfile" forgejo token)
+      # uri="https://$site/v1/repos"
+      ;;
+    codeberg.org)
+      mapfile -t username < <(get_config_value "$rcfile" codeberg username)
+      mapfile -t token    < <(get_config_value "$rcfile" codeberg token)
+      ;;
+    docker.gitea.com)
+      mapfile -t username < <(get_config_value "$rcfile" gitea username)
+      mapfile -t token    < <(get_config_value "$rcfile" gitea token)
+      ;;
+    docker.io)
+      mapfile -t username < <(get_config_value "$rcfile" dockerhub username)
+      mapfile -t token    < <(get_config_value "$rcfile" dockerhub token)
+      ;;
+    ghcr.io|lscr.io)
+      site=ghcr.io
+      mapfile -t username < <(get_config_value "$rcfile" github username)
+      mapfile -t token    < <(get_config_value "$rcfile" github token)
+      jqfilter='.[].metadata.container.tags[] | select(. != "")'
+      foundstop=true
+      ;;
+    *) log -e "Unknown site for skopeo ($site)" && return 1 ;;
+  esac
+
+  local cmdout authfile hash skopeoargs=()
+  if ${useskopeo:-false} && command -v skopeo &> /dev/null ; then
+    if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
+      authfile=$(maketemp)
+      hash=$(printf "${username[-1]}:${token[-1]}" | base64 | tr -d '\n')
+      printf '{\n\t"auths": {\n\t\t"%s": {\n\t\t\t"auth": "%s"\n\t\t}\n\t}\n}\n' "$site" "$hash" > "$authfile"
+      skopeoargs=("--authfile=$authfile")
+    fi
+
+    log -d -d "Running: skopeo list-tags ${skopeoargs[*]:+ARGS }docker://$site/${org:+$org/}$repo"
+    cmdout=$(maketemp)
+    if (( debug > 2 )); then
+      skopeo list-tags --debug "${skopeoargs[@]}" "docker://$site/${org:+$org/}$repo" > "$cmdout"
+    else
+      skopeo list-tags --debug "${skopeoargs[@]}" "docker://$site/${org:+$org/}$repo" > "$cmdout" 2> /dev/null
+    fi
+    log -d -d -d "Skopeo output: $(stat "$cmdout")"
+    [[ -s "$cmdout" ]] && out=$(jq -r '.Tags.[]' "$cmdout" 2> /dev/null)
+  else
+    # Use curl
+    local authstring=() curl_args=(-w "%{http_code}" --max-time 30)
+    local uri hdrfile jq_count tag_search
+    cmdout=$(maketemp)
+    case "$site" in
+      docker.io)
+        if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
+          log -d -d "Connecting to hub.docker.com to get token"
+          out=$(curl -sf --max-time 15 -X POST -H "Content-Type: application/json" \
+            -d "{\"username\": \"${username[-1]}\", \"password\": \"${token[-1]}\"}" \
+            "https://hub.docker.com/v2/users/login")
+          if [[ -n "$out" ]]; then
+            out=$(jq -rn --argjson j "$out" '$j.token // ""' 2>/dev/null)
+            [[ -n "$out" ]] && authstring=("-H" "Authorization: JWT $out") && \
+              log -d -d "Using downloaded token"
+          fi
+        fi
+        site=hub.docker.com
+        uri="https://$site/v2/repositories"
+        uri_path="tags/?page_size=100&page=1"
+        jq_count='.results | length // 0'
+        tag_search='.results[].name?'
+        ;;
+      ghcr.io)
+        if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
+          log -d -d "Connecting to ghcr.io to get token"
+          out=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:${org:+$org/}$repo:pull" \
+             -u "${username[-1]}:${token[-1]}")
+          if [[ -n "$out" ]]; then
+            out=$(jq -rn --argjson j "$out" '$j.token // ""' 2>/dev/null)
+            [[ -n "$out" ]] && authstring=("-H" "Authorization: Bearer $out") && \
+              log -d -d "Using downloaded token"
+          fi
+        fi
+        hdrfile=$(maketemp)
+        uri="https://$site/v2"
+        uri_path="tags/list?n=1000"
+        curl_args+=(-D "$hdrfile")
+        jq_count='.tags | length // 0'
+        tag_search='.tags[]?'
+        ;;
+      *)
+        if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
+          log -d -d "Downloading auth token from $site"
+          out=$(curl -si --max-time 10 "https://$site/v2/" 2> /dev/null)
+          log -d -d -d "Curl output: $out"
+          [[ -n "$out" ]] && out=$(awk -F: 'tolower($1) ~ /www-authenticate/ {sub("^.*"$1":[[:space:]]([Bb]earer )?*","");print}' <<< "$out" | tr -d '\r')
+          log -d -d -d "awk output: '$out'"
+          if [[ -n "$out" && $out =~ ^realm=\"[^\"]+\",service=\"[^\"]+\",scope=\"[^\"]+\"$ ]]; then
+            eval "${out//,/;}"
+            log -d -d -d "realm=$realm"
+            log -d -d -d "service=$service"
+            log -d -d -d "scope=$scope"
+            if [[ -n "$realm" && -n "$service" && -n "$scope" ]]; then
+              local token_url="$realm?service=$service&scope=$scope:${org:+$org/}$repo:pull"
+              out=$(curl -sf --max-time 15 "$token_url")
+              [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.token // .access_token // ""' 2> /dev/null)
+              log -d -d -d "curl + jq output: $out"
+              [[ -n "$out" ]] && authstring=("-H" "Authorization: Bearer $out") && \
+                log -d -d "Using token for $site"
+            fi
+          fi
+        fi
+        hdrfile=$(maketemp)
+        uri="https://$site/v2"
+        uri_path="tags/list?n=1000"
+        curl_args+=(-D "$hdrfile")
+        jq_count='.tags | length // 0'
+        tag_search='.tags[]?'
+        ;;
+    esac
+
+    local done=false page=0 code=0 url="$uri/${org:+$org/}$repo/$uri_path"
+    local results=() arr=() link next_path
+    while [[ -n "$url" ]]; do
+      (( page++ ))
+      log -d -d "Running: curl -sLfo $cmdout ${curl_args[@]} ${authstring[@]} $url"
+      code=$(curl -sLfo "$cmdout" "${curl_args[@]}" "${authstring[@]}" "$url") || \
+        { log -e "Could not download from $site (page $page)" ; log -d -d -d "Curl output: $(cat "$cmdout")" ; break ; }
+      if [[ "$code" == "401" ]]; then
+        log -e "Authentication required"
+        return 1
+      elif [[ "$code" == "404" ]]; then
+        log -e "Repo not found: $site/${org:+$org/}$repo"
+        return 1
+      elif [[ "$code" != 200 ]]; then
+        log -e "HTTP error $code on page $page"
+        break
+      fi
+
+      log -d -d "$site page $page: $(jq "$jq_count" "$cmdout" 2> /dev/null)"
+      mapfile -t arr < <(jq -r "$tag_search" "$cmdout" 2> /dev/null)
+      results+=("${arr[@]}")
+
+      if [[ -n "$hdrfile" ]]; then
+        link=$(grep -i '^link:' "$hdrfile" | tr -d '\r')
+        if grep -q 'rel="next"' <<< "$link"; then
+          next_path=$(grep -oP '<[^>]+>' <<< "$link" | tr -d '<>' | head -n 1)
+          url="https://${site}${next_path}"
+        else
+          unset url
+        fi
+      else
+        url=$(jq -r '.next // ""' "$cmdout" 2> /dev/null)
+      fi
+    done
+    out=$(printf '%s\n' "${results[@]}")
+  fi
+
+  log -d -d -d "Jq output: $out"
+  if [[ -n "$out" ]] && [[ -n "$searchgrep" ]]; then
+    log -d "Searching for '${searchgrep#|}'"
+    out=$(grep -E -- "(${searchgrep#|})" <<< "$out")
+    log -d -d -d "searchgrep output: $out"
+  fi
+  if [[ -n "$out" ]] && [[ -n "$removegrep" ]]; then
+    log -d "Searching for '${removegrep#|}'"
+    out=$(grep -Ev -- "(${removegrep#|})" <<< "$out")
+    log -d -d -d "removegrep output: $out"
+  fi
+
+  [[ -n "$out" ]] && $dosort && out=$(sort -V <<< "$out")
+  tail -n1 <<< "$out"
+}
+
+flatpak_latest() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  [[ "$1" == "-h" ]] && { log "usage: flatpak_latest application_id" ; return 0 ; }
+
+  local out
+  out=$(curl -s "https://flathub.org/api/v2/appstream/$1")
+  log -d -d -d "Curl output: $out"
+  [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j.releases[0].version' 2> /dev/null
+}
+
+flatpak_version() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog flatpak "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  [[ "$1" == "-h" ]] && { log "usage: flatpak_version application_id" ; return 0 ; }
+
+  local out
+  out=$(flatpak list --columns=application,version)
+  log -d -d -d "Flatpak list output: $out"
+  [[ -n "$out" ]] && awk -v a="$1" '$1==a {print $NF;exit}'
+}
+
+get_docker_image_name() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  local opt OPTARG OPTIND=1 mode=all
+  while getopts ":intT" opt; do
+    case "$opt" in
+      i) mode=image ;;
+      n) mode=name ;;
+      t) mode=tag ;;
+      T) mode=tagonly ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local out
+  out=$(docker ps --format '{{.Image}}|{{.Names}}')
+  log -d -d -d "docker ps output: $(echo "$out" | paste -sd ' ')"
+  out=$(grep -E "$1" <<< "$out")
+  log -d -d "grep -E \"$1\": $out"
+  [[ $(echo "$out" | wc -l) -ne 1 ]] && log -v "Warning: More than one image result for '$1', choosing first match"
+  out=$(head -n1 <<< "$out")
+  log -d -d -d "out = $out"
+  case "$mode" in
+    image) out=${out%\|*}; out=${out%:*} ;;
+    name) out=${out#*\|} out=${out#/} ;;
+    tag) out=${out%\|*} ;;
+    tagonly) out=${out%\|*} ; out=${out#*:} ;;
+  esac
+  log -d -d -d "output: $out"
+  [[ -z "$out" ]] && return 1
+  echo "$out"
+}
+
+get_container_name() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local imagename containername
+  imagename=$(image_search "$1")
+  [[ -z "$imagename" ]] && log -e "Could not determine image name for $1" && return 1
+  containername=$(get_docker_image_name -n "$imagename")
+  [[ -z "$containername" ]] && log -e "Could not determine container name for $imagename" && return 1
+  echo "$containername"
+}
+
+github_project() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  [[ "$1" == "-h" ]] && { log "usage: github_project project/repo" ; return 0 ; }
+
+  local authstring=() err errmsg out
+  mapfile -t authstring < <(gen_authstring github)
+
+  err=$(maketemp)
+  echo "Looking up latest release for $1 using github api" >> "$err"
+  out=$(curl "${authstring[@]}" --no-progress-meter \
+    "https://api.github.com/repos/$1/releases/latest" 2>> "$err")
+  log -d -d -d "curl output: $out"
+  out=$(jq -rn --argjson j "$out" '$j.tag_name' 2> /dev/null)
+  errmsg=$(cat "$err")
+  [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
+  echo "$out"
+}
+
+github_tags() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  local version_sort=true output err out
+
+  # aruments are processed this way to handle arguments with a leading dash
+  while (( $# > 0 )); do
+    case $1 in
+      # remove matchings strings from output, can be specified more than once
+      -r) [[ -n "$2" ]] && remove_grep="$remove_grep|$2" && shift 2 ;;
+      # search for matching strings in output, can be specified more than once
+      -s) [[ -n "$2" ]] && search_grep="$search_grep|$2" && shift 2 ;;
+      # Do not perform version sort
+      -S) version_sort=false && shift ;;
+      -h|--help) log "usage: github_tags project/repo" && return 0 ;;
+      -*)        log -e "Unknown option $1" && return 1 ;;
+      *) # This should be the project_name
+         if [[ -z "$project_name" ]]; then
+           project_name=$1
+         else
+           log -e "Multiple project names provided"
+           exit 1
+         fi
+         shift
+         ;;
+    esac
+  done
+  [[ -z "$project_name" ]] && { log -e "You must supply project/repo" ; return 1 ; }
+
+  local authstring=()
+  mapfile -t authstring < <(gen_authstring github)
+
+  err=$(maketemp)
+  local maxpages=20 page=0 done=false
+  while ! $done && (( page < maxpages )); do
+    page=$(( page + 1 ))
+    echo "Looking up tags for $project_name using github_api" >> "$err"
+    out=$(curl "${authstring[@]}" --no-progress-meter \
+      "https://api.github.com/repos/$project_name/tags?per_page=100&page=$page" 2> "$err")
+    [[ -z "$out" || "$(echo "$out" | jq 'length' 2> /dev/null)" -eq 0 ]] && done=true && break
+    out=$(jq -rn --argjson j "$out" '$j.[].name' 2> /dev/null)
+    log -d -d -d "Jq output: $out"
+    [[ -n "$search_grep" ]] && out=$(grep -E -- "(${search_grep#|})" <<< "$out")
+    log -d -d -d "search grep output: $out"
+    [[ -n "$remove_grep" ]] && out=$(grep -Ev -- "(${remove_grep#|})" <<< "$out")
+    log -d -d -d "remove grep output: $out"
+    output="${output# } $out"
+  done
+  [[ -z "${output# }" ]] && { log -e "Could not find github tags data for $project_name" ; return 1 ; }
+
+  $version_sort && output=$(sort -V <<< "${output# }")
+  output=$(tail -n1 <<< "${output# }")
+
+  errmsg=$(cat "$err")
+  [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
+  echo "$output"
+}
+
+image_search() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  local item key value image name mode=search printed=false
+  [[ "$1" == "-c" ]] && mode=check && shift
+  [[ "$1" == "-C" ]] && mode=container && shift
+
+  # If search string is not passed, use passing function name
+  local searchstring=$1
+  [[ -z "$searchstring" ]] && searchstring=${FUNCNAME[1]}
+
+  for item in "${IMAGE_SEARCH[@]}"; do
+    key="${item%%\|*}"
+    value="${item#*\|}"
+    case "$mode" in
+      search) [[ "$key" == "$searchstring" ]] && echo "$value" && return 0 ;;
+      check)  [[ "$searchstring" =~ $value ]] && echo "$key"   && return 0 ;;
+      container)
+        [[ ! "$searchstring" == "$key" ]] && continue
+        while IFS='|' read -r image name; do
+          [[ ! "$image" =~ $value ]] && continue
+          echo "$name"
+          printed=true
+        done < <(docker ps --format '{{.Image}}|{{.Names}}')
+        continue
+        ;;
+    esac
+  done
+  ! $printed && return 1
+  return 0
+}
+
+# This function cannot use curl_api because of the dynamic URL with $1
+myaur_package() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# < 1 )) && { log -e "Package name required for ${FUNCNAME[0]}" ; return 1 ; }
+  local url out
+  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[0]}" ; return 1; }
+  mapfile -t url < <(get_config_value "$rcfile" private_aur url)
+  (( ${#url[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} URL from $rcfile" ; return 1 ; }
+  out=$(curl -s "${url[-1]}/raw/branch/main/$1/PKGBUILD")
+  log -d -d -d "Curl output: $out"
+  [[ -n "$out" ]] && awk -F= '/^pkgver=/{pv=$2}/^pkgrel=/{pr=$2}END{printf "%s-%s\n",pv,pr;exit}' <<< "$out"
+}
+
+pacman_package() {
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# < 1 )) && { log -e "Package name required for ${FUNCNAME[0]}" ; return 1 ; }
+  check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  pacman -Q "$1" | awk '{print $2;exit}'
+}
+
+## BEGIN CHECK FUNCTIONS
+# Define image_search array for mapping checks to image strings
+IMAGE_SEARCH=()
+SOURCED_LIBS=("$0")
+
+printer_ink_check() { # remote_host
+  [[ -z "$PRINTER" ]] && { log -e "Printer not defined" ; usage 1 ; }
+  local errjson inkfile inkdata
+
+  # Define an error string
+  errjson=$(jq -n --arg n "${FUNCNAME[0]}" --arg ip "$PRINTER" \
+      --arg t "$(date +%s)" --arg e "ink command not found for ${FUNCNAME[0]}" '{
+        "name": $n,
+        "version": "---",
+        "printer": $ip,
+        "ip": $ip,
+        "cyan": "null",
+        "magenta": "null",
+        "yellow": "null",
+        "black": "null",
+        "photoblack": "null",
+        "error": $e,
+        "time": ($t|tonumber)
+      }' 2> /dev/null || log -e "Could not generate ink command error json")
+  check_prog ink || { echo "$errjson" ; return 1 ; }
+
+  errjson=$(jq -n --arg n "${FUNCNAME[0]}" --arg ip "$PRINTER" \
+      --arg t "$(date +%s)" --arg e "ping command not found for ${FUNCNAME[0]}" '{
+        "name": $n,
+        "version": "---",
+        "printer": $ip,
+        "ip": $ip,
+        "cyan": "null",
+        "magenta": "null",
+        "yellow": "null",
+        "black": "null",
+        "photoblack": "null",
+        "error": $e,
+        "time": ($t|tonumber)
+      }' 2> /dev/null || log -e "Could not generate ink command error json")
+  check_prog ping || { echo "$errjson" ; return 1 ; }
+
+  # Define an error string
+  errjson=$(jq -n --arg n "${FUNCNAME[0]}" --arg ip "$PRINTER" \
+      --arg t "$(date +%s)" --arg e "ink command could not connect to $PRINTER" '{
+        "name": $n,
+        "version": "---",
+        "printer": $ip,
+        "ip": $ip,
+        "cyan": "null",
+        "magenta": "null",
+        "yellow": "null",
+        "black": "null",
+        "photoblack": "null",
+        "error": $e,
+        "time": ($t|tonumber)
+      }' 2> /dev/null || log -e "Could not generate ink command error json")
+
+  log -d -d "Running: ping -c 5 $PRINTER"
+  if ! ping -c 5 "$PRINTER" &> /dev/null; then
+    jq -n --arg n "${FUNCNAME[0]}" --arg ip "$PRINTER" \
+      --arg t "$(date +%s)" --arg e "Cannot connect to $PRINTER" '{
+        "name": $n,
+        "version": "---",
+        "printer": $ip,
+        "ip": $ip,
+        "cyan": "null",
+        "magenta": "null",
+        "yellow": "null",
+        "black": "null",
+        "photoblack": "null",
+        "error": $e,
+        "time": ($t|tonumber)
+      }' 2> /dev/null || log -e "Could not generate printer connection error json"
+    return 1
+  fi
+
+  inkfile=$(maketemp)
+  log -d -d "Running: ink -b bjnp://$PRINTER"
+  if ! ink -b bjnp://"$PRINTER" > "$inkfile" 2>&1; then
+    printf '%s' "$errjson"
+    return 1
+  fi
+
+  log -d -d "Parsing ink command output"
+  inkdata=$( awk -v n="${FUNCNAME[0]}" -v ip="$PRINTER" -v t="$(date +%s)" '
+    /^ink [^ ]+ \(c\) [0-9]{4}/ {
+      next
+    }
+    /^[^:]+:[[:space:]]+[0-9]+%$/ {
+      sub(/:$/,"",$1)
+      sub(/%$/,"",$2)
+      colors[tolower($1)]=$2
+      next
+    }
+    NR > 1 && $0 {
+      printf "  \"name\": \"%s\",\n",n
+      printf "  \"version\": \"---\",\n"
+      printf "  \"printer\": \"%s\",\n",$0
+      printf "  \"ip\": \"%s\",\n",ip
+    }
+    BEGIN {
+      print "{"
+    }
+    END {
+      split("cyan magenta yellow black photoblack", color, " ")
+      for (c in color)
+        printf "  \"%s\": %s,\n",color[c], colors[color[c]]
+      printf "  \"time\": %s\n", t
+      printf "}\n"
+    }' "$inkfile" )
+
+  [[ -z "$inkdata" ]] && printf '%s' "$errjson" && return 1
+  jq -rn --argjson j "$inkdata" '$j' 2> /dev/null
+}
+
+adguardhome_server() { # remote_host
+  check_prog jq || return 1
+  local out
+  out=$(curl_api)
+  [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j.version' 2> /dev/null
+}
+
+adguardhome_latest() {
+  github_project AdguardTeam/AdGuardHome
+}
+
+archiso_systemd_boot_pacman() {
+  pacman_package archiso-systemd-boot
+}
+
+archiso_systemd_boot_aur_latest() {
+  aur_package archiso-systemd-boot
+}
+
+IMAGE_SEARCH+=("audiobookshelf_docker|advplyr/audiobookshelf")
+audiobookshelf_docker() {
+  docker_inspect
+}
+
+audiobookshelf_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+' docker.io/advplyr/audiobookshelf
+}
+
+audiobookshelf_latest() { # no_auto
+  github_project advplyr/audiobookshelf
+}
+
+IMAGE_SEARCH+=("authelia_docker|authelia/authelia")
+authelia_docker() {
+  docker_inspect
+}
+
+authelia_docker_latest() {
+  docker_tags -s '^[0-9]\.[0-9]+\.[0-9]+' authelia/authelia
+}
+
+authelia_latest() { # no_auto
+  github_project authelia/authelia
+}
+
+IMAGE_SEARCH+=("bazarr_docker|linuxserver/bazarr")
+bazarr_docker() {
+  docker_inspect | sed -r 's/-[a-z0-9]+$//'
+}
+
+bazarr_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' lscr.io/linuxserver/bazarr
+}
+
+bazarr_latest() { # no_auto
+  github_project morpheus65535/bazarr
+}
+
+IMAGE_SEARCH+=("booklore_docker|booklore/booklore")
+booklore_docker() {
+  check_prog unzip || return 1
+  check_prog yq || return 1
+
+  local tmp out
+  tmp=$(maketemp -d)
+  docker_compose_cp /app/app.jar "$tmp/" &> /dev/null
+  out=$(unzip -p "$tmp"/app.jar BOOT-INF/classes/application.yaml)
+  log -d -d "Unzip output: $out"
+  [[ -n "$out" ]] && yq -r '.app.version' <<< "$out"
+}
+
+booklore_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' booklore/booklore
+}
+
+booklore_latest() { # no_auto
+  github_project booklore-app/booklore
+}
+
+IMAGE_SEARCH+=("bookshelf_docker|pennydreadful/bookshelf:softcover")
+bookshelf_docker() {
+  docker_compose_exec /app/readarr/bin/Readarr /? | \
+    awk '/Readarr - Version /{print $NF;exit}'
+}
+
+bookshelf_docker_latest() {
+  docker_tags -s '^softcover-v?[0-9][0-9.]+$' ghcr.io/pennydreadful/bookshelf | \
+    sed 's/^softcover-//'
+}
+
+IMAGE_SEARCH+=("bookstack_docker|linuxserver/bookstack")
+bookstack_docker() {
+  docker_inspect | sed -r 's/-[a-z0-9]+$//'
+}
+
+bookstack_docker_latest() { # no_auto
+  docker_tags -s 'v[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/bookstack
+}
+
+bookstack_latest() { # no_auto
+  github_project BookStackApp/BookStack
+}
+
+IMAGE_SEARCH+=("calibre_docker|linuxserver/calibre")
+calibre_docker() {
+  docker_inspect
+}
+
+calibre_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.-]+-ls[0-9]+' lscr.io/linuxserver/calibre
+}
+
+calibre_latest() { # no_auto
+  github_project kovidgoyal/calibre
+}
+
+calibre_ls_latest() { # no_auto
+  github_project linuxserver/docker-calibre
+}
+
+IMAGE_SEARCH+=("calibre_web_docker|linuxserver/calibre-web")
+calibre_web_docker() {
+  docker_inspect
+}
+
+calibre_web_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.-]+-ls[0-9]+' lscr.io/linuxserver/calibre-web
+}
+
+calibre_web_latest() { # no_auto
+  github_project janeczku/calibre-web
+}
+
+calibre_web_ls_latest() { # no_auto
+  github_project linuxserver/docker-calibre-web
+}
+
+IMAGE_SEARCH+=("chronograf_docker|chronograf")
+chronograf_docker() {
+  docker_printenv CHRONOGRAF_VERSION
+}
+
+chronograf_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' chronograf
+}
+
+chronograf_latest() { # no_auto
+  github_project influxdata/chronograf
+}
+
+codium() {
+  if command -v rpm > /dev/null 2>&1; then
+    /usr/bin/rpm -q --queryformat '%{VERSION}' codium
+  else
+    return 1
+  fi
+}
+
+codium_latest() { # no_auto
+  github_project VSCodium/vscodium
+}
+
+IMAGE_SEARCH+=("collabora_docker|collabora/code")
+collabora_docker() {
+  docker_inspect
+}
+
+collabora_docker_latest() {
+  # Strip off the 5th+ part of the version string
+  docker_tags -r '(alpha|beta|rc)([0-9]+)?$' -s "^[0-9][0-9.]+" collabora/code | \
+    sed -r 's/^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+).*$/\1/'
+}
+
+cpputilities_pacman() {
+  pacman_package "c++utilities"
+}
+
+cpputilities_aur_latest() { # no_auto
+  aur_package c++utilities
+}
+
+dbeaver_ce_bin_pacman() {
+  pacman_package dbeaver-ce-bin
+}
+
+dbeaver_ce_bin_aur_latest() {
+  aur_package dbeaver-ce-bin
+}
+
+dbeaver_flatpak() {
+  flatpak_version io.dbeaver.DBeaverCommunity
+}
+
+dbeaver_flatpak_latest() { # no_auto
+  flatpak_latest io.dbeaver.DBeaverCommunity
+}
+
+decode_config() {
+  check_prog decode-config || return 1
+  awk -F"'" '$2=="VERSION"{split($4,a,".");printf "%s.%s.%s\n",a[1],a[2],a[3];exit}' \
+    "$(realpath "$(command -v decode-config)")"
+}
+
+decode_config_latest() {
+  github_project tasmota/decode-config
+}
+
+docker_compose() {
+  check_prog docker || return 1
+  docker compose version | \
+    awk -F '[ ,]' '{print $4;exit}' | \
+    sed 's/^v//'
+}
+
+docker_compose_latest() {
+  github_project docker/compose
+}
+
+IMAGE_SEARCH+=("dockhand_docker|fnsys/dockhand")
+dockhand_docker() {
+  check_prog jq || return 1
+  local tmp
+  tmp=$(maketemp -d)
+  docker_compose_cp /app/build/server/chunks "$tmp" &> /dev/null
+  # shellcheck disable=SC2016
+  grep '^const [a-z][a-z0-9A-Z_]*=JSON.parse(`' "$tmp"/chunks/_server*.js | \
+    sed -r 's/^[^`]+`//;s/`[^`]+$//;s/\\\\/\\/g' | \
+    jq -r '.[].version' 2> /dev/null | \
+    sort -V | \
+    tail -n1
+}
+
+dockhand_docker_latest() {
+  docker_tags -r '^[0-9a-f]+$' -s '^v[0-9][0-9.]+' -r '-baseline$' fnsys/dockhand
+}
+
+dockhand_latest() { # no_auto
+  github_project Finsys/dockhand
+}
+
+electron28_bin_pacman() {
+  pacman_package electron28-bin
+}
+
+electron28_bin_aur_latest() { # no_auto
+  aur_package electron28-bin
+}
+
+empiretech_camera_file() {
+  cat "$PROGDATA"/"${FUNCNAME[0]%_file}".txt
+}
+
+empiretech_camera_latest() {
+  check_prog xmllint || return 1
+  curl -s "https://empiretech01.com/pages/download-firmwares" | \
+    xmllint --html --xpath "//div[@class='firmwares_content_container']/div[1][contains(text(), 'IPC-Color4K-T-S2')]/following-sibling::div[2]/text()" - 2> /dev/null
+}
+
+errands_flatpak() {
+  flatpak_version io.github.mrvladus.List
+}
+
+errands_flatpak_latest() { # no_auto
+  flatpak_latest io.github.mrvladus.List
+}
+
+IMAGE_SEARCH+=("etherpad_docker|etherpad")
+etherpad_docker() {
+  docker_inspect
+}
+
+etherpad_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+' etherpad/etherpad
+}
+
+etherpad_latest() { # no_auto
+  github_project ether/etherpad
+}
+
+IMAGE_SEARCH+=("fcgiwrap_docker|fcgiwrap")
+fcgiwrap_docker() {
+  if docker_compose_exec test -f /etc/alpine-release &> /dev/null; then
+    alpine_docker_package
+  else
+    docker_compose_exec fcgiwrap -h | awk '/^fcgiwrap version/{print $3;exit}'
+  fi
+}
+
+fcgiwrap_alpine_latest() {
+  alpine_package_latest fcgiwrap
+}
+
+fcgiwrap_latest() { # no_auto
+  github_tags -r '^v' gnosek/fcgiwrap
+}
+
+fcgiwrap_docker_latest() { fcgiwrap_alpine_latest "$@"; } # alias_latest
+IMAGE_SEARCH+=("feishin_docker|jeffvli/feishin")
+feishin_docker() {
+  local tmp
+  tmp=$(maketemp -d)
+  docker_compose_cp /usr/share/nginx/html/assets "$tmp" &> /dev/null
+    grep -ohP '(?<=")[0-9.]+(?="[^}]*\{version:)' "$tmp"/assets/index-*.js
+}
+
+feishin_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/jeffvli/feishin
+}
+
+feishin_latest() { # no_auto
+  github_project jeffvli/feishin
+}
+
+ffprobe() {
+  check_prog ffprobe || return 1
+  ffprobe -version 2>&1 | awk '/^ffprobe version/{gsub(/-static/,"",$3);print $3;exit}'
+}
+
+ffprobe_latest() { # no_auto
+  curl -s "https://johnvansickle.com/ffmpeg/" | awk '/<th>release: [0-9]/{gsub(/<.*$/,"",$2);print $2;exit}'
+}
+
+IMAGE_SEARCH+=("filestash_docker|/filestash")
+filestash_docker() {
+  docker_compose_exec curl -s "http://127.0.0.1:8334/about" | \
+    awk '/<h1> Filestash .+ <\/h1>/{print $3;exit}'
+}
+
+filestash_latest() { # no_auto
+  local app_version build_date
+  app_version=$(curl -s "https://raw.githubusercontent.com/mickael-kerjean/filestash/refs/heads/master/server/common/constants.go" | \
+    awk -F '"' '/^[[:space:]]*APP_VERSION[[:space:]]+=[[:space:]]+"/{print $2;exit}')
+  build_date=$(skopeo inspect docker://machines/filestash:latest | jq -r '.Created' 2> /dev/null)
+  build_date=$(echo "$build_date" | \
+    awk -F'[-T]' '/^[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}T/{print "." $1 $2 $3;exit}')
+  echo "$app_version$build_date"
+}
+
+firefox_flatpak() {
+  flatpak_version org.mozilla.firefox
+}
+
+firefox_flatpak_latest() { # no_auto
+  flatpak_latest org.mozilla.firefox
+}
+
+IMAGE_SEARCH+=("flaresolverr_docker|flaresolverr/flaresolverr")
+flaresolverr_docker() {
+  check_prog jq || return 1
+  docker_compose_exec curl -s "http://127.0.0.1:8191" | jq -r '.version' 2> /dev/null
+}
+
+flaresolverr_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+' flaresolverr/flaresolverr
+}
+
+flaresolverr_latest() { # no_auto
+  # https://raw.githubusercontent.com/21hsmw/FlareSolverr/refs/heads/nodriver-support/CHANGELOG.md
+  github_project flaresolverr/flaresolverr
+}
+
+flatseal_flatpak() {
+  flatpak_version com.github.tchx84.Flatseal
+}
+
+flatseal_flatpak_latest() { # no_auto
+  flatpak_latest com.github.tchx84.Flatseal
+}
+
+flip_2_dnd_pro() {
+  local out
+  out=$(curl_api)
+  [[ "$out" ]] && jq -rn --argjson j "$out" '$j[].tag_name' 2> /dev/null | \
+    sort -V | \
+    tail -n1
+}
+
+flip_2_dnd_latest() {
+  github_project robinsrk/flip-2-dnd
+}
+
+IMAGE_SEARCH+=("forgejo_docker|forgejo/forgejo")
+forgejo_docker() {
+  docker_compose_exec gitea --version | awk '{gsub(/\+gitea.*$/,"",$3);print $3;exit}'
+}
+
+forgejo_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' codeberg.org/forgejo/forgejo
+}
+
+forgejo_latest() { # no_auto
+  codeberg_project forgejo/forgejo
+}
+
+forgejo_runner() {
+  forgejo-runner --version | awk '{print $NF;exit}'
+}
+
+IMAGE_SEARCH+=("forgejo_runner_docker|forgejo/runner")
+forgejo_runner_docker() {
+  docker_compose_exec forgejo-runner --version | awk '{print $NF;exit}'
+}
+
+forgejo_runner_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' code.forgejo.org/forgejo/runner
+}
+
+forgejo_runner_latest() {
+  codeberg_project -f forgejo/runner
+}
+
+IMAGE_SEARCH+=("frigate_docker|blakeblackshear/frigate")
+frigate_docker() {
+  docker_compose_exec cat /opt/frigate/frigate/version.py | \
+    awk -F '"' '{sub(/-[^-]+$/,"",$2);print $2;exit}'
+}
+
+frigate_docker_latest() {
+  docker_tags -r '^[0-9]+$' -s '^v?[0-9][0-9.]+$' ghcr.io/blakeblackshear/frigate
+}
+
+frigate_latest() { # no_auto
+  github_project blakeblackshear/frigate
+}
+
+IMAGE_SEARCH+=("giftmanager_docker|icbest/giftmanager")
+giftmanager_docker() {
+  docker_compose_exec cat /app/app.py | awk '$1=="app_version" {gsub(/"/,"");print $NF;exit}'
+}
+
+giftmanager_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' icbest/giftmanager
+}
+
+giftmanager_latest() { # no_auto
+  github_project icbestCA/giftmanager
+}
+
+IMAGE_SEARCH+=("gitea_docker|docker.gitea.com/gitea")
+gitea_docker() {
+  docker_compose_exec gitea --version | awk '{print $3;exit}'
+}
+
+gitea_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' docker.gitea.com/gitea
+}
+
+gitea_latest() { # no_auto
+  github_project go-gitea/gitea
+}
+
+IMAGE_SEARCH+=("gitlab_docker|gitlab/gitlab-ce")
+gitlab_docker() {
+  docker_compose_exec cat /opt/gitlab/version-manifest.txt | \
+    awk '$1=="gitlab-ce" { print $2; exit }'
+}
+
+gitlab_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+-ce' gitlab/gitlab-ce | sed 's/-ce.*$//'
+}
+
+gitlab_latest() { # no_auto
+  curl -s "https://gitlab.com/gitlab-org/gitlab-foss/-/raw/master/CHANGELOG.md" \
+    | awk '/^## [0-9]+\.[0-9]+\.[0-9]+ \([0-9]{4}-[0-9]{2}-[0-9]{2}\)/{print $2;exit}'
+}
+
+gpuviewer_flatpak() {
+  flatpak_version io.github.arunsivaramanneo.GPUViewer
+}
+
+gpuviewer_flatpak_latest() { # no_auto
+  flatpak_latest io.github.arunsivaramanneo.GPUViewer
+}
+
+IMAGE_SEARCH+=("grafana_docker|grafana/grafana")
+grafana_docker() {
+  docker_compose_exec grafana-server -v | awk '/^Version [0-9]/{print $2;exit}'
+}
+
+grafana_docker_latest() { # no_auto
+  docker_tags -r '^[0-9]+$' -s '^v?[0-9][0-9.]+$' grafana/grafana
+}
+
+grafana_latest() { # no_auto
+  github_project grafana/grafana
+}
+
+grayjay_bin_pacman() {
+  pacman_package grayjay-bin
+}
+
+grayjay_bin_aur_latest() { # no_auto
+  aur_package grayjay-bin
+}
+
+IMAGE_SEARCH+=("hawser_docker|finsys/hawser")
+hawser_docker() {
+  docker_inspect
+}
+
+hawser_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/finsys/hawser
+}
+
+hawser_latest() { # no_auto
+  github_project Finsys/hawser
+}
+
+IMAGE_SEARCH+=("immich_docker|immich-app/immich-server")
+immich_docker() {
+  docker_printenv IMMICH_SOURCE_REF
+}
+
+immich_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' "ghcr.io/immich-app/immich-server"
+}
+
+immich_latest() { # no_auto
+  github_project immich-app/immich
+}
+
+IMAGE_SEARCH+=("immichframe_docker|immichframe/immichframe")
+immichframe_docker() {
+  docker_inspect
+}
+
+immichframe_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/immichframe/immichframe
+}
+
+immichframe_latest() { # no_auto
+  github_project immichFrame/ImmichFrame
+}
+
+IMAGE_SEARCH+=("influxdb_docker|influxdb")
+influxdb_docker() {
+  docker_printenv INFLUXDB_VERSION
+}
+
+influxdb_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+-core' influxdb | sed 's/-core//'
+}
+
+influxdb_latest() { # no_auto
+  github_project influxdata/influxdb
+}
+
+IMAGE_SEARCH+=("jackett_docker|linuxserver/jackett")
+jackett_docker() {
+  docker_inspect | sed -r 's/-[a-z0-9]+$//'
+}
+
+jackett_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/jackett
+}
+
+jackett_latest() { # no_auto
+  github_project linuxserver/docker-jackett
+}
+
+IMAGE_SEARCH+=("jellyfin_docker|jellyfin/jellyfin")
+jellyfin_docker() {
+  docker_compose_exec /jellyfin/jellyfin --version 2>&1 | \
+    awk '{split($2,a,".");for (i=1;i<length(a)-1;i++)printf "%s.",a[i];printf "%s\n",a[length(a)-1];exit}'
+}
+
+jellyfin_docker_latest() {
+  # Exclude any datestrings
+  docker_tags -r 'unstable' -r '[0-9]{10}' -r '[0-9]{8}-[0-9]{6}' -s '^v?[0-9][0-9.]+' jellyfin/jellyfin
+}
+
+jellyfin_latest() { # no_auto
+  github_project jellyfin/jellyfin
+}
+
+IMAGE_SEARCH+=("jellyfin_vue_docker|jellyfin/jellyfin_vue")
+jellyfin_vue_docker() {
+  check_prog js-beautify || return 1
+  local tmp
+  tmp=$(maketemp -d)
+
+  # Copy container files to temp directory
+  docker_compose_cp /usr/share/nginx/html/assets "$tmp"
+
+  # Get js-beautify'd output from the main-*.js file
+  local jsb
+  jsb=$(cat "$tmp"/assets/main-*.js | js-beautify 2>&1)
+  [[ -z "$jsb" ]] && log -e "Could not get js-beautify'd output for ${FUNCNAME[0]}" && return 1
+
+  # Get the version string for Jellyfin Vue
+  local version=
+  version=$(echo "$jsb" | \
+    awk '/name: ["`'"'"']Jellyfin Web.*Vue/{on=1}on==1&&$1=="version:"{print $2;exit}')
+  [[ -z "$version" ]] && log -e "Could not get version string for ${FUNCNAME[0]}" && return 1
+
+  # Get the version number from version string
+  echo "$jsb" | awk -F'["`'"'"']' -v v="$version" '$1 ~ v " ?= ?"{print $2;exit}'
+}
+
+jellyfin_vue_docker_latest() { # no_auto
+  docker_tags -s '^stable-rc.[0-9][0-9.]+' jellyfin/jellyfin-vue
+    sed 's/^stable-rc\.//'
+}
+
+jellyfin_vue_latest() { # no_auto
+  github_tags jellyfin/jellyfin-vue
+}
+
+IMAGE_SEARCH+=("jellystat_docker|cyfershepard/jellystat")
+jellystat_docker() {
+  check_prog jq || return 1
+  docker_compose_exec wget -qO- "http://127.0.0.1:3000/auth/isconfigured" | jq -r '.version' 2> /dev/null
+}
+
+jellystat_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+' cyfershepard/jellystat
+}
+
+jellystat_latest() { # no_auto
+  github_project CyferShepard/Jellystat
+}
+
+IMAGE_SEARCH+=("jitsi_excalidraw_docker|jitsi[-/]excalidraw")
+jitsi_excalidraw_docker() {
+  docker_inspect
+}
+
+jitsi_excalidraw_docker_latest() {
+  docker_tags -r '^(latest|[0-9]{4}\.[0-9]+\.[0-9]+)$' jitsi/excalidraw-backend
+}
+
+jitsi_excalidraw_latest() { # no_auto
+  github_project "jitsi/excalidraw-backend"
+}
+
+IMAGE_SEARCH+=("jitsi_meet_docker|(jitsi/web|jitsi-meet-web)")
+jitsi_meet_docker() {
+  local v
+  v=$(docker_inspect)
+  if [[ -n "$v" ]]; then
+    "stable/jitsi-meet_$v"
+  else
+    docker_inspect -i | sed -r 's/stable-/stable\/jitsi-meet_/'
+  fi
+}
+
+jitsi_meet_docker_latest() {
+  docker_tags -s '^stable-[0-9]+' jitsi/web | sed -r 's#^(stable)-#\1/jitsi-meet_#'
+}
+
+jitsi_meet_latest() { # no_auto
+  github_project jitsi/jitsi-meet
+}
+
+joplin_desktop() {
+  realpath "$HOME"/.local/bin/joplin-desktop | \
+    sed -r 's/^.*Joplin-(.*)\.AppImage/\1/' | \
+    awk '{print $0;exit}'
+}
+
+joplin_server() {
+  out=$(curl_api)
+  [[ -n "$out" ]] && awk '/Joplin Server [0-9]/{gsub(/,$/,"",$3);print "server-v" $3;exit}' <<< "$out"
+}
+
+joplin_latest() { # no_auto
+  github_project laurent22/joplin
+}
+
+IMAGE_SEARCH+=("kapacitor_docker|kapacitor")
+kapacitor_docker() {
+  docker_printenv KAPACITOR_VERSION
+}
+
+kapacitor_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' kapacitor
+}
+
+kapacitor_latest() { # no_auto
+  github_project influxdata/kapacitor
+}
+
+libpam_pwdfile_rs_bin_pacman() {
+  pacman_package libpam-pwdfile-rs-bin
+}
+
+libpam_pwdfile_rs_bin_aur_latest() { # no_auto
+  aur_package libpam-pwdfile-rs-bin
+}
+
+libratbag_git_pacman() {
+  pacman_package libratbag-git
+}
+
+libratbag_git_latest() { # no_auto
+  check_prog xmllint || return 1
+  curl -s "https://github.com/libratbag/libratbag/commits/master/" | \
+    xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
+    grep -iv "^All time$" | \
+    head -n1
+}
+
+IMAGE_SEARCH+=("librespeed_docker|librespeed/speedtest")
+librespeed_docker() {
+  docker_compose_exec cat /var/www/html/speedtest.js | \
+    awk '/LibreSpeed by /{gsub(/^v/,"",$5);print $5;exit}'
+}
+
+librespeed_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' "ghcr.io/librespeed/speedtest"
+}
+
+librespeed_latest() { # no_auto
+  github_project librespeed/speedtest
+}
+
+librewolf() {
+  if [[ -x /usr/bin/librewolf ]]; then
+    /usr/bin/librewolf --version | awk '{ print $NF;exit }'
+  elif [[ -x /usr/local/bin/librewolf ]]; then
+    /usr/local/bin/librewolf --version | awk '{ print $NF;exit }'
+  elif [[ -x /Applications/LibreWolf.app/Contents/MacOS/librewolf ]]; then
+    /Applications/LibreWolf.app/Contents/MacOS/librewolf --version | awk '{ print $NF;exit }'
+  else
+    printf '{ "Error": "Librewolf not found" }'
+  fi
+}
+
+librewolf_flatpak() {
+  flatpak_version io.gitlab.librewolf-community
+}
+
+librewolf_pacman() {
+  pacman_package librewolf
+}
+
+librewolf_latest() {
+  codeberg_project librewolf/source
+}
+
+librewolf_bin_pacman() {
+  pacman_package librewolf-bin
+}
+
+librewolf_bin_aur_latest() { # no_auto
+  aur_package librewolf-bin
+}
+
+librewolf_flatpak_latest() { # no_auto
+  flatpak_latest io.gitlab.librewolf-community
+}
+
+librewolf_homebrew_latest() {
+  check_prog xmllint || return 1
+  curl -sL "https://formulae.brew.sh/cask/librewolf#default" | \
+    xmllint --html --xpath '//p[starts-with(text(), "Current version:")]/a/text()' - 2> /dev/null | \
+    sed -r 's/,([0-9]+)$/-\1/'
+}
+
+IMAGE_SEARCH+=("librewolf_docker|linuxserver/librewolf")
+librewolf_docker() {
+  docker_inspect
+}
+
+librewolf_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.-]+-ls[0-9]+' lscr.io/linuxserver/librewolf
+}
+
+librewolf_ls_latest() { # no_auto
+  github_project linuxserver/docker-librewolf
+}
+
+IMAGE_SEARCH+=("linkding_docker|sissbruecker/linkding")
+linkding_docker() {
+  docker_compose_exec cat /etc/linkding/version.txt
+}
+
+linkding_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' sissbruecker/linkding
+}
+
+linkding_latest() { # no_auto
+  github_project sissbruecker/linkding
+}
+
+IMAGE_SEARCH+=("linkwarden_docker|linkwarden/linkwarden")
+linkwarden_docker() {
+  docker_inspect
+}
+
+linkwarden_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/linkwarden/linkwarden
+}
+
+linkwarden_latest() { # no_auto
+  github_project linkwarden/linkwarden
+}
+
+lisgd_pacman() {
+  pacman_package lisgd
+}
+
+lisgd_aur_latest() {
+  aur_package lisgd
+}
+
+IMAGE_SEARCH+=("lldap_docker|lldap/lldap")
+lldap_docker() {
+  docker_inspect | sed 's/-alpine//'
+}
+
+lldap_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+-alpine$' lldap/lldap | sed 's/-alpine//'
+}
+
+lldap_latest() { # no_auto
+  github_project lldap/lldap
+}
+
+IMAGE_SEARCH+=("localai_docker|go-skynet/local-ai:(latest|master)")
+localai_docker() {
+  docker_compose_exec /local-ai --version
+  local containername
+  containername=$(get_container_name "${FUNCNAME[0]}") || return 1
+  docker_inspect "${containername}" | \
+    sed -r 's#([^/]+/){1}[^:]+:(v[0-9.]+|master|latest)-#-#'
+}
+
+IMAGE_SEARCH+=("localai_gpu_intel_docker|go-skynet/local-ai.*:.*-gpu-intel")
+localai_gpu_intel_docker() {
+  local v
+  v=$(docker_compose_exec /local-ai --version)
+  echo "$v-gpu-intel"
+}
+
+IMAGE_SEARCH+=("localai_gpu_intel_unversioned_docker|go-skynet/local-ai.*:(latest|master)-gpu-intel")
+localai_gpu_intel_unversioned_docker() {
+  echo "sha-"
+  docker_compose_exec /local-ai --version
+  echo "-gpu-intel"
+}
+
+localai_gpu_intel_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+-gpu-intel$' localai/localai
+}
+
+localai_gpu_intel_unversioned_docker_latest() { # no_auto
+  docker_tags -S -s '^sha-[0-9a-f]{7}-gpu-intel$' localai/localai
+}
+
+logseq_desktop_bin_pacman() {
+  pacman_package logseq-desktop-bin
+}
+
+logseq_desktop_bin_aur_latest() {
+  aur_package logseq-desktop-bin
+}
+
+logseq_flatpak() {
+  flatpak_version com.logseq.Logseq
+}
+
+logseq_flatpak_latest() { # no_auto
+  flatpak_latest com.logseq.Logseq
+}
+
+IMAGE_SEARCH+=("mariadb_docker|mariadb")
+mariadb_docker() {
+  docker_compose_exec mariadbd -V | awk '{gsub(/-MariaDB.*$/,"",$3);print $3;exit}'
+}
+
+mariadb_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]*$' mariadb
+}
+
+mariadb_latest() { # no_auto
+  github_project MariaDB/server | sed 's/^mariadb-//'
+}
+
+IMAGE_SEARCH+=("meilisearch_docker|getmeili/meilisearch")
+meilisearch_docker() {
+  docker_compose_exec meilisearch -V | awk '{print $2;exit}'
+}
+
+meilisearch_docker_latest() {
+  docker_tags -r '-(amd64|arm64)$' -s '^v?[0-9].*' getmeili/meilisearch
+}
+
+meilisearch_latest() { # no_auto
+  github_project meilisearch/meilisearch
+}
+
+IMAGE_SEARCH+=("memcached_docker|memcached")
+memcached_docker() {
+  docker_compose_exec memcached --version | awk '{print $2;exit}'
+}
+
+memcached_docker_latest() {
+  docker_tags -s '^v?[0-9].*-alpine$' memcached | sed 's/-alpine//'
+}
+
+memcached_latest() { # no_auto
+  github_tags -s '^v?[0-9][0-9.]+$' memcached/memcached
+}
+
+molly_guard_arch() {
+  pacman_package molly-guard-git | sed -r 's/-[0-9]+$//'
+}
+
+molly_guard_latest() {
+  check_prog xmllint || return 1
+  curl -s "https://salsa.debian.org/debian/molly-guard/-/tags?format=atom" | \
+    xmllint --html --xpath "string(//feed/entry/title)" - 2> /dev/null | \
+    awk -F/ '/^debian/{print $2;exit}'
+}
+
+IMAGE_SEARCH+=("mollysocket_docker|mollyim/mollysocket")
+mollysocket_docker() {
+  docker_compose_exec mollysocket -V | awk '{print $2;exit}'
+}
+
+mollysocket_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/mollyim/mollysocket
+}
+
+mollysocket_latest() { # no_auto
+  github_project mollyim/mollysocket
+}
+
+mongodb_compass_flatpak() {
+  flatpak_version com.mongodb.Compass
+}
+
+mongodb_compass_flatpak_latest() { # no_auto
+  flatpak_latest com.mongodb.Compass
+}
+
+mosquitto() {
+  docker_printenv VERSION
+}
+
+mosquitto_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+-alpine$' eclipse-mosquitto | sed 's/-alpine$//'
+}
+
+mosquitto_latest() { # no_auto
+  github_tags eclipse-mosquitto/mosquitto
+}
+
+mpv_flatpak() {
+  flatpak_version io.mpv.Mpv
+}
+
+mpv_flatpak_latest() { # no_auto
+  flatpak_latest io.mpv.Mpv
+}
+
+mqtt5_explorer_bin_pacman() {
+  pacman_package mqtt5-explorer-bin
+}
+
+mqtt5_explorer_bin_aur_latest() { # no_auto
+  aur_package mqtt5-explorer-bin
+}
+
+mqtt5_explorer_flatpak() {
+  flatpak_version io.github.Omniaevo.mqtt5-explorer
+}
+
+mqtt5_explorer_flatpak_latest() { # no_auto
+  flatpak_latest io.github.Omniaevo.mqtt5-explorer
+}
+
+IMAGE_SEARCH+=("mysql_docker|mysql/mysql-server")
+mysql_docker() {
+  docker_compose_exec mysqld -V | awk '{print $3;exit}'
+}
+
+mysql_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]*$' mysql
+}
+
+mysql_latest() { # no_auto
+  github_tags -s '^mysql-[0-9][0-9.]+' mysql/mysql-server | sed 's/^mysql--//'
+}
+
+IMAGE_SEARCH+=("naemon_docker|naemon")
+naemon_docker() {
+  docker_compose_exec naemon --version | \
+    awk '{if (match($NF, /^[0-9][0-9.]+/,a)){gsub(/\.$/,"",a[0]);print a[0]}else print $NF;exit}'
+}
+
+naemon_latest() {
+  github_project naemon/naemon-core
+}
+
+IMAGE_SEARCH+=("nagios_docker|nagios")
+nagios_docker() {
+  docker_compose_exec cat /etc/versions/nagios.txt
+}
+
+nagios_latest() { # no_auto
+  github_project "NagiosEnterprises/nagioscore"
+}
+
+IMAGE_SEARCH+=("navidrome_docker|deluan/navidrome")
+navidrome_docker() {
+  docker_inspect
+}
+
+navidrome_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+$' deluan/navidrome
+}
+
+navidrome_latest() { # no_auto
+  github_project navidrome/navidrome
+}
+
+IMAGE_SEARCH+=("nextcloud_docker|nextcloud")
+nextcloud_docker() {
+  docker_printenv NEXTCLOUD_VERSION
+}
+
+nextcloud_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' nextcloud
+}
+
+nextcloud_latest() { # no_auto
+  curl -s "https://nextcloud.com/changelog/" | \
+    awk -F'[/"]' '
+      /\/download\.nextcloud\.com\/server\/releases\/nextcloud-.*\.tar\.bz2/ {
+        gsub(/^nextcloud-/, "", $9)
+        gsub(/\.tar\..*$/,"",$9)
+        print $9
+        exit
+      }'
+}
+
+# To handle multiple different nginx types running, additional functions will have to be made
+IMAGE_SEARCH+=("nginx_docker|nginx")
+nginx_docker() {
+  docker_compose_exec nginx -V 2>&1 | \
+    awk '/^nginx version: /{sub(/^.*nginx\//,"");print;exit}'
+}
+
+nginx_alpine_latest() {
+  alpine_package_latest nginx
+}
+
+nginx_latest() { # no_auto
+  github_project nginx/nginx
+}
+
+nginx_docker_mainline_alpine_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+-alpine$' nginx | sed 's/-alpine$//'
+}
+
+nginx_docker_mainline_latest() { # no_auto
+  curl -s "https://hub.docker.com/_/nginx" | \
+    awk -F '[><]' '
+      />mainline</ {
+        for (i=1; i<NF; i++)
+          if ($i !~ /(^$|^(a|p|code|span|svg|path) |^\/[a-z]|^(, |[^[:alnum:]])$)/) {
+            printf "release-%s", $i
+            exit
+          }
+      }'
+}
+
+IMAGE_SEARCH+=("ntfy_docker|binwiederhier/ntfy")
+ntfy_docker() {
+  docker_compose_exec ntfy --help | awk '/^ntfy [0-9]/{print $2;exit}'
+}
+
+ntfy_docker_latest() {
+  docker_tags -s '^v?[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$' binwiederhier/ntfy
+}
+
+ntfy_latest() { # no_auto
+  github_project binwiederhier/ntfy
+}
+
+ntfysh_bin_pacman() {
+  pacman_package ntfysh-bin
+}
+
+ntfysh_bin_aur_latest() {
+  aur_package ntfysh-bin
+}
+
+IMAGE_SEARCH+=("octoprint_docker|octoprint/octoprint")
+octoprint_docker() {
+  docker_compose_exec octoprint --version | awk '{print $NF;exit}'
+}
+
+octoprint_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' octoprint/octoprint
+}
+
+octoprint_latest() { # no_auto
+  github_project OctoPrint/OctoPrint
+}
+
+IMAGE_SEARCH+=("ollama_docker|ollama/ollama")
+ollama_docker() {
+  docker_compose_exec ollama -v | awk '{print $4;exit}'
+}
+
+ollama_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+$' ollama/ollama
+}
+
+ollama_latest() { # no_auto
+  github_project ollama/ollama
+}
+
+IMAGE_SEARCH+=("ollama_ipex_llm_docker|ollama.*ipex")
+ollama_ipex_llm_docker() {
+  docker_compose_exec cat /ollama/portable_version.txt | \
+    sed -r 's/^ollama-ipex-llm-(.*)-ubuntu.tgz$/\1/'
+}
+
+ollama_ipex_llm_latest() { # no_auto
+  check_prog jq || return 1
+  curl -s "https://api.github.com/repos/ipex-llm/ipex-llm/releases" | \
+    jq -r '.[] | select(.tag_name=="v2.3.0-nightly") | .assets[] | .name' 2> /dev/null | \
+    grep -E "^ollama-.*-ubuntu\.tgz" | sort -V | tail -n1 | \
+    sed -r 's/^ollama-ipex-llm-(.*)-ubuntu.tgz$/\1/'
+}
+
+IMAGE_SEARCH+=("opencloud_docker|opencloud")
+opencloud_docker() {
+  docker_compose_exec opencloud version | awk '/^Version:/{sub(/^Version: /,"");print;exit}'
+}
+
+opencloud_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+$' opencloudeu/opencloud-rolling
+}
+
+opencloud_latest() { # no_auto
+  github_project opencloud-eu/opencloud
+}
+
+IMAGE_SEARCH+=("openregex_docker|sunnev/openregex")
+openregex_docker() {
+  docker_compose_exec cat /app/CHANGELOG.md | \
+    awk -F '[][]' '
+      /^## \[([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9_]+)?)] - ([0-9]{4}-[0-9]{2}-[0-9]{2})/ {
+        print $2
+        exit
+      }'
+}
+
+openregex_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' sunnev/openregex
+}
+
+openregex_latest() { # no_auto
+  github_tags SunneV/OpenRegex
+}
+
+IMAGE_SEARCH+=("open_webui_docker|open-webui/open-webui")
+open_webui_docker() {
+  docker_compose_exec cat /app/CHANGELOG.md | \
+    awk -F '[][]' '
+      /^## \[([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9_]+)?)] - ([0-9]{4}-[0-9]{2}-[0-9]{2})/ {
+        print $2
+        exit
+      }'
+}
+
+open_webui_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' docker.io/openwebui/open-webui
+}
+
+open_webui_latest() { # no_auto
+  github_tags open-webui/open-webui
+}
+
+opnsense_device() {
+  check_prog jq || return 1
+  local out
+  out=$(curl_api)
+  [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.versions[]' 2> /dev/null)
+  log -d -d "jq output: $out"
+  [[ -n "$out" ]] && printf '%s' "$out" | awk '/OPNsense/{sub(/-[a-z].*$/,"",$2);print $2}'
+}
+
+opnsense_latest() {
+  github_tags -s '^[0-9][0-9.]+$' opnsense/core
+}
+
+oscar_pacman() {
+  pacman_package oscar
+}
+
+oscar_aur_latest() {
+  aur_package oscar
+}
+
+oscar_flatpak() {
+  flatpak_version com.sleepfiles.OSCAR
+}
+
+oscar_flatpak_latest() { # no_auto
+  flatpak_latest com.sleepfiles.OSCAR
+}
+
+IMAGE_SEARCH+=("owncloud_docker|owncloud")
+owncloud_docker() {
+  docker_compose_exec cat /var/www/owncloud/version.php | \
+    awk -F "'" '/\$OC_VersionString[[:space:]]*=/{print $2;exit}'
+}
+
+owncloud_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+$' owncloud/server
+}
+
+owncloud_latest() { # no_auto
+  github_tags -s '^v[0-9][0-9.]+$' owncloud/core
+}
+
+IMAGE_SEARCH+=("pagefind_docker|pagefind")
+pagefind_docker() {
+  check_prog docker || return 1
+  docker run --rm pagefind pagefind --version | awk '{print $NF;exit}'
+}
+
+pagefind_latest() {
+  github_project Pagefind/pagefind
+}
+
+IMAGE_SEARCH+=("php_fpm_docker|php.*fpm")
+php_fpm_docker() {
+  if docker_compose_exec test -f /etc/alpine-release &> /dev/null; then
+    alpine_docker_package "php[0-9]+-fpm"
+  else
+    docker_compose_exec php-fpm -v | awk '/^PHP [0-9]/ {print "php-" $2;exit}'
+  fi
+}
+
+php_fpm_alpine_latest() {
+  if [[ -z "$minver" ]]; then
+    alpine_package_latest 'php*-common'
+  else
+    local M=${minver%%.*}
+    local m=${minver##*.}
+    alpine_package_latest "php$M$m-common"
+  fi
+}
+
+php_latest() { # no_auto
+  curl -s "https://www.php.net/downloads.php?usage=web&os=linux&osvariant=linux-debian&version=default&source=Y" | \
+    awk -F '["/]' '/<a href="\/distributions\/php-[^"]+\.tar\.gz">/{gsub(/\.tar\.gz/,"",$4);print $4;exit}'
+}
+
+IMAGE_SEARCH+=("pihole_docker|pihole")
+pihole_docker() {
+  docker_logs pihole 2>&1 | awk '/Pi-hole version is v[0-9]/ { print $4;exit}'
+}
+
+pihole_latest() { # no_auto
+  github_project pi-hole/pi-hole
+}
+
+pinta_pacman() {
+  pacman_package pinta
+}
+
+pinta_aur_latest() {
+  aur_package pinta
+}
+
+pinta_flatpak() {
+  flatpak_version com.github.PintaProject.Pinta
+}
+
+pinta_flatpak_latest() { # no_auto
+  flatpak_latest com.github.PintaProject.Pinta
+}
+
+pipeline_gtk_pacman() {
+  pacman_package pipeline-gtk
+}
+
+pipeline_gtk_aur_latest() { # no_auto
+  aur_package pipeline-gtk
+}
+
+pipeline_flatpak() {
+  flatpak_version de.schmidhuberj.tubefeeder
+}
+
+pipeline_flatpak_latest() { # no_auto
+  flatpak_latest de.schmidhuberj.tubefeeder
+}
+
+piper_git_pacman() {
+  pacman_package piper-git
+}
+
+piper_git_latest() { # no_auto
+  check_prog xmllint || return 1
+  curl -s "https://github.com/libratbag/piper/commits/master/" | \
+    xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
+    grep -iv "^All time$" | \
+    head -n1
+}
+
+piper_git_aur_latest() {
+  aur_package piper-git
+}
+piper_flatpak() {
+  flatpak_version org.freedesktop.Piper
+}
+
+piper_flatpak_latest() { # no_auto
+  flatpak_latest org.freedesktop.Piper
+}
+
+IMAGE_SEARCH+=("plex_docker|plexinc/pms-docker")
+plex_docker() {
+  local out
+  out=$(curl_api)
+  [[ -n "$out" ]] && \
+  awk '
+    /^<MediaContainer/ {
+      for (i = 2; i < NF; i++) {
+        split($i, a, "=")
+        if (a[1] == "version") {
+          split(substr(a[2], 2, length(a[2]) - 2), v, "-")
+          print v[1]
+        }
+      }
+      exit
+    }' <<< "$out"
+}
+
+plex_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+[0-9.-]+([0-9a-f]+)?$' plexinc/pms-docker | \
+    sed -r 's/-[0-9a-f]+$//'
+}
+
+plex_latest() { # no_auto
+  check_prog jq || return 1
+  curl -s "https://plex.tv/pms/downloads/5.json?channel=plexpass" | \
+    jq -r '.["computer"]["Linux"].version' 2> /dev/null | \
+    awk -F- '{print $1;exit}'
+}
+
+IMAGE_SEARCH+=("portainer_docker|portainer/portainer-ce")
+portainer_docker() {
+  docker_compose_exec /portainer --version 2>&1
+}
+
+portainer_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' portainer/portainer-ce
+}
+
+portainer_latest() { # no_auto
+  github_project portainer/portainer
+}
+
+IMAGE_SEARCH+=("portainer_agent_docker|portainer/agent")
+portainer_agent_docker() {
+  docker_compose_exec wget --no-check-certificate -qSO- "https://127.0.0.1:9001/ping" 2>&1 | \
+    awk '/Portainer-Agent: /{print $2;exit}'
+}
+
+portainer_agent_docker_latest() { # no_auto
+  docker_tags -r '^[0-9]+$' -s '^v?[0-9][0-9.]+$' "${FUNCNAME[0]%%_*}"/agent
+}
+
+portainer_agent_latest() { portainer_latest "$@"; } # alias_no_auto
+IMAGE_SEARCH+=("postgres_docker|postgres:")
+postgres_docker() {
+  docker_printenv PG_VERSION
+}
+
+postgres_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' postgres
+}
+
+postgres_latest() { # no_auto
+  curl -s "https://www.postgresql.org/" | \
+    awk -F'[><]' '/<li class=".*\/docs\/[0-9]+\/release-/{print $5;exit}'
+}
+
+IMAGE_SEARCH+=("postgres_vchord_docker|tensorchord/vchord-postgres")
+postgres_vchord_docker() {
+  docker_inspect -i
+}
+
+postgres_vchord_docker_latest() {
+  docker_tags -r '-(amd64|arm64)$' -s '^pg17-v0\.4\.3.*' tensorchord/vchord-postgres
+}
+
+IMAGE_SEARCH+=("pot_provider_docker|ytdlp-pot-provider")
+pot_provider_docker() {
+  docker_compose_exec cat /app/package.json | jq -r '.version' 2> /dev/null
+}
+
+pot_provider_latest() {
+  github_project Brainicism/bgutil-ytdlp-pot-provider
+}
+
+privatebin() {
+  local out
+  out=$(curl_api)
+  [[ -n "$out" ]] && \
+    awk -F '[><]' '/<p class="col-md-1 col-xs-4 text-center">[^<]+<\/p>/{print $3;exit}' <<< "$out"
+}
+
+privatebin_latest() {
+  github_project PrivateBin/PrivateBin
+}
+
+proton_ge() {
+  find "$HOME"/.local/share/Steam/compatibilitytools.d -maxdepth 1 -type d -iname "*proton*ge*"
+    sort -V | \
+    tail -n1
+}
+
+proton_ge_latest() { # no_auto
+  github_project GloriousEggroll/proton-ge-custom
+}
+
+protonup_qt_flatpak() {
+  flatpak_version net.davidotek.pupgui2
+}
+
+protonup_qt_flatpak_latest() { # no_auto
+  flatpak_latest net.davidotek.pupgui2
+}
+
+IMAGE_SEARCH+=("prowlarr_docker|linuxserver/prowlarr")
+prowlarr_docker() {
+  docker_inspect
+}
+
+prowlarr_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/prowlarr
+}
+
+prowlarr_latest() { # no_auto
+  github_project linuxserver/docker-prowlarr
+}
+
+putty_cac_latest() {
+  github_project NoMoreFood/putty-cac
+}
+
+putty_cac_work() { # remote_host
+  cat "$PROGDATA"/putty-cac-work.txt
+}
+
+putty_latest() { # no_auto
+  curl -s "https://git.tartarus.org/?p=simon/putty.git;a=tags" | \
+    xmllint --html --xpath '//table[@class="tags"]//td/a[@class="list name"]/text()' - 2>/dev/null | \
+    grep -E '^[0-9]+(\.[0-9]+)+$' | \
+    sort -V | \
+    tail -n1
+}
+
+IMAGE_SEARCH+=("qbittorrent_docker|linuxserver/qbittorrent")
+qbittorrent_docker() {
+  docker_inspect
+}
+
+qbittorrent_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+(-r[0-9]+)?-ls[0-9]+' lscr.io/linuxserver/qbittorrent
+}
+
+qbittorrent_latest() { # no_auto
+  github_project linuxserver/docker-qbittorrent
+}
+
+qtforkawesome_qt6_pacman() {
+  pacman_package qtforkawesome-qt6
+}
+
+qtforkawesome_qt6_aur_latest() { # no_auto
+  aur_package qtforkawesome-qt6
+}
+
+qtutilities_qt6_pacman() {
+  pacman_package qtutilities-qt6
+}
+
+qtutilities_qt6_aur_latest() { # no_auto
+  aur_package qtutilities-qt6
+}
+
+IMAGE_SEARCH+=("qui_docker|autobrr/qui")
+qui_docker() {
+  docker_inspect
+}
+
+qui_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/autobrr/qui
+}
+
+qui_latest() { # no_auto
+  github_project autobrr/qui
+}
+
+IMAGE_SEARCH+=("radarr_docker|linuxserver/radarr")
+radarr_docker() {
+  docker_inspect
+}
+
+radarr_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/radarr
+}
+
+radarr_latest() { # no_auto
+  github_project linuxserver/docker-radarr
+}
+
+rclone() {
+  local bin
+  bin=/usr/local/bin/rclone
+  [[ -x /usr/bin/rclone ]] && bin=/usr/bin/rclone
+  "$bin" --version | awk "\$1==\"rclone\"{print \$2;exit}"
+}
+
+rclone_latest() { # no_auto
+  github_project rclone/rclone
+}
+
+IMAGE_SEARCH+=("readarr_docker|linuxserver/readarr")
+readarr_docker() {
+  docker_inspect
+}
+
+readarr_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/readarr
+}
+
+readarr_latest() { # no_auto
+  github_tags -r '^nightly' linuxserver/docker-readarr | sed 's/^develop-//'
+}
+
+IMAGE_SEARCH+=("redis_docker|redis")
+redis_docker() {
+  docker_compose_exec redis-server --version | sed -r 's/^.*v=(\S+) .*$/\1/'
+}
+
+redis_docker_latest() {
+  docker_tags -s '^[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$' redis
+}
+
+redis_latest() { # no_auto
+  github_project redis/redis
+}
+
+IMAGE_SEARCH+=("registry_docker|registry")
+registry_docker() {
+  docker_logs registry 2>&1 | \
+    awk '
+      /service=registry version=v/ {
+        v = substr($0, index($0, "service=registry version=v") + 26)
+      }
+      END {
+        gsub(/[ \t]+/,"", v)
+        print v
+      }'
+}
+
+registry_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' registry
+}
+
+registry_latest() { # no_auto
+  github_project distribution/distribution
+}
+
+restic_command() {
+  if [[ -e /opt/homebrew/bin/restic ]]; then
+    /opt/homebrew/bin/restic version | awk '{print $2;exit}'
+  else
+    /usr/local/bin/restic version | awk '{print $2;exit}'
+  fi
+}
+
+restic_command_latest() { # no_auto
+  github_project restic/restic
+}
+
+IMAGE_SEARCH+=("restic_rest_server_docker|restic/rest-server")
+restic_rest_server_docker() {
+  docker_compose_exec rest-server --version | awk '{print $4;exit}'
+}
+
+restic_rest_server_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' restic/rest-server
+}
+
+restic_rest_server_latest() { # no_auto
+  github_project restic/rest-server
+}
+
+IMAGE_SEARCH+=("restreamer_docker|datarhei/restreamer")
+restreamer_docker() {
+  local tmp
+  tmp=$(maketemp -d)
+  docker_compose_cp /core/ui/static/js "$tmp"
+  cat "$tmp"/js/main.*.js | \
+    grep restreamer-v | sed -r 's/^.*:"restreamer-(v[^"]+)".*$/\1/'
+}
+
+restreamer_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' datarhei/restreamer
+}
+
+restreamer_latest() { # no_auto
+  github_project datarhei/restreamer
+}
+
+rofi_rbw() {
+  rofi-rbw --version | sed 's/^rofi-rbw //'
+}
+
+rofi_rbw_latest() {
+  github_project fdw/rofi-rbw
+}
+
+routeros_latest() {
+  check_prog xmllint || return 1
+  curl -sL "https://cdn.mikrotik.com/routeros/latest-stable.rss" | \
+    xmllint --xpath "string(/rss/channel/item/link)" - 2> /dev/null | sed -r 's#^https?://.*mikrotik\.com/download\?v=##'
+}
+
+routeros_device() { # remote_host
+  check_prog jq || return 1
+  local out
+  out=$(curl_api)
+  jq -rn --argjson j "$out" --arg app routeros '$j.[] | select(.name == $app) | .version' 2> /dev/null
+}
+
+IMAGE_SEARCH+=("rsyslog_docker|rsyslog")
+rsyslog_docker() {
+  docker_compose_exec rsyslogd -v | awk '{print $2;exit}'
+}
+
+rsyslog_latest() { # no_auto
+  github_tags rsyslog/rsyslog
+}
+
+IMAGE_SEARCH+=("seafile_docker|seafiletld/seafile-mc")
+seafile_docker() {
+  docker_printenv SEAFILE_VERSION
+}
+
+seafile_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' seafileltd/seafile-mc
+}
+
+seafile_latest() { # no_auto
+  github_tags -s '^v?[0-9][0-9.]+-server$' haiwen/seafile-server | \
+    sed 's/^v//;s/-server$//'
+}
+
+seafile_client_appimage() {
+  realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
+    sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
+}
+
+seafile_client_appimage_latest() { # no_auto
+  check_prog xmllint || return 1
+  curl -s "https://www.seafile.com/en/download/" | \
+    xmllint --html --xpath 'string(//h3[contains(text(), "Client for Linux")]/following-sibling::p/following-sibling::a[contains(@href, "Seafile-x86_64-")]/@href)' - 2>/dev/null | \
+    sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
+}
+
+IMAGE_SEARCH+=("seerr_docker|seerr-team/seerr")
+seerr_docker() {
+  check_prog jq || return 1
+  docker_compose_exec cat /app/package.json | jq -r '.version' 2> /dev/null
+}
+
+seerr_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' seerr/seerr
+}
+
+seerr_latest() { # no_auto
+  github_project seerr-team/seerr
+}
+
+IMAGE_SEARCH+=("shlink_docker|shlinkio/shlink:")
+shlink_docker() {
+  docker_inspect
+}
+
+shlink_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+$' shlinkio/shlink
+}
+
+shlink_latest() { # no_auto
+  github_project shlinkio/shlink
+}
+
+IMAGE_SEARCH+=("shlink_web_client_docker|shlinkio/shlink-web-client")
+shlink_web_client_docker() {
+  docker_inspect
+}
+
+shlink_web_client_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+$' shlinkio/shlink
+}
+
+shlink_web_client_latest() { # no_auto
+  github_project shlinkio/shlink
+}
+
+slzb_core() { # remote_host
+  check_prog jq || return 1
+  local out
+  out=$(curl_api)
+  jq -rn --argjson j "$out" '$j.Info.sw_version' 2> /dev/null
+}
+
+slzb_core_latest() {
+  check_prog jq || return 1
+
+  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[0]}" ; return 1; }
+  local url esptype out
+  mapfile -t url     < <(get_config_value "$rcfile" "${FUNCNAME[0]}" url)
+  mapfile -t esptype < <(get_config_value "$rcfile" "${FUNCNAME[0]}" esp_type)
+  (( ${#url[@]} == 0 ))     && { log -e "Could not read ${FUNCNAME[0]} URL from $rcfile" ; return 1 ; }
+  (( ${#esptype[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} EspType from $rcfile" ; return 1 ; }
+
+  local fw_url
+  fw_url=$(curl -s --compressed "${url[-1]}" 2>&1 | \
+    awk -F"'" '/^const espFwInfoUrl[[:space:]]*=/{print $2;exit}')
+  log -d -d "fw_url = $fw_url"
+  [[ ! $fw_url =~ ^https?:// ]] && { log -e "Could not get firmware url from ${url[-1]}" ; return 1 ; }
+  log -d -d "fw_url=${fw_url}${esptype[-1]}" >&2
+  out=$(curl -s "${fw_url}${esptype[-1]}")
+  log -d -d "Curl Output: $out"
+  [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.["fw"][] | select(.dev == false) | .ver' 2> /dev/null)
+  log -d -d "Jq Output: $out"
+  [[ -n "$out" ]] && sort -V <<< "$out" | \
+    tail -n1
+}
+
+slzb_radio() { # remote_host
+  check_prog jq || return 1
+  local out
+  out=$(curl_api)
+  jq -rn --argjson j "$out" '$j.Info.zb_version' 2> /dev/null
+}
+
+slzb_radio_latest() {
+  check_prog jq || return 1
+
+  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[0]}" ; return 1; }
+  local url chip type
+  mapfile -t url  < <(get_config_value "$rcfile" "${FUNCNAME[0]}" url)
+  mapfile -t chip < <(get_config_value "$rcfile" "${FUNCNAME[0]}" chip)
+  mapfile -t type < <(get_config_value "$rcfile" "${FUNCNAME[0]}" "type")
+  (( ${#url[@]} == 0 ))  && { log -e "Could not read ${FUNCNAME[0]} URL from $rcfile" ; return 1 ; }
+  (( ${#chip[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} Chip from $rcfile" ; return 1 ; }
+  (( ${#type[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} Type from $rcfile" ; return 1 ; }
+
+  local fw_url
+  fw_url=$(curl -s --compressed "${url[-1]}" 2>&1 | \
+    awk -F"'" '/^const zbFwInfoUrl[[:space:]]*=/{print $2;exit}')
+  [[ ! $fw_url =~ ^https?:// ]] && return 1
+  curl -s "$fw_url" | \
+    jq -r --arg chip "${chip[-1]}" --arg type "${type[-1]}" \
+      '.[$chip][] | select(.type == $type) | .rev' 2> /dev/null| \
+    sort -V | \
+    tail -n1
+}
+
+IMAGE_SEARCH+=("smtpd_docker|smtpd")
+smtpd_docker() {
+  docker_compose_exec smtpd -h 2>&1 | \
+    awk -F'[ -]' '/^version: OpenSMTPD [0-9]/ {print $3;exit}'
+}
+
+smtpd_latest() {
+  github_tags -r '^opensmtpd-[0-9]' -s '^v?[0-9][0-9.]+' OpenSMTPD/OpenSMTPD | \
+    sed -r 's/p[0-9]+$//'
+}
+
+snapcast() {
+  if command -v snapclient > /dev/null 2>&1; then
+    snapclient --version | awk '/snapclient/{print $2;exit}'
+  elif command -v snapserver > /dev/null 2>&1; then
+    snapserver --version | awk '/snapserver/{print $2;exit}'
+  else
+    echo "{ \"Error\": \"snapcast not installed\" }" && return 1
+  fi
+}
+
+snapcast_latest() {
+  github_project snapcast/snapcast | sed -r 's/p[0-9]+" }$/" }/'
+}
+
+IMAGE_SEARCH+=("sonarr_docker|linuxserver/sonarr")
+sonarr_docker() {
+  docker_inspect
+}
+
+sonarr_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/sonarr
+}
+
+sonarr_latest() { # no_auto
+  github_project linuxserver/docker-sonarr
+}
+
+splunk() {
+  if [[ -x /opt/splunk/bin/splunk ]]; then
+    awk -F= '/^VERSION/{print $2;exit}' /opt/splunk/etc/splunk.version
+  elif [[ -x /opt/splunkforwarder/bin/splunk ]]; then
+    awk -F= '/^VERSION/{print $2;exit}' /opt/splunkforwarder/etc/splunk.version
+  fi
+}
+
+IMAGE_SEARCH+=("splunk_docker|splunk:")
+splunk_latest() {
+  curl -s "https://www.splunk.com/en_us/download/splunk-enterprise.html" | \
+    awk -F'[<>]' '/<span class="version">/{print $3;exit}'
+}
+
+splunk_forwarder() {
+  if [[ -x /opt/splunkforwarder/bin/splunk ]]; then
+    awk -F= '/^VERSION/{print $2;exit}' /opt/splunkforwarder/etc/splunk.version
+  elif [[ -x /Applications/splunkforwarder/bin/splunk ]]; then
+    awk -F= '/^VERSION/{print $2;exit}' /Applications/splunkforwarder/etc/splunk.version
+  fi
+}
+
+splunk_forwarder_latest() {
+  curl -s "https://www.splunk.com/en_us/download/universal-forwarder.html" | \
+    awk -F'[<>]' '/<span class="version">/{print $3;exit}'
+}
+
+splunk_unix_ta() {
+  github_project merdely/TA-unix | sed 's/\+.*$//'
+}
+
+splunk_unix_ta_latest() {
+  check_prog jq || return 1
+  check_prog xmllint || return 1
+  curl -sL "https://splunkbase.splunk.com/app/833" | \
+    xmllint --html --xpath "string(//html/body/script[@id='__NEXT_DATA__'])" - 2> /dev/null | \
+    jq -r '.props.pageProps.appDetails.release.name' 2> /dev/null
+}
+
+IMAGE_SEARCH+=("streamystats_docker|fredrikburmester/streamystats")
+streamystats_docker() {
+  check_prog jq || return 1
+  docker_compose_exec cat /app/package.json | jq -r '.version' 2> /dev/null
+}
+
+streamystats_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' fredrikburmester/streamystats-v2-nextjs
+}
+
+streamystats_latest() { # no_auto
+  github_project fredrikburmester/streamystats
+}
+
+IMAGE_SEARCH+=("syncthing_docker|syncthing/syncthing")
+syncthing_docker() {
+  docker_inspect
+}
+
+syncthing_docker_latest() {
+  docker_tags -s '^[0-9][0-9.]*$' syncthing/syncthing
+}
+
+syncthing_latest() { # no_auto
+  github_project syncthing/syncthing
+}
+
+syncthing_tray_flatpak() {
+  flatpak_version io.github.martchus.syncthingtray
+}
+
+syncthing_tray_flatpak_latest() { # no_auto
+  flatpak_latest io.github.martchus.syncthingtray
+}
+
+syncthingtray_qt6_pacman() {
+  pacman_package syncthingtray-qt6
+}
+
+syncthingtray_qt6_aur_latest() {
+  aur_package syncthingtray-qt6
+}
+
+tasmobackup() {
+  /usr/bin/curl -s "http://127.0.0.1:8259" | awk '/>TasmoBackup .+ by Dan Medhurst</ {print $6;exit}'
+}
+
+tasmobackup_latest() { # no_auto
+  github_tags -r '^(list|v)' danmed/TasmoBackupV1
+}
+
+tasmota_latest() {
+  github_project arendst/Tasmota
+}
+
+tasmota_device() { # remote_host
+  check_prog jq || return 1
+  local out
+  out=$(curl_api)
+  [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.StatusFWR.Version' 2> /dev/null)
+  log -d "Jq output: $out"
+  [[ -n "$out" ]] && sed -r 's/\([^)]+\)//' <<< "$out"
+}
+
+IMAGE_SEARCH+=("tautulli_docker|tautulli/tautulli")
+tautulli_docker() {
+  docker_compose_exec cat /app/plexpy/version.py | \
+    awk -F'"' '/PLEXPY_RELEASE_VERSION/{print $2;exit}'
+}
+
+tautulli_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' tautulli/tautulli
+}
+
+tautulli_latest() { # no_auto
+  github_project Tautulli/Tautulli
+}
+
+IMAGE_SEARCH+=("telegraf_docker|telegraf")
+telegraf_docker() {
+  docker_printenv TELEGRAF_VERSION
+}
+
+telegraf_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' telegraf
+}
+
+telegraf_latest() { # no_auto
+  github_project influxdata/telegraf
+}
+
+IMAGE_SEARCH+=("thruk_docker|thruk")
+thruk_docker() {
+  docker_compose_exec thruk --version | awk '{print $NF;exit}'
+}
+
+thruk_latest() {
+  github_tags sni/thruk
+}
+
+tmux() {
+  if [[ -x /usr/local/bin/tmux ]]; then
+    /usr/local/bin/tmux -V | awk '{ print $2;exit}'
+  elif [[ -x /usr/bin/tmux ]]; then
+    /usr/bin/tmux -V | awk '{ print $2;exit}'
+  else
+    tmux -V | awk '{ print $2;exit}'
+  fi
+}
+
+tmux_latest() { # no_auto
+  github_project tmux/tmux
+}
+
+IMAGE_SEARCH+=("traefik_docker|traefik")
+traefik_docker() {
+  docker_inspect
+}
+
+traefik_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' traefik
+}
+
+traefik_latest() { # no_auto
+  github_project traefik/traefik
+}
+
+IMAGE_SEARCH+=("trilium_docker|triliumnext/trilium")
+trilium_docker() {
+  docker_inspect
+}
+
+trilium_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+$' triliumnext/trilium
+}
+
+trilium_latest() { # no_auto
+  github_project TriliumNext/Trilium
+}
+
+truenas_latest() { # no_auto
+  check_prog jq || return 1
+  curl -sL "https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1" | \
+    jq -r '.version' 2> /dev/null
+}
+
+truenas_server() { # remote_host
+  check_prog jq || return 1
+  local out
+  out=$(curl_api)
+  [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j' 2> /dev/null
+}
+
+ungoogled_chromium_bin_pacman() {
+  pacman_package ungoogled-chromium-bin
+}
+
+ungoogled_chromium_bin_aur_latest() {
+  aur_package ungoogled-chromium-bin
+}
+
+ungoogled_chromium_flatpak() {
+  flatpak_version io.github.ungoogled_software.ungoogled_chromium
+}
+
+ungoogled_chromium_flatpak_latest() { # no_auto
+  flatpak_latest io.github.ungoogled_software.ungoogled_chromium
+}
+
+IMAGE_SEARCH+=("unifi_docker|linuxserver/unifi-network-application")
+unifi_docker() {
+  docker_compose_exec cat /usr/lib/unifi/data/db/version | \
+    awk '{print $1; exit}'
+}
+
+unifi_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' lscr.io/linuxserver/unifi-network-application
+}
+
+unifi_latest() { # no_auto
+  github_project linuxserver/docker-unifi-network-application | \
+    sed -r 's/-ls[0-9]+" }$/" }/'
+}
+
+unifi_poller() {
+  docker_inspect unpoller/unpoller | awk -F- '{print $1;exit}'
+}
+
+unifi_poller_docker_latest() { # no_auto
+  docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/unpoller/unpoller
+}
+
+unifi_poller_latest() { # no_auto
+  github_project unpoller/unpoller
+}
+
+IMAGE_SEARCH+=("unpackerr_docker|golift/unpackerr")
+unpackerr_docker() {
+  docker_inspect | sed -r 's/-[a-z0-9]+$//'
+}
+
+unpackerr_docker_latest() {
+  docker_tags -s '^v?[0-9][0-9.]+' golift/unpackerr
+}
+
+unpackerr_latest() { # no_auto
+  github_project Unpackerr/unpackerr
+}
+
+IMAGE_SEARCH+=("upmpdcli_docker|giof71/upmpdcli")
+upmpdcli_docker() {
+  docker_compose_exec upmpdcli -v | awk '{print $2;exit}'
+}
+
+#upmpdcli_docker_latest() {
+#  docker_tags -s '^[0-9][0-9.]+$' giof71/upmpdcli
+#}
+IMAGE_SEARCH+=("vscode_docker|(vscode|code-server)")
+vscode_docker() {
+  local containername
+  containername=$(get_container_name "${FUNCNAME[0]}") || return 1
+  docker_logs "${containername}" 2>&1 | awk '/] info  code-server [0-9]/{print $4; exit}'
+}
+
+vscode_latest() { # no_auto
+  github_project coder/code-server
+}
+
+waybar_updates() {
+  pacman_package waybar-updates
+}
+
+waybar_updates_pacman() {
+  pacman_package waybar-updates
+}
+
+waybar_updates_aur_latest() { # no_auto
+  aur_package waybar-updates
+}
+
+IMAGE_SEARCH+=("whoami_docker|whoami")
+whoami_docker() {
+  docker_inspect
+}
+
+wleave_aur_latest() { # no_auto
+  aur_package wleave
+}
+
+wleave_pacman() {
+  pacman_package wleave
+}
+
+wleave_latest() { # no_auto
+  github_project AMNatty/wleave
+}
+
+yourls() {
+  # Create a ver.php in the root of the yourls directory:
+  # <?php
+  # require_once( dirname(__FILE__).'/includes/load-yourls.php' );
+  # print("{\n  \"version\": \"" . YOURLS_VERSION . "\"\n}\n");
+  # ?>
+  curl_api
+}
+
+yourls_latest() { # no_auto
+  github_project YOURLS/YOURLS
+}
+
+zigbee2mqtt() {
+  local containername
+  containername=$(get_container_name "${FUNCNAME[0]}") || return 1
+  docker_logs "${containername}" 2>&1 | \
+    awk '/Starting Zigbee2MQTT version/ {print $8;exit}'
+}
+
+zigbee2mqtt_tcp() {
+  check_prog mosquitto_sub || return 1
+  # Requires mqtt user have read access to 'zigbee2mqtt_tcp/bridge/config
+  check_prog jq || return 1
+  mosquitto_sub -C 1 -h "${mqtt_server:?}" -u "${mqtt_username:?}" -P "${mqtt_password:?}" \
+    -i "$PROGNAME" -t zigbee2mqtt_tcp/bridge/config | \
+    jq -r '.version' 2> /dev/null
+}
+
+zigbee2mqtt_latest() { # no_auto
+  github_project Koenkk/zigbee2mqtt
+}
+
+zoom_pacman() {
+  pacman_package zoom
+}
+
+zoom_aur_latest() { # no_auto
+  aur_package zoom
+}
+
+zwave_js() {
+  /usr/bin/head /var/log/zwave.out | \
+    awk '/INFO.* .*(APP|STORE).*: Version:/{print $NF;exit}'
+}
+
+zwave_js_latest() {
+  github_project zwave-js/zwave-js-ui
+}
+## END CHECK FUNCTIONS
+
+usage() { # utility_function
+  echo "usage: $PROGNAME [Options] SOFTWARE"
+  echo "Options:"
+  echo "  -h|--help     : print help text"
+  echo "  --version     : print version number and exit"
+  echo "  -d          + : print debug info"
+  echo "  -v          + : be verbose"
+  echo "  -q          + : be quiet"
+  echo
+  echo "Program-related options:"
+  # Second line indent
+  local ss=18
+  usage_fold -s $ss -- "-c RCFILE     : path to RCFILE file (default: $rcfile)"
+  usage_fold -s $ss -- "-u USER     x : drop privileges to USER if run as root (default: none)"
+  usage_fold -s $ss -- "-p PRINTOPT   : print information (${bu}help${ubu} for option list)"
+  usage_fold -s $ss -- "-1            : print information in a single column with '-p PRINTOPT'"
+  usage_fold -s $ss -- "-w WAIT     x : latest checks results are cached for WAIT minutes (default: $cache_lifetime minutes)"
+  usage_fold -s $ss -- "-r RETRY    x : delay between check retries for RETRY seconds (default: $retry_delay seconds)"
+  usage_fold -s $ss -- "-P PRINTER  x : ip address for printer (for SOFTWARE == ink)"
+  usage_fold -s $ss -- "-R REGEX   +x : a regex for commands that need sudo"
+  usage_fold -s $ss -- "-C COMPOSE  x : Use docker compose file COMPOSE for docker compose commands"
+  usage_fold -s $ss -- "-S SECONDS  x : number of SECONDS for docker container updates (default: $docker_seconds seconds)"
+  usage_fold -s $ss -- "-X FUNC       : Run check with sudo"
+  usage_fold -s $ss -- "-x SUDOUSER x : User to run sudo command as for -X (default: none)"
+  echo
+  # Check related options
+  usage_fold -s $ss -- "-L LIST       : use LIST for each SOFTWARE argument as if LIST:SOFTWARE give as arguments"
+  usage_fold -s $ss -- "-D            : print versions for docker containers that started in last (-S) SECONDS seconds"
+  usage_fold -s $ss -- "-V MINVER   x : when getting a version, use the minor version MINVER (e.g ${bu}1.2${ubu} to find ${bu}1.2.4${ubu})"
+  usage_fold -s $ss -- "-f SOFTWARE + : force updating latest SOFTWARE (default: update if cache expired)"
+  usage_fold -s $ss -- "-F            : force updating all latest software (default: update if cache expired)"
+  echo
+  echo " Output related options:"
+  usage_fold -s $ss -- "-o FILE     x : save JSON output to FILE instead"
+  usage_fold -s $ss -- "-j          x : print output in JSON format to screen"
+  usage_fold -s $ss -- "-t          x : print output in text format to screen"
+  usage_fold -s $ss -- "-m          x : publish output to mqtt server"
+  usage_fold -s $ss -- "-i          x : include invalid version results ('---') when updating (default: skip)"
+  usage_fold -s $ss -- "-T            : Test Mode: print what would happen in a run"
+
+  echo
+  echo "MQTT-related Options:"
+  usage_fold -s $ss -- "-M            : mqtt test mode: do not publish to mqtt; print instead"
+  usage_fold -s $ss -- "-H HOST_NAME  : when prepending key names, use host_name (default: ${bu}${host_name}_${ubu})"
+  usage_fold -s $ss -- "-I INK_TOPIC  : use INK_TOPIC when publishing printer_ink_check to MQTT (default: $ink_topic)"
+  usage_fold -s $ss -- "-n          x : prepend mqtt key name with ${bu}${host_name}_${ubu} (default with ${bu}all${ubu})"
+  usage_fold -s $ss -- "-N          x : do not prepend mqtt key name with ${bu}${host_name}_${ubu} (default with ${bu}latest${ubu})"
+  echo "+ : option can be used more than once"
+  echo "x : overrides config settings"
+  echo
+  echo "Notes:"
+  usage_fold -f 1 --  "- By default, when using an output file, $PROGNAME detects if it is a json file (-j|-J overrides)"
+  usage_fold -f 1 --  "- SOFTWARE options: all docker latest ink applist (${bu}$PROGNAME -p functions${ubu} applist)"
+  usage_fold -f 1 --  "- SOFTWARE can be LIST:SOFTWARE: update LIST output with SOFTWARE (default: output full LIST)"
+  usage_fold -f 1 --  "- If SOFTWARE matches key in [$PROGNAME] in RCFILE, the given list will be checked (i.e. custom software list)"
+  usage_fold -f 1 --  "- ${bu}all${ubu} is a special list that prepends checks with ${bu}HOST_NAME${ubu} (mqtt) and adds $PROGNAME to checks"
+  usage_fold -f 1 --  "- ${bu}docker${ubu} is a special list that is all checks for docker containers that have checks defined"
+  exit "${1:-0}"
+} # usage()
+
+# Main program code
+main() { # utility_function
+  print_opts=(help apps remote_apps latest_apps non_auto_apps helper_functions functions docker example_config version)
+  print_opt_descriptions=(
+    "This help text"
+    "Application/Service List"
+    "Remote Host Application/Service List"
+    "Latest Application List"
+    "Non-Automatic/Disabled Latest Application List"
+    "All Helper Functions"
+    "All Application Version Check Functions"
+    "List of Docker Checks"
+    "Example Configuration File with all options documented"
+    "Application Version"
+  )
+
+  # Set up ansi escape codes
+  e=$'\e'
+  b="${e}[1m"
+  ub="${e}[22m"
+  u="${e}[4m"
+  uu="${e}[24m"
+  bu="${b}${u}"
+  ubu="${uu}${ub}"
+  # Set default delay and wait values
+  args_orig=("$@")
+  cache_lifetime=60    # Number of minutes to wait between _latest checks
+  retry_delay=1        # Number of seconds to wait between retries
+  max_retries=1        # Number of times to try getting version
+  unset docker_seconds # Look for containers that started within restart_delay seconds
+
+  # Set some variables
+  rcfile=$HOME/.config/"${PROGNAME}"rc
+  [[ ! -r $rcfile && -r "$PROGDATA"/"${PROGNAME}"rc ]] && rcfile="$PROGDATA"/"${PROGNAME}"rc
+  list_reserved_words=(docker user cache_dir cache_lifetime retry_delay max_retries compose_file docker_seconds sudo_regex sudo_user printer)
+
+  if command -v hostname > /dev/null 2>&1; then
+    host_name=$(hostname)
+  else
+    host_name=$(hostnamectl hostname)
+  fi
+  host_name=${host_name%%.*}
+  host_name=$(echo "$host_name" | tr '[:upper:]' '[:lower:]')
+  cache_dir="$HOME"/.cache/"$PROGNAME"
+
+  # App Lists
+  mapfile -t helper_list < <(awk '/^[^#].+[(]) {[[:space:]]+#[[:space:]]*helper_function/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t helper_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_helper/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t no_auto_list < <(awk '/^[^#].+[(]) {[[:space:]]+#[[:space:]]*no_auto/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ { gsub(/\(\).*$/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t no_auto_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_no_auto/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t remote_list < <(awk '/^[^#].+[(]) {[[:space:]]+#[[:space:]]*remote_host/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ { gsub(/\(\).*$/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t remote_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_remote/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t app_list < <(awk '/^[^#].+[(]) {$/ && ! /[(]) {[[:space:]]+#[[:space:]]*helper_function/ && $1 !~ /_latest\(\)$/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ {gsub(/\(\)$/,"",$1);print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t app_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_app/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t latest_list < <(awk '/^[^#].+[(]) {$/ && ! /[(]) {[[:space:]]+#[[:space:]]*helper_function/ && ! /[(]) {[[:space:]]+#[[:space:]]*no_auto/ && $1 ~ /_latest\(\)/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ {gsub(/\(\)$/,"",$1);print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t latest_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_latest/ && /[[:space:]]+#[[:space:]]*helper_alias/ && ! /[[:space:]]+#[[:space:]]*utility_function/ {sub(/^alias[[:space:]]+/,"");sub(/=.*$/,"");print}' "${SOURCED_LIBS[@]}")
+  mapfile -t function_list < <(awk '/^[^#].+[(]) {/ && ! /[(]) {[[:space:]]+#[[:space:]]*helper_function/ && ! /[[:space:]]+#[[:space:]]*alias/ && ! /[[:space:]]+#[[:space:]]*utility_function/ {gsub(/\(\).*$/,"",$1);print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t function_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t utility_list < <(awk '/^[^#].+[(]) {[[:space:]]+#[[:space:]]*utility_function/ && ! /[[:space:]]+#[[:space:]]*(alias)/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t utility_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_utility/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+
+  # Make sure mqtt commands are found
+  check_prog curl || exit 1
+  check_prog awk || exit 1
+  check_prog sed || exit 1
+  check_prog grep || exit 1
+  check_prog printf || exit 1
+
+  for a in "$@"; do [[ "$a" == "--help" ]] && usage verbose; done
+  for a in "$@"; do [[ "$a" == "--version" ]] && echo "Version $PROGVER" && exit ; done
+  debug=0
+  verbose=0
+  quiet=0
+  cache_lifetime_set=false
+  compose_file_set=false
+  docker_seconds=30
+  docker_seconds_set=false
+  force_all=false
+  force_list=()
+  host_name_set=false
+  include_invalid=false
+  include_invalid_set=false
+  ink_topic=ink2mqtt
+  ink_topic_set=false
+  mqtt_test=false
+  output_file=/dev/stdout
+  output_file_set=false
+  output_mode=text
+  output_mode_set=false
+  prepend_name=false
+  prepend_set=false
+  printer_set=false
+  print_single='-m'
+  printonly=false
+  rcfile_set=false
+  retry_delay_set=false
+  sudo_regexes=()
+  sudo_regex_set=false
+  sudo_user_set=false
+  update=false
+  unset compose_file sudo_user exec_user PRINTER minver print_opt update_list
+  while getopts ":hdvqc:u:p:1w:r:P:R:C:S:X:x:LD:V:f:Fo:OtjmiTMH:INn" opt; do
+    case $opt in
+      # Base options
+      :) case $OPTARG in
+           *) log -e "-$OPTARG requires an argument" ; usage 1 ;;
+         esac ;;
+      d) debug=$(( debug + 1 )) ; quiet=0 ;;
+      v) verbose=$(( verbose + 1 )) ; quiet=0 ;;
+      q) quiet=$(( quiet + 1 )) ; verbose=0 ;;
+
+      # Program-related options
+      c) rcfile=$OPTARG ; rcfile_set=true ;;
+      u) [[ $(id -u) != 0 ]] && log -e "-u only works for root" && exit 1
+         if id "$OPTARG" &> /dev/null; then
+           exec_user=$OPTARG
+         else
+           log -e "Invalid user for -u ($OPTARG)"
+           exit 1
+         fi ;;
+      p) print_opt=$(echo "$OPTARG" | tr '[:upper:]' '[:lower:]') ;;
+      1) print_single='-1' ;;
+      w) if [[ $OPTARG =~ ^[0-9]+$ ]]; then
+           cache_lifetime=$OPTARG
+           cache_lifetime_set=true
+         fi ;;
+      r) if [[ $OPTARG =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]]; then
+           retry_delay=$OPTARG
+           docker_seconds=$OPTARG
+           retry_delay_set=true
+         fi ;;
+      P) PRINTER=$OPTARG ; printer_set=true ;;
+      R) sudo_regexes+=("$OPTARG") ; sudo_regex_set=true ;;
+      C) compose_file="$OPTARG" ; compose_file_set=true ;;
+      S) if [[ $OPTARG =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]]; then
+           docker_seconds=$OPTARG
+           docker_seconds_set=true
+           update=true
+         else
+           log -e "Invalid value for SECONDS ($OPTARG)" && usage 1
+         fi ;;
+      X) shift ; sudo_exec "$@" ; exit $? ;;
+      x) sudo_user=$OPTARG ;;
+
+      # Check related options
+      L) update_list=$OPTARG ; update=true ;;
+      V) if [[ $OPTARG =~ ^[0-9]+\.?[0-9]+$ ]]; then
+           minver=$OPTARG
+         fi ;;
+      f) force_list+=("$OPTARG") ;;
+      F) force_all=true ;;
+
+      # Output Options
+      o) output_file=$OPTARG     ; output_file_set=true ; output_mode=json ; output_mode_set=true ;;
+      j) output_file=/dev/stdout ; output_file_set=true ; output_mode=json ; output_mode_set=true ;;
+      t) output_file=/dev/stdout ; output_file_set=true ; output_mode=text ; output_mode_set=true ;;
+      m) output_mode=mqtt ; output_mode_set=true ; unset output_file ; output_file_set=true ;;
+      i) include_invalid=true ; include_invalid_set=true ;;
+      T) printonly=true ;;
+
+      # MQTT Options
+      M) mqtt_test=true ;;
+      H) host_name=$OPTARG ; host_name_set=true ;;
+      I) ink_topic=$OPTARG ; ink_topic_set=true ;;
+      n) prepend_name=true  ; prepend_set=true ;;
+      N) prepend_name=false ; prepend_set=true ;;
+
+      # Catch everything else
+      *) usage ;;
+    esac
+  done # while getopts OPTS_LIST opt; do
+  shift $(( OPTIND - 1 ))
+
+  local i=0 n=0 checks=()
+  if [[ -n "$print_opt" ]]; then
+    case "$print_opt" in
+      help)
+          echo "Available print options (-p PRINT_OPTION):"
+          n=$(get_longest "${print_opts[@]}")
+          for i in "${!print_opts[@]}"; do
+            printf '    %-*s : %s\n' "$n" "${print_opts[i]}" "${print_opt_descriptions[i]}"
+          done
+          exit ;;
+          # print_list "$print_single" -l "Available print options" "${print_opts[@]}" ; exit ;;
+      a*) n=$(get_longest "${app_list[@]}" "${app_alias_list[@]}")
+          print_list "$print_single" -n "$n" -l "Host/Service Applications" "${app_list[@]}"
+          print_list "$print_single" -n "$n" -l "Host/Service Aliases" "${app_alias_list[@]}"
+          exit ;;
+      r*) n=$(get_longest "${remote_list[@]}" "${remote_alias_list[@]}")
+          print_list "$print_single" -n "$n" -l "Remote Host Applications" "${remote_list[@]}"
+          print_list "$print_single" -n "$n" -l "Remote Host Aliases" "${remote_alias_list[@]}"
+          exit ;;
+      l*) n=$(get_longest "${latest_list[@]}" "${latest_alias_list[@]}")
+          print_list "$print_single" -n "$n" -l "Automatic Latest Applications" "${latest_list[@]}"
+          print_list "$print_single" -n "$n" -l "Automatic Latest Aliases" "${latest_alias_list[@]}"
+          exit ;;
+      n*) n=$(get_longest "${no_auto_list[@]}" "${no_auto_alias_list[@]}")
+          print_list "$print_single" -n "$n" -l "Non-Automatic Latest Applications" "${no_auto_list[@]}"
+          print_list "$print_single" -n "$n" -l "Non-Automatic Latest Aliases" "${no_auto_alias_list[@]}"
+          exit ;;
+      h*) n=$(get_longest "${helper_list[@]}" "${helper_alias_list[@]}")
+          print_list "$print_single" -n "$n" -l "Helper Functions" "${helper_list[@]}"
+          print_list "$print_single" -n "$n" -l "Helper Aliases" "${helper_alias_list[@]}"
+          exit ;;
+      f*) n=$(get_longest "${function_list[@]}" "${function_alias_list[@]}")
+          print_list "$print_single" -n "$n" -l "All Application Functions" "${function_list[@]}"
+          print_list "$print_single" -n "$n" -l "All Application Aliases" "${function_alias_list[@]}"
+          exit ;;
+      d*) mapfile -t checks < <(docker_checks) || { log "There are no ${bu}docker${ubu} checks" ; exit 0 ; }
+          print_list "$print_single" -l "${bu}docker${ubu} List Checks" "${checks[@]}"
+          exit ;;
+      u*) n=$(get_longest "${utility_list[@]}" "${utility_alias_list[@]}")
+          print_list "$print_single" -n "$n" -l "Utility Functions" "${utility_list[@]}"
+          print_list "$print_single" -n "$n" -l "Utility Aliases" "${utility_alias_list[@]}"
+          exit ;;
+      v*) echo Version $PROGVER ; exit 0 ;;
+      e*) # Add new options for [$PROGNAME] to list_reserved_words array above
+          echo "Example RCFILE (for \$HOME/.config/${PROGNAME}rc or $PROGDATA/${PROGNAME}rc)"
+          echo "  [$PROGNAME]"
+          echo "  user: username                $(printf '%*s' "${#PROGNAME}" " ") # no default; only used when run as root"
+          echo "  cache_dir: /var/lib/$PROGNAME/.cache    # defaults to \$HOME/.cache/$PROGNAME"
+          echo "  cache_lifetime: minutes       $(printf '%*s' "${#PROGNAME}" " ") # defaults to $cache_lifetime"
+          echo "  retry_delay: seconds          $(printf '%*s' "${#PROGNAME}" " ") # defaults to $retry_delay"
+          echo "  max_retries: number           $(printf '%*s' "${#PROGNAME}" " ") # defaults to $max_retries"
+          echo "  compose_file: /home/u/compose.yml   # no default"
+          echo "  docker_seconds: seconds       $(printf '%*s' "${#PROGNAME}" " ") # defaults to $docker_seconds"
+          echo "  include_invalid: true/false   $(printf '%*s' "${#PROGNAME}" " ") # defaults to $include_invalid"
+          echo "  sudo_regex: _latest$          $(printf '%*s' "${#PROGNAME}" " ") # no default"
+          echo "  sudo_regex: ^sudo             $(printf '%*s' "${#PROGNAME}" " ") # no default"
+          echo "  sudo_user: username           $(printf '%*s' "${#PROGNAME}" " ") # no default"
+          echo "  printer: ip/name              $(printf '%*s' "${#PROGNAME}" " ") # no default"
+          echo "  # custom list names cannot be 'docker' or any of the other above config options"
+          echo "  all: sw1 sw2 sw3 sw4          $(printf '%*s' "${#PROGNAME}" " ") # no default; ${bu}all${ubu} list"
+          echo "  my_custom_list: sw2 sw5       $(printf '%*s' "${#PROGNAME}" " ") # no default; custom list"
+          echo "  my_other_list: sw3 sw7 sw9    $(printf '%*s' "${#PROGNAME}" " ") # no default; custom list"
+          echo
+          echo "  [$PROGNAME:list_name]"
+          echo "  output_file: file"
+          echo "  output_mode: text/json/mqtt"
+          echo "  include_invalid: true/false"
+          echo
+          echo "  [$PROGNAME:version_check_function_name]"
+          echo "  output_file: file"
+          echo "  output_mode: text/json/mqtt"
+          echo "  include_invalid: true/false"
+          echo "  use_sudo: true/false"
+          echo "  sudo_user: username"
+          echo "  cache_lifetime: minutes"
+          echo "  retry_delay: seconds"
+          echo "  max_retries: number"
+          echo
+          echo "  [mqtt]"
+          echo "  server: mqtt.example.com"
+          echo "  username: mqtt"
+          echo "  password: mypassword"
+          echo "  host_name: hostname"
+          echo "  ink_topic: topicname"
+          echo
+          echo "  [github|codeberg|forgejo|gitea|gitlab]"
+          echo "  token: github_pat_TOKEN"
+          echo
+          echo "  [flip_2_dnd_pro] # This is for making the pro version installable from obtainium"
+          echo "  repo_url: private_repo_for_flip_2_dnd_pro local copy"
+          echo
+          echo "  [joplin|private_aur|plex|privatebin|yourls]"
+          echo "  url: server_url"
+          echo "  # for yourls, create a ver.php that prints the version"
+          echo "  # example in the yourls() function in ${bu}$(realpath "$0")${ubu}"
+          echo
+          echo "  [routeros]"
+          echo "  url: routeros_device_url"
+          echo "  username: routeros_username"
+          echo "  password: routeros_password"
+          echo
+          echo "  [slzb]"
+          echo "  url: slzb_device_url"
+          echo "  username: slzb_device_username"
+          echo "  password: slzb_device_password"
+          echo "  chip: number            # 0=slzb-06p10"
+          echo "  type: number            # 0=coordinator"
+          echo "  esp_type: TYPE          # type=0=ESP vs. ESPs3 for type>SLZB_06MR4[14]"
+          echo
+          echo "  [tasmota]"
+          echo "  device_name: tasmota_device_name"
+          echo "  device_ip: tasmota_device_ip"
+          echo "  username: tasmota_device_username"
+          echo "  password: tasmota_device_password"
+          echo
+          echo "  [truenas]"
+          echo "  url: truenas_server_url"
+          echo "  apikey: truenas_server_api_key"
+          echo
+          exit ;;
+      *) log -e "Invalid option for -p ($print_opt)" && usage 1 ;;
+    esac # case "$print_opt" in
+  fi
+
+  # If -c passed and rcfile cannot be read, die
+  if $rcfile_set && [[ ! -r "$rcfile" ]]; then
+    log -e "Cannot read rcfile"
+    exit 1
+  fi
+
+  if [[ -n "$rcfile" && -s "$rcfile" ]]; then
+    log -d "Using $rcfile for configfile"
+  fi
+  if [[ ! -s "$rcfile" ]]; then
+    log -d -d "Not using a config file (rcfile=$rcfile)"
+  fi
+
+  # If -L was given and no software was listed, add 'docker' to software list
+  [[ -n "$update_list" ]] && (( $# == 0 )) && set -- "$update_list"
+  (( $# == 0 )) && usage
+
+  # Validate output_mode
+  case "$output_mode" in json|mqtt);; *)output_mode=text;; esac
+
+  # Read configuration settings
+  if [[ -z "$exec_user" && -s "$rcfile" ]]; then
+    mapfile -t arr < <(get_config_value "$rcfile" "$PROGNAME" user)
+    (( ${#arr[@]} > 0 )) && exec_user=${arr[-1]}
+    unset arr
+  fi
+
+  # Drop privileges if running as root and $exec_user is defined
+  [[ $(id -u) == 0 && -n "$exec_user" ]] && drop_privs "$exec_user" "${args_orig[@]}"
+
+  # Read configuration file options
+  if [[ -s "$rcfile" ]]; then
+    mapfile -t rccache_dir < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
+    (( ${#rccache_dir[@]} > 0 )) && cache_dir=${rccache_dir[-1]}
+
+    ! $cache_lifetime_set && mapfile -t rccache_lifetime < <(get_config_value "$rcfile" "$PROGNAME" cache_lifetime)
+    [[ -n "${rccache_lifetime[*]}" && ${rccache_lifetime[-1]} =~ ^[0-9]+$ ]] && cache_lifetime=${rccache_lifetime[-1]}
+
+    ! $retry_delay_set && mapfile -t rcretry_delay < <(get_config_value "$rcfile" "$PROGNAME" retry_delay)
+    [[ -n "${rcretry_delay[*]}" && ${rcretry_delay[-1]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcretry_delay[-1]}
+
+    mapfile -t rcmax_retries < <(get_config_value "$rcfile" "$PROGNAME" max_retries)
+    [[ -n "${rcmax_retries[*]}" && ${rcmax_retries[-1]} =~ ^[0-9]+$ ]] && max_retries=${rcmax_retries[-1]}
+
+    ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME" compose_file)
+    [[ -n "${rccompose_file[*]}" ]] && compose_file=${rccompose_file[-1]}
+
+    ! $docker_seconds_set && mapfile -t rcdocker_seconds < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
+    [[ -n "${rcdocker_seconds[*]}" && ${rcdocker_seconds[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcdocker_seconds[-1]}
+
+    ! $printer_set && mapfile -t rcprinter < <(get_config_value "$rcfile" "$PROGNAME" printer)
+    (( ${#rcprinter[@]} > 0 )) && PRINTER=${rcprinter[-1]}
+
+    ! $sudo_user_set && mapfile -t rcsudo_user < <(get_config_value "$rcfile" "$PROGNAME" sudo_user)
+    (( ${#rcsudo_user[@]} > 0 )) && sudo_user=${rcsudo_user[-1]}
+
+    # Deal with multiple sudo_regex lines
+    if ! $sudo_regex_set; then
+      mapfile -t rcsudo_regexes < <(get_config_value "$rcfile" "$PROGNAME" sudo_regex)
+      for rcsudo_regex in "${rcsudo_regexes[@]}"; do
+        sudo_regexes+=("$rcsudo_regex")
+      done
+    fi
+
+    mapfile -t mqtt_server < <(get_config_value "$rcfile" mqtt server)
+    mapfile -t mqtt_username < <(get_config_value "$rcfile" mqtt username)
+    mapfile -t mqtt_password < <(get_config_value "$rcfile" mqtt password)
+    ! $host_name_set && mapfile -t rchost_name < <(get_config_value "$rcfile" mqtt host_name)
+    [[ -n "${rchost_name[*]}" && ${rchost_name[-1]} =~ ^[0-9]+$ ]] && host_name=$rchost_name
+    ! $ink_topic_set && mapfile -t rcink_topic < <(get_config_value "$rcfile" mqtt ink_topic)
+    [[ -n "${rcink_topic[*]}" && ${rcink_topic[-1]} =~ ^[0-9]+$ ]] && ink_topic=$rcink_topic
+
+  fi # if [[ -s "$rcfile" ]]; then
+
+  # Set COMPOSE_FILE if necessary
+  [[ -n "$compose_file" ]] && export COMPOSE_FILE=$compose_file
+
+  # Set up software list from command line arguments, substitute _ for -
+  mapfile -t software < <(printf '%s\n' "${@//-/_}" | sort -u)
+
+  # Prepare cache_dir
+  CACHE_DIR_PREPARED=false
+  # Warn if wait is extreme
+  (( cache_lifetime < 30 )) && log -q "Warning: Latest update WAIT set to under 30 minutes"
+  (( cache_lifetime > 1440 )) && log -q "Warning: Latest update WAIT set to over $(( cache_lifetime / 60 )) hours/$(( cache_lifetime / 60 / 24 )) days (WAIT is in minutes)"
+
+  # Print debug info
+  if (( debug > 1 )); then
+    log -d "[GLOBAL SETTINGS] running as $(id -un)"
+    log -d "[GLOBAL SETTINGS] rcfile=$rcfile"
+    log -d "[GLOBAL SETTINGS] cache_dir=$cache_dir"
+    log -d "[GLOBAL SETTINGS] cache_lifetime=$cache_lifetime"
+    log -d "[GLOBAL SETTINGS] printonly=$printonly"
+    log -d "[GLOBAL SETTINGS] output_file=$output_file"
+    log -d "[GLOBAL SETTINGS] output_mode=$output_mode"
+    log -d "[GLOBAL SETTINGS] software=${software[*]}"
+    log -d "[GLOBAL SETTINGS] compose_file=$compose_file"
+    log -d "[GLOBAL SETTINGS] docker_seconds=$docker_seconds"
+    log -d "[GLOBAL SETTINGS] retry_delay=$retry_delay"
+    log -d "[GLOBAL SETTINGS] printer=$PRINTER"
+    log -d "[GLOBAL SETTINGS] ink_topic=$ink_topic"
+    log -d "[GLOBAL SETTINGS] include_invalid=$include_invalid"
+    log -d "[GLOBAL SETTINGS] force_all=$force_all"
+    (( ${#force_list[@]} > 0 ))     && log -d "[GLOBAL SETTINGS] force_list=${force_list[*]}"
+    [[ -n "$sudo_user" ]]           && log -d "[GLOBAL SETTINGS] sudo_user=$sudo_user"
+    (( ${#sudo_regexes[@]} > 0 ))   && printf "[DEBUG] [GLOBAL SETTINGS]" && set | grep ^sudo_regexes= >&2
+    [[ -z "${mqtt_server[*]}" ]]    && log -d "[GLOBAL SETTINGS] mqtt_server=${mqtt_server[-1]}"
+    [[ -z "${mqtt_username[*]}" ]]  && log -d "[GLOBAL SETTINGS] mqtt_username=${mqtt_username[-1]}"
+    [[ -z "${mqtt_password[*]}" ]]  && log -d -d -d "[GLOBAL SETTINGS] mqtt_password='${mqtt_password[-1]}'"
+    [[ -z "${prepend_name[*]}" ]]   && log -d "[GLOBAL SETTINGS] prepend_name=${prepend_name[-1]}"
+    [[ -z "${prepend_set[*]}" ]]    && log -d "[GLOBAL SETTINGS] prepend_set=${prepend_set[1]}"
+    echo
+    (( debug > 3 )) && exit
+  fi
+
+  # Prep variables
+  printlist=()
+  json_string="[]" # json string for printing to the screen
+  saved_prepend_name=$prepend_name
+  saved_output_file=$output_file
+  saved_output_mode=$output_mode
+  saved_include_invalid=$include_invalid
+  saved_docker_seconds=$docker_seconds
+
+  # TODO: Turn into function?
+  # Process software list
+  log -d -d "Software list: ${software[*]}"
+  for list in "${software[@]}"; do
+    [[ -z "$list" ]] && continue
+    prepend_name=$saved_prepend_name
+    output_file=$saved_output_file
+    output_mode=$saved_output_mode
+    include_invalid=$saved_include_invalid
+    docker_seconds=$saved_docker_seconds
+    sw_list=()
+
+    # If list=docker, load docker checks
+    if [[ "$list" == "docker" ]]; then
+      mapfile -t sw_list < <(docker_checks)
+      log -d "Setting software list to '${sw_list[*]}'"
+      if (( ${#sw_list[@]} == 0 )); then
+        log "There are no ${bu}docker${ubu} checks"
+        exit
+      fi
+
+    # If command line parameter is "list:sw", do update
+    elif [[ -n "$update_list" ]] || [[ "$list" == *:* ]]; then
+      sw_list=("${list#*:}")
+      if [[ "$list" == "$update_list" && -s "$rcfile" ]]; then
+        log -d "Reading configfile for software list for $list"
+        read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME:$list" "list" | tr '\n' ' ')"
+        log -d "Setting software list to '${sw_list[*]}' for $list"
+      fi
+      [[ -n "$update_list" ]] && list=$update_list
+      list=${list%:*}
+
+      log -d "Processing an update of ${sw_list[*]} for $list"
+      update=true
+
+    # If sw is a list defined in the config, load its software in sw list
+    elif [[ " ${list_reserved_words[*]} " != *" $list "* && -s "$rcfile" ]]; then
+      log -d "Reading configfile for software list for $list"
+      read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME:$list" "list" | tr '\n' ' ')"
+      log -d "Setting software list to '${sw_list[*]}' for $list"
+      # Add check for this program if list=all
+      [[ "$list" == "all" ]] && { sw_list+=("$PROGNAME") ; log -d "Adding self to all sw_list" ; }
+    fi # if [[ "$list" == "docker" ]]; then
+
+    log -d -d "Defaulting software list to $list for $list"
+    (( ${#sw_list[@]} == 0 )) && sw_list=("$list")
+
+    unset rcoutput_file rcoutput_mode
+    if [[ -s "$rcfile" ]]; then
+      # output_mode
+      ! $output_mode_set && mapfile -t rcoutput_mode < <(get_config_value "$rcfile" "$PROGNAME":"$list" output_mode)
+      (( ${#rcoutput_mode[@]} > 0 )) && output_mode=${rcoutput_mode[-1]}
+
+      # output_file
+      ! $output_file_set && mapfile -t rcoutput_file < <(get_config_value "$rcfile" "$PROGNAME":"$list" output_file)
+      (( ${#rcoutput_file[@]} > 0 )) && output_file=${rcoutput_file[-1]} && output_mode=json
+      log -d "Reading $list config settings: output_file='$output_file' output_mode='$output_mode'"
+
+      # prepend_name
+      ! $prepend_set && mapfile -t rcprepend_name < <(get_config_value "$rcfile" "$PROGNAME":"$list" prepend_name)
+      (( ${#rcprepend_name[@]} > 0 )) && prepend_name=${rcprepend_name[-1]}
+
+      # include_invalid
+      ! $include_invalid_set && mapfile -t rcinclude_invalid < <(get_config_value "$rcfile" "$PROGNAME":"$list" include_invalid)
+      (( ${#rcinclude_invalid[@]} > 0 )) && include_invalid=${rcinclude_invalid[-1]}
+    fi
+
+    # If -L docker was given and docker_seconds is set, only look for checks
+    # related to containers that were restarted within docker_seconds seconds
+    if $update && [[ "$list" == docker ]]; then
+      docker_seconds_local=$docker_seconds
+      if [[ -s "$rcfile" ]]; then
+        ! $docker_seconds_set && mapfile -t rcdocker_seconds < <(get_config_value "$rcfile" "$PROGNAME":"$list" docker_seconds)
+        (( ${#rcdocker_seconds[@]} > 0 )) && docker_seconds_local=${rcdocker_seconds[-1]}
+      fi
+
+      if [[ -n "$docker_seconds_local" ]]; then
+        log -d "Checking age for docker containers"
+        # Loop through checks (in this case all container checks) and find
+        # containers that were restarted within docker_seconds seconds, then
+        # reverse check back for the check name and add it to the list
+        container_list=()
+        for sw in "${sw_list[@]}"; do
+          mapfile -t containers < <(image_search -C "$sw")
+
+          for container in "${containers[@]}"; do
+            log -d "Checking age for docker container: $container"
+            started_at=$(docker inspect --format '{{.State.StartedAt}}' "$container")
+            [[ ! $started_at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]] && continue
+            started_secs=$(date -d "$started_at" +%s)
+            [[ ! $started_secs =~ ^[0-9]+$ ]] && log -e "$started_secs not a number" && continue
+            now=$(date +%s)
+            log -d "Container Mode ($container): now=$now seconds=$started_secs diff=$(( now - started_secs )) docker_seconds_local=$docker_seconds_local"
+            (( now - started_secs > docker_seconds_local )) && { log -d -d -d "$container not old enough" ; continue ; }
+            log -d -d "Adding $container ($sw) to sw_list"
+            [[ " ${container_list[*]} " != *" $sw "* ]] && container_list+=("$sw")
+          done # for container in "${containers[@]}"; do
+        done # for sw in "${sw_list[@]}"; do
+        log -d -d "container_list=${container_list[*]}"
+        sw_list=("${container_list[@]}")
+      fi # if [[ -n "$docker_seconds_local" ]]; then
+    fi # if $update && [[ "$list" == docker ]]; then
+
+    mapfile -t sw_list < <(printf '%s\n' "${sw_list[@]}" | sort -u)
+    log -d -d "Sorting software list: ${sw_list[*]}"
+
+    case "$list" in
+      all)
+        log -d "Applying 'all' specific settings"
+        [[ "${sw_list[*]}" == "all" ]] && log -e "'list' property not defined in [$PROGNAME:all] section of RCFILE" && exit 1
+        ! $prepend_set && prepend_name=true
+        ;;
+      latest)
+        log -d "Applying 'latest' specific settings"
+        ! $prepend_set && prepend_name=false
+        sw_list=("${latest_list[@]}" "${latest_alias_list[@]}")
+        ;;
+    esac
+
+    if (( debug > 1 )); then
+      [[ "$output_file" != "$saved_output_file" ]] && log -d "[$list SETTINGS] output_file=$output_file"
+      [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[$list SETTINGS] output_mode=$output_mode"
+      [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[$list SETTINGS] include_invalid=$include_invalid"
+      [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[$list SETTINGS] docker_seconds=$docker_seconds"
+      log -d "[$list SETTINGS] list=${sw_list[*]}"
+      echo
+      (( debug > 3 )) && exit
+    fi
+
+    for sw in "${sw_list[@]}"; do
+      [[ -z "$sw" ]] && continue
+      listname=$list
+      [[ "$listname" == "$sw" ]] && unset listname
+      log -d "Processing $sw${listname:+ for "$listname"}"
+
+      unset rcoutput_file rcoutput_mode
+      if [[ -s "$rcfile" ]]; then
+        # output_mode
+        ! $output_mode_set && mapfile -t rcoutput_mode < <(get_config_value "$rcfile" "$PROGNAME":"$list" output_mode)
+        (( ${#rcoutput_mode[@]} > 0 )) && output_mode=${rcoutput_mode[-1]}
+
+        # output_file
+        ! $output_file_set && mapfile -t rcoutput_file < <(get_config_value "$rcfile" "$PROGNAME":"$sw" output_file)
+        (( ${#rcoutput_file[@]} > 0 )) && output_file=${rcoutput_file[-1]} && output_mode=json
+        log -d "Reading $sw config settings: output_file='$output_file' output_mode='$output_mode'"
+
+        # prepend_name
+        ! $prepend_set && mapfile -t rcprepend_name < <(get_config_value "$rcfile" "$PROGNAME":"$sw" prepend_name)
+        (( ${#rcprepend_name[@]} > 0 )) && prepend_name=${rcprepend_name[-1]}
+      fi
+
+      found=false
+      if ! function_exists "$sw"; then
+        for tag in docker git flatpak appimage pacman arch command; do
+          if function_exists "$sw"_"$tag"; then
+            sw=${sw}_$tag
+            found=true
+            break
+          fi
+        done
+      else
+        found=true
+      fi
+      log -d -d "Validating function for $sw exists (exists=$found)"
+      ! $found && log -e "Invalid software: $sw" && continue
+
+      # If software is "ink" but printer is not set, go to the next software
+      if [[ "$sw" == "printer_ink_check" && -z "$PRINTER" ]]; then
+        log -e "No printer defined for $sw"
+        continue
+      fi
+
+      # Reset lifetime to cache_lifetime, delay to retry_delay and retries to max_retries
+      lifetime=$cache_lifetime
+      delay=$retry_delay
+      retries=$max_retries
+
+      if [[ -s "$rcfile" ]]; then
+        log -d "Reading cache_lifetime retry_delay max_retries settings from config for $sw"
+        # Check if this version check has a setting for cache_lifetime and use it if it does
+        mapfile -t rccache_lifetime < <(get_config_value "$rcfile" "$PROGNAME":"$sw" cache_lifetime)
+        (( ${#rccache_lifetime[@]} > 0 )) && lifetime=${rccache_lifetime[-1]}
+
+        # Check if this version check has a setting for retry_delay and use it if it does
+        mapfile -t rcretry_delay < <(get_config_value "$rcfile" "$PROGNAME":"$sw" retry_delay)
+        (( ${#rcretry_delay[@]} > 0 )) && delay=${rcretry_delay[-1]}
+
+        # Check if this version check has a setting for max_retries and use it if it does
+        mapfile -t rcmax_retries < <(get_config_value "$rcfile" "$PROGNAME":"$sw" max_retries)
+        (( ${#rcmax_retries[@]} > 0 )) && retries=${rcmax_retries[-1]}
+      fi
+
+      # If printonly mode, add to list and continue to next
+      $printonly && printlist+=("$sw") && continue
+
+      if (( debug > 1 )) && [[ "$list" != "$sw" ]]; then
+        [[ "$output_file" != "$saved_output_file" ]] && log -d "[${list:+$list:}$sw SETTINGS] output_file=$output_file"
+        [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[${list:+$list:}$sw SETTINGS] output_mode=$output_mode"
+        [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[${list:+$list:}$sw SETTINGS] include_invalid=$include_invalid"
+        [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[${list:+$list:}$sw SETTINGS] docker_seconds=$docker_seconds"
+        [[ "$lifetime" != "$cache_lifetime" ]] && log -d "[${list:+$list:}$sw SETTINGS] lifetime=$lifetime"
+        [[ "$delay" != "$retry_delay" ]]       && log -d "[${list:+$list:}$sw SETTINGS] delay=$delay"
+        [[ "$retries" != "$max_retries" ]]     && log -d "[${list:+$list:}$sw SETTINGS] retries=$retries"
+        log -d "[${list:+$list:}$sw SETTINGS] sw=$sw"
+        echo
+        (( debug > 3 )) && exit
+      fi
+
+      # If not-force and check is for latest version, respect timestamp
+      i=0
+      unset update_time
+      while (( i <= retries )); do
+        # If a retry, sleep for $delay
+        (( i > 0 )) && log -v "Retrying for $sw (try $i of $retries) after $delay wait" && sleep "$delay"
+
+        unset ret version
+        [[ "$sw" == *"_latest" ]] && prepare_cache_dir "$cache_dir"
+
+        # If -f and -F not used, user is not root, sw IS a latest check, and 
+        # cache_file is readable, read the cache file if not stale
+        if ! $force_all && [[ $(id -u) != 0 && " ${force_list[*]} " != *" $sw "* ]] && \
+            [[ "$sw" == *"_latest" && -r "$cache_dir"/"$sw${minver:+_$minver}" ]]; then
+          stamp=$(stat -c "%Y" "$cache_dir"/"$sw${minver:+_$minver}")
+          now=$(date +%s)
+
+          # If the timestamp is less than 1 hour
+          if (( now - stamp < lifetime * 60 - 1 )) ; then
+            log -v "$sw was updated $(( (now - stamp) / 60 )) minutes ago, using cache ($lifetime minutes)"
+            version=$(cat "$cache_dir"/"$sw${minver:+_$minver}")
+            ret=$?
+            update_time=$stamp
+          fi
+        else
+          (( debug > 0 )) && $force_all && log -d "Forced update"
+          (( debug > 0 )) && [[ " ${force_list[*]} " == *" $sw "* ]] && log -d "Forced update"
+
+          use_sudo=false
+          # Loop through sudo_regexes to see if $sw matches a regex to use sudo
+          for regex in "${sudo_regexes[@]}"; do
+            [[ $sw =~ $regex ]] && use_sudo=true
+          done
+          log -d -d "Checking to see if $sw should be run with sudo (use_sudo=$use_sudo)"
+
+          if [[ -s "$rcfile" ]]; then
+            # Read config file to see if there are specific settings for $sw
+            mapfile -t rcuse_sudo < <(get_config_value "$rcfile" "$PROGNAME":"$sw" use_sudo)
+            (( ${#rcuse_sudo[@]} > 0 )) && use_sudo=${rcuse_sudo[-1]}
+            $use_sudo && ! $sudo_user_set && mapfile -t rcsudo_user < <(get_config_value "$rcfile" "$PROGNAME":"$sw" sudo_user)
+            (( ${#rcsudo_user[@]} > 0 )) && sudo_user=${rcsudo_user[-1]}
+          fi
+
+          if $use_sudo && (( $(id -u) != 0 )); then
+            [[ -z "$sudo_user" ]] && log -e "Cannot use sudo for $sw: No sudo_user defined (-x username)" && exit 1
+            unset dflags
+            log -v -v "Using sudo as $sudo_user to check $sw version"
+            rp=$(realpath "$0")
+            debug_args=()
+            for (( i = 0 ; i < debug ; i++ )); do debug_args+=("-d"); done
+            log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $sw ${debug_args[*]}'"
+            version=$(sudo -n -u "$sudo_user" "$rp" -X "$sw" "${debug_args[@]}")
+            ret=$?
+            update_time=$(date +%s)
+            (( ret != 0 )) && log -e "Could not get $sw version with sudo" && continue
+          else
+            log -d -d -d "Running $sw to get version"
+            version=$($sw)
+            ret=$?
+            update_time=$(date +%s)
+          fi
+
+          if [[ "$ret" != "0" || -z "$version" || "$version" == "null" ]]; then
+            if [[ "$sw" == "printer_ink_check" ]]; then
+              log -d "Could not get printer info for $sw, returning error json"
+            else
+              log -d "Could not get a version for $sw, returning '---'"
+              version="---"
+            fi
+            update_time=$(date +%s)
+            rm -f "$cache_dir"/"$sw${minver:+_$minver}"
+            break
+          fi
+
+          if [[ "$sw" == *"_latest" ]]; then
+            log -d "Writing latest update for $sw to cache"
+            echo "$version" > "$cache_dir"/"$sw${minver:+_$minver}"
+            # shellcheck disable=SC2153
+            (( $(id -u) == 0 )) && chown "$SUDO_USER":"$(id -g "$SUDO_USER")" "$cache_dir"/"$sw${minver:+_$minver}"
+          fi
+        fi
+        # If version is set, move on
+        [[ "$ret" == "0" && -n "$version" && "$version" != "null" ]] && break
+        # Otherwise, set to --- and delete cache file
+        version="---"
+        rm -f "$cache_dir"/"$sw${minver:+_$minver}"
+        i=$(( i + 1 ))
+      done # while (( i <= retries )); do
+
+      # Strip leading v
+      version=${version#v}
+      version=${version#V}
+
+      # Prepare Output
+      log -d "$list:$sw printing $output_mode to $output_file"
+
+      # Output text immediately and go to next software
+      if (( quiet == 0 )) && [[ "$output_mode" = "text" || "$output_file" != "/dev/stdout" ]]; then
+        if [[ "$sw" == "printer_ink_check" ]]; then
+          jq -rn --arg n "$sw" --argjson j "$version" \
+            '$j | "\($n): \(.printer) - cyan=\(.cyan) magenta=\(.magenta) yellow=\(.yellow) black=\(.black) photoblack=\(.photoblack)"'
+        else
+          echo "$sw: $version"
+        fi
+      fi
+      [[ "$output_mode" = "text" ]] && continue
+
+      # Printing to screen
+      if [[ "$output_file" == "/dev/stdout" ]]; then
+        tmpjson=${json_string:-"[]"}
+      # Printing to json file
+      elif [[ -s "$output_file" ]] && jq -r '.[]' "$output_file" &> /dev/null; then
+        tmpjson=$(jq -r '.' "$output_file" 2> /dev/null)
+      fi
+
+      # If tmpjson is not valid json with "[ ... ]", reset to "[]"
+      if ! jq -n --argjson j "$tmpjson" '$j[]' &> /dev/null; then
+        tmpjson="[]"
+      fi
+
+      # Save printer ink info to json string
+      if [[ "$sw" == "printer_ink_check" ]]; then
+        ! $include_invalid && grep -q '^[[:space:]]*"error":' <<< "$version" && continue
+        tmpjson=$(jq -n --argjson j "$tmpjson" --argjson new "$version" '
+          if $j | any(.[]; .name == $new.name and .ip == $new.ip)
+          then $j | map(if .name == $new.name and .ip == $new.ip then $new else . end)
+          else $j + [$new]
+          end | sort_by(.name | ascii_downcase)
+        ' 2> /dev/null)
+      # Save software version info to json string
+      else
+        ! $include_invalid && [[ "$version" == "---" ]] && continue
+        tmpjson=$(jq -n --argjson j "$tmpjson" --arg n "$sw" --arg v "$version" --arg t "${update_time:-$(date +%s)}" '
+          if $j | any(.[]; .name == $n)
+          then $j | map(if .name == $n then {name: $n, version: $v, time: ($t|tonumber)} else . end)
+          else $j + [{name: $n, version: $v, time: ($t|tonumber)}]
+          end | sort_by(.name | ascii_downcase)
+        ' 2> /dev/null)
+      fi
+
+      # Could not generate valid json string
+      # shellcheck disable=SC2181
+      if (( $? != 0 )); then
+        log -e "Could not add $sw to $list json string"
+        continue
+      # Generated valid json for ouput
+      else
+        local direct_write=false
+        # If printing to screen, save to global json_string
+        if [[ "$output_file" == "/dev/stdout" ]]; then
+          json_string=$tmpjson
+        # Printing to a file
+        else
+          log -d -d "Removing $output_file.new"
+          if [[ -e "$output_file".new ]]; then
+            rm -f "$output_file".new
+          fi
+          # Could not delete .new file
+          if [[ -e "$output_file".new ]]; then
+            log -d -d "Could not remove $output_file.new"
+            direct_write=true
+          else
+            log -d -d "Writing to $output_file.new"
+            jq -rn --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file".new
+            if [[ ! -s "$output_file".new ]]; then
+              log -d -d "Could not write to $output_file.new"
+              direct_write=true
+            else
+              log -d -d "Moving $output_file.new to $output_file"
+              mv "$output_file".new "$output_file" || \
+                log -e "Error: Could not move .new to $output_file"
+            fi
+          fi
+          if $direct_write; then
+            log -d -d "Writing directly to $output_file"
+            jq -rn --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file" || \
+              log -e "Error: Could not write to file $output_file"
+          fi
+          if [[ -s "$output_file" ]]; then
+            log -v "JSON Output saved to '$output_file'"
+          else
+            log -e "Could not write '$tmpjson' to '$output_file'"
+            continue
+          fi
+        fi
+      fi
+    done # for sw in "${sw_list[@]}"; do
+  done # for list in "${software[@]}"; do
+
+  # Print global json_string to the screen
+  if [[ "$output_mode" == "json" && "$output_file" == "/dev/stdout" ]]; then
+    log -d "Printing json string to the screen"
+    jq -rn --argjson j "$json_string" '$j'
+  fi
+
+  # If in Print Only mode, print list of software
+  if $printonly && (( ${#printlist[@]} > 0 )); then
+    print_list "$print_single" -s -l "[Test Mode] List of checks" "${printlist[@]}"
+  fi
+}
+
+if (return 2> /dev/null); then
+  # If included as a library
+  return 0
+else
+  # If run as a program
+  main "$@"
+fi
+

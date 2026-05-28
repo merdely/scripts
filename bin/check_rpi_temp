@@ -1,0 +1,87 @@
+#!/bin/sh
+
+unit=C
+
+convert_temp() {
+  local int=$(echo $1.0 | cut -d. -f1)
+  local dec=$(echo $1.0 | cut -d. -f2 | cut -b1-3)
+  [ "$dec" = "0" ] && echo ${int}000 && return 0
+  local i=1
+  local pow=10
+  local exp=$((3-$(printf $dec | wc -c)))
+  [ "$exp" = "0" ] && echo ${int}$dec && return 0
+  while [ $i -lt $exp ]; do
+    pow=$((pow*10))
+    i=$((i+1))
+  done 
+  echo $int$((dec*$pow))
+}
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h] -c CRIT -w WARN"
+  echo "       -h      : this help text"
+  echo "       -c CRIT : critical if temperature is at or above CRIT (in degrees $unit)"
+  echo "       -w WARN : warning if temperature is at or above WARN (in degrees $unit)"
+  echo
+  echo "       SOFTWARE is one of:"
+  echo "         $list"
+  exit 1
+}
+
+debug=false
+test=false
+unset printer
+while getopts ":hc:w:" opt; do
+  case $opt in
+    c)
+      printf "$OPTARG" | grep -Eq "^[0-9]+(.[0-9]+)?$" || { echo "Error: Value for CRIT must be a number"; exit 1; }
+      crit=$(convert_temp $OPTARG)
+      ;;
+    w)
+      printf "$OPTARG" | grep -Eq "^[0-9]+(.[0-9]+)?$" || { echo "Error: Value for WARN must be a number"; exit 1; }
+      warn=$(convert_temp $OPTARG)
+      ;;
+    h|\?) usage
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+[ -z "$crit" -o -z "$warn" ] && usage
+
+min=0
+max=100000
+
+sensor=/sys/class/thermal/thermal_zone0/temp
+
+if [ ! -e $sensor ]; then
+  echo "UNKNOWN - Cannot find thermal sensor ($sensor)"
+  exit 3
+fi
+
+temp=$(cat $sensor)
+temp_integer=$(($temp / 1000))
+temp_decimal=$(($temp % 1000))
+temp_pretty=$(printf "%0.2f" $temp_integer.$temp_decimal)
+
+perfdata=$(printf "%s=%s%s;%s;%s;%s;%s " temp $temp_pretty deg $(printf "%0.2f" $((warn/1000)).$((warn%1000))) $(printf "%0.2f" $((crit/1000)).$((crit%1000))) 0.00 100.00)
+
+if ! echo "$temp" | grep -Eq "^[0-9]+$"; then
+  echo "UNKNOWN - Invalid command output ($temp)"
+  exit 3
+fi
+
+if [ $temp -ge $crit ]; then
+  echo "CRITICAL - System temperature is $temp_pretty $unit|$perfdata"
+  exit 2
+fi
+
+if [ $temp -ge $warn ]; then
+  echo "WARNING - System temperature is $temp_pretty $unit|$perfdata"
+  exit 1
+fi
+
+echo "OK - System temperature is $temp_pretty $unit|$perfdata"
+exit 0

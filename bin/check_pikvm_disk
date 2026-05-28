@@ -1,0 +1,55 @@
+#!/bin/sh
+
+WARN=85
+CRIT=90
+df \
+  -x nsfs \
+  -x overlay \
+  -x squashfs \
+  -x devtmpfs \
+  -x cgroup \
+  -x cgroup2 \
+  -x tmpfs \
+  -x udf \
+  -x fuse.gvfsd-fuse \
+  -x fuse.portal \
+  -x btrfs \
+  -x tracefs \
+  -k \
+  --output=source,size,used,avail,pcent,ipcent,target | \
+    awk -vWARN=$WARN -vCRIT=$CRIT '
+    BEGIN {
+      s[0] = "OK";
+      s[1] = "WARNING";
+      s[2] = "CRITICAL";
+      s[3] = "UNKNOWN";
+      state = 0;
+      perf = "";
+      out = "";
+      outh = "";
+    }
+    NR>1 {
+      size = $2 / 1024;
+      used = $3 / 1024;
+      perc = $5; gsub(/%$/, "", perc);
+      iperc = $6; gsub(/%$/, "", iperc);
+      perf = perf sprintf("%s=%.2f%s;%.2f;%.2f;%d;%d ", $NF, used, "MB", size - size * WARN / 100, size - size * CRIT / 100, 0, size);
+      if (perc >= WARN && state == 0) {
+        state = 1;
+        outh = " - "
+      };
+      if (perc >= CRIT) {
+        state = 2;
+        outh = " - "
+      };
+      if (state == 1 || state == 2) {
+        out = out sprintf("%s %d MB (%d%% inode=%d%%); ", $NF, $4 / 1024, 100 - perc, 100 - iperc)
+      }
+    }
+    END {
+      printf "DISK %s%s%s | %s\n", s[state], outh, out, perf
+    }
+    '
+
+unset WARN CRIT
+

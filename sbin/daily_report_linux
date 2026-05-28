@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+
+unset PAGER
+[ -r /etc/os-release ] && source /etc/os-release
+
+quiet=false
+[ "$1" = -q ] && quiet=true && shift
+
+if [ -z "$1" ]; then
+  /usr/bin/uname -a
+  echo
+  /usr/bin/uptime
+  echo
+fi
+
+[ $(id -u) != 0 ] && echo "Error: This program requires root" >&2 && exit 1
+
+if [ -z "$1" -o "$1" = "ssh" -o "$1" = "authorized_keys" ]; then
+  if [ -x /srv/scripts/sbin/ssh_akeys_check ]; then
+    /srv/scripts/sbin/ssh_akeys_check
+  else
+    echo "ERROR: Cannot perform SSH Authorized Keys check - /srv/scripts/sbin/ssh_akeys_check not found"
+  fi
+  echo
+fi
+
+if [ -z "$1" -o "$1" = "reboot" -o "$1" = "restart" ]; then
+  if [ -x /srv/scripts/sbin/check_reboot ]; then
+    /srv/scripts/sbin/check_reboot
+  else
+    echo "ERROR: Cannot perform Reboot check - /srv/scripts/sbin/check_reboot not found"
+  fi
+  echo
+fi
+
+if [ -z "$1" -o "$1" = "packages" -o "$1" = "updates" ]; then
+  updateschecked=false
+  [ -x /usr/local/bin/rw ] && /usr/local/bin/rw
+  if ! $updateschecked && [ -x /usr/bin/apt ]; then
+    echo "Available Updates:"
+    /usr/bin/apt update -y > /dev/null 2>&1
+    /usr/bin/apt list --upgradable 2>&1 | /usr/bin/grep -Ev "^(Listing...|WARNING: apt does not have a stable CLI interface. Use with caution in scripts.|)$"
+    updateschecked=true
+  fi
+  if ! $updateschecked && [ -x /usr/bin/dnf ]; then
+    echo "Available Updates:"
+    /usr/bin/dnf makecache > /dev/null 2>&1
+    /usr/bin/dnf check-update | grep -Ev "^(Last metadata expiration check:|$)"
+    updateschecked=true
+  fi
+  if ! $updateschecked && [ -x /usr/bin/pacman ]; then
+    echo "Available Updates:"
+    [ -x /usr/bin/checkupdates ] && /usr/bin/checkupdates
+    updateschecked=true
+
+    if [ $(/usr/bin/pacman -Qm | wc -l) -gt 0 ] && [ -x /usr/bin/aur ]; then
+      echo
+      echo "Available AUR Updates:"
+      /usr/bin/pacman -Qm | /usr/bin/aur vercmp
+    fi
+    if [ $(/usr/bin/pacman -Qdtq | wc -l) -gt 0 ]; then
+      echo
+      echo "Orphaned packages:"
+      /usr/bin/pacman -Qdtq
+    fi
+  fi
+  if command -v flatpak > /dev/null 2>&1; then
+    echo
+    echo "Available Flatpak Updates:"
+    flatpak remote-ls --updates
+  fi
+
+  [ -x /usr/local/bin/ro ] && sleep 1 && sync && sleep 1 && /usr/local/bin/ro
+
+  [ "$1" != "packages" -a "$1" != "updates" ] && echo
+fi
+
+if [ -z "$1" -o "$1" = "dpkgnew" ]; then
+  command -v apt > /dev/null 2>&1
+  if [ $? = 0 ]; then
+    echo "Debian/Ubuntu Config Files Needing Attention:"
+    find /etc -name "*.dpkg-new" -or -name "*.dpkg-old" -or -name "*.dpkg-tmp"
+    [ "$1" != "dpkgnew" ] && echo
+  fi
+fi
+
+if [ -z "$1" -o "$1" = "pacnew" ]; then
+  command -v pacman > /dev/null 2>&1
+  if [ $? = 0 ]; then
+    echo "Arch Linux Config Files Needing Attention:"
+    find /etc -name "*.pacnew"
+    [ "$1" != "pacnew" ] && echo
+  fi
+fi
+
+if [ -z "$1" -o "$1" = "badcam" ]; then
+  if mount | grep -q "/share/Cameras type xfs"; then
+    echo "Bad Camera Files:"
+    /usr/bin/find /share/media/Cameras/.badfiles -name "*.264" -mtime -1 2> /dev/null | /usr/bin/sort -n
+    echo
+  fi
+fi
+
+if [ -z "$1" -o "$1" = "git" ]; then
+  printed=false
+  for dir in /etc /var /srv /srv/scripts /home/* $(find /home/*/src /home/*/Work/src -maxdepth 2 -name "*.git" -exec dirname "{}" \; 2> /dev/null); do
+    if [ -d $dir/.git ]; then
+      gituser=$(stat -c %U $dir/.git)
+      ! $printed && [ "$1" != "git" ] && echo "Git Status:" && printed=true
+      echo " - $dir"
+      if [ $(id -un) != "$gituser" ]; then
+        sudo -u $gituser git -C $dir status --short | sed 's/^/    /'
+      else
+        git -C $dir status --short | sed 's/^/    /'
+      fi
+      # echo
+    fi
+  done
+  [ "$1" != "git" ] && echo
+fi
+
+if [ -z "$1" -o "$1" = "scripts" ]; then
+  if [ -d /srv/scripts/.git ]; then
+    [ -x /usr/local/bin/rw ] && /usr/local/bin/rw
+    ! $quiet && echo "Updating /srv/scripts from git:"
+    env HOME=/root git -C /srv/scripts pull -q
+    env HOME=/root git -C /srv/scripts diff --name-only ORIG_HEAD HEAD | sed 's#^# - #'
+    [ -x /usr/local/bin/ro ] && sleep 1 && sync && sleep 1 && /usr/local/bin/ro
+  fi
+fi
+
+if [ -z "$1" ]; then
+  echo "Checking subsystem status:"
+
+  echo
+
+  echo "disks:"
+  /usr/bin/df -hlx overlay
+
+  echo
+
+  echo "network:"
+  /usr/sbin/ip addr
+
+  echo
+fi
+

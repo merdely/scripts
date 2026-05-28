@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import requests
+import shlex
+import subprocess
+import sys
+import tempfile
+
+## Use instructions
+# Edit ~/.config/ntfy/client.yml
+# subscribe:
+#   - topic: yourtopichere
+#     command: ntfy-send --raw "$raw"
+
+## Testing
+# ntfy-send --debug --test --raw "{\"id\":\"23zkJj8EU5cI\",\"time\":1768245084,\"expires\":1768288284,\"event\":\"message\",\"topic\":\"testing\",\"message\":\"You have two choices\",\"actions\":[{\"id\":\"5ORLXNKV0Q\",\"action\":\"view\",\"label\":\"Choice 1\",\"clear\":true,\"url\":\"https://example.com/?choice=1\"},{\"id\":\"pGz6u3n2BC\",\"action\":\"http\",\"label\":\"Choice 2\",\"clear\":false,\"url\":\"https://example.co/?choice=2\"}]}"
+
+## Action modes
+# view (open URI in app): https://docs.ntfy.sh/publish/?h=action#open-websiteapp
+# http (POST to API): https://docs.ntfy.sh/publish/?h=action#send-http-request
+# broadcast (macrodroid/tasker): https://docs.ntfy.sh/publish/?h=action#send-android-broadcast
+
+usage = "usage goes here"
+argparser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]), usage=f"%(prog)s {usage}", conflict_handler="resolve")
+argparser.add_argument("-?", "--help", action="help", help="Show help options")
+argparser.add_argument("-i", "--id", metavar="id", help="ntfy message id")
+argparser.add_argument("-s", "--time", metavar="time", help="ntfy timestamp")
+argparser.add_argument("-n", "--topic", metavar="topic", help="ntfy topic name")
+argparser.add_argument("-m", "--message", metavar="message", help="ntfy message body")
+argparser.add_argument("-t", "--title", metavar="title", help="ntfy message title")
+argparser.add_argument("-p", "--priority", metavar="priority", help="ntfy message priority (1=min, 5=max)")
+argparser.add_argument("-T", "--tags", metavar="tags", help="ntfy message tags (comma separated list)")
+argparser.add_argument("-a", "--app-name", metavar="app_name", help="app-id for notify-send")
+argparser.add_argument("-r", "--raw", metavar="raw", help="raw json message")
+argparser.add_argument("-d", "--debug", action="store_true", help="print debug messages to stderr")
+argparser.add_argument("-D", "--debug-to-file", action="store_true", help="print debug messages to $HOME/.cache/ntfy")
+argparser.add_argument("-t", "--test", action="store_true", help="print actions instead of running them")
+flags = argparser.parse_args()
+
+if not flags.raw:
+    print("Error: --raw is a required argument")
+    quit(1)
+
+# Determine the location of notify-send
+possible_paths = [ "/usr/bin/notify-send", "/usr/local/bin/notify-send" ]
+notify_send = None
+for path in possible_paths:
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        notify_send = path
+        break
+
+# Save the output of "notify-send --help" to parse its usage
+if not notify_send:
+    print(f"{command} not found in the specified paths.")
+    quit()
+
+if flags.debug_to_file:
+    cache_dir = Path.home() / ".cache" / "ntfy"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    debug_file = (cache_dir / "ntfy_send.log").open("a")
+
+# Need to build arg_list here
+actions = {}
+action_cmds = {}
+arg_list = []
+arg_list.insert(0, notify_send)
+priority_set = False
+added_wait = False
+ntfy_raw = json.loads(flags.raw)
+app_name = "ntfy-send"
+
+if flags.debug:
+    print(flags.raw, file=sys.stderr)
+if flags.debug_to_file:
+    print(flags.raw, file=debug_file)
+
+if "id" in ntfy_raw.keys():
+    if flags.debug:
+        print(f"id: {ntfy_raw['id']}", file=sys.stderr)
+    elif flags.debug_to_file:
+        print(f"id: {ntfy_raw['id']}", file=debug_file)
+
+icon_file = None
+if "icon" in ntfy_raw.keys():
+    icon_file = ntfy_raw['icon']
+    tmp_file = None
+    if ntfy_raw['icon'].startswith("https://") or ntfy_raw['icon'].startswith("http://"):
+        try:
+            response = requests.get(ntfy_raw['icon'])
+            response.raise_for_status()
+            tmp_file = tempfile.NamedTemporaryFile(delete=True)
+            tmp_file.write(response.content)
+            tmp_file.flush()
+            icon_file = tmp_file.name
+        except requests.RequestException:
+            pass
+    arg_list.append(f"--icon={icon_file}")
+
+if flags.app_name:
+    app_name = flags.app_name
+if app_name:
+    arg_list.append(f"--app-name={app_name}")
+    if app_name == "homeassistant":
+        arg_list[:] = [arg for arg in arg_list if not arg.startswith("--icon=")]
+        arg_list.append(f"--icon=homeassistant")
+
+if "priority" in ntfy_raw.keys():
+    if flags.debug:
+        print(f"priority: {ntfy_raw['priority']}", file=sys.stderr)
+    elif flags.debug_to_file:
+        print(f"priority: {ntfy_raw['priority']}", file=debug_file)
+    priority_set = True
+    if ntfy_raw['priority'] in [ 1, 2, "1", "2", "low", "lowest", "min" ]:
+        arg_list.append(f"--urgency=low")
+        if not icon_file:
+            arg_list.append("--icon=info")
+    elif ntfy_raw['priority'] in [ 4, "4", "critical", "high" ]:
+        arg_list.append(f"--urgency=critical")
+        if not icon_file:
+            arg_list.append("--icon=dialog-warning")
+    elif ntfy_raw['priority'] in [ 5, "5", "highest", "urgent", "max" ]:
+        arg_list.append(f"--urgency=critical")
+        if not icon_file:
+            arg_list.append("--icon=dialog-error")
+    else:
+        arg_list.append(f"--urgency=normal")
+        if not icon_file:
+            arg_list.append("--icon=dialog-information")
+
+if not icon_file and not priority_set:
+    arg_list.append("--icon=dialog-information")
+
+if "actions" in ntfy_raw.keys():
+    if not added_wait:
+        arg_list.append("--wait")
+        added_wait = True
+
+    count = 0
+    for action in ntfy_raw['actions']:
+        if flags.debug:
+            print(f"action {count}: {action}", file=sys.stderr)
+        elif flags.debug_to_file:
+            print(f"action {count}: {action}", file=debug_file)
+        count += 1
+        if action['label']:
+            actions[action['id']] = action['label']
+        else:
+            actions[action['id']] = f"Action{count}"
+
+        if not action['action'] or action['action'] == "view":
+            action_cmds[action['id']] = ["xdg-open", action['url']]
+        elif action['action'] == "http":
+            cmd = ["curl", "-s"]
+            if action['method']:
+                cmd.extend(["-X", action['method']])
+            if action['body']:
+                cmd.extend(["-d", action['body']])
+            if action['headers']:
+                for key, value in action['headers'].items():
+                    cmd.extend(["-H", f"{key}: {value}"])
+            cmd.append(action['url'])
+            action_cmds[action['id']] = cmd
+        arg_list.append(f"--action={action['id']}={actions[action['id']]}")
+
+if "title" in ntfy_raw.keys():
+    if flags.debug:
+        print(f"title: {ntfy_raw['title']}", file=sys.stderr)
+    elif flags.debug_to_file:
+        print(f"title: {ntfy_raw['title']}", file=debug_file)
+    arg_list.append(ntfy_raw['title'])
+if "message" in ntfy_raw.keys():
+    if flags.debug:
+        print(f"message: {ntfy_raw['message']}", file=sys.stderr)
+    elif flags.debug_to_file:
+        print(f"message: {ntfy_raw['message']}", file=debug_file)
+    arg_list.append(ntfy_raw['message'])
+
+if flags.debug:
+    print(f"notify-send command: {arg_list}", file=sys.stderr)
+elif flags.debug_to_file:
+    print(f"notify-send command: {arg_list}", file=debug_file)
+
+# Actually run notify-send
+cmd_out = subprocess.run(arg_list, capture_output=True, text=True)
+if flags.debug:
+    print(f"command output: {cmd_out}", file=sys.stderr)
+elif flags.debug_to_file:
+    print(f"command output: {cmd_out}", file=debug_file)
+if cmd_out.stdout:
+    id = cmd_out.stdout.rstrip('\n')
+    if flags.debug:
+        print(f"returned action_id: {id}", file=sys.stderr)
+    elif flags.debug_to_file:
+        print(f"returned action_id: {id}", file=debug_file)
+    if action_cmds[id]:
+        if flags.test:
+            print(f"action label: {actions[id]}", file=sys.stderr)
+            print(f"action command line: {action_cmds[id]}", file=sys.stderr)
+        else:
+            if flags.debug:
+                print(f"running action: {actions[id]}", file=sys.stderr)
+                print(f"action command line: {action_cmds[id]}", file=sys.stderr)
+            elif flags.debug_to_file:
+                print(f"running action: {actions[id]}", file=debug_file)
+                print(f"action command line: {action_cmds[id]}", file=debug_file)
+            subprocess.run(action_cmds[id])
+
+if flags.debug_to_file:
+    debug_file.close()
+if tmp_file:
+    tmp_file.close()

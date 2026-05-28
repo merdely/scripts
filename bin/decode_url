@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+
+import sys
+import urllib.parse
+
+if len(sys.argv) == 1:
+  print('usage: decode_url string')
+  sys.exit()
+
+print(urllib.parse.unquote(' '.join(sys.argv[1:])))

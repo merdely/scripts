@@ -1,0 +1,92 @@
+#!/bin/sh
+
+usage() {
+  echo "usage: $0 [-h] [-w WARN -c CRIT] -C CMD UPSSTRING" >&2
+  echo "        -C CMD:    Command to check UPS state (default: upsc)" >&2
+  echo "                   Can be one of upsc or upower" >&2
+  echo "        UPSSTRING: Depends on CMD mode used" >&2
+  echo "                   upsc: upsname[@hostname[:port]]" >&2
+  echo "                   upower: string like '/org/freedesktop/UPower/devices/ups_hiddev2'" >&2
+  echo "                       Use upower -e to see a list of devices" >&2
+  echo "        -w WARN|-c CRIT:   When CMD is upower, -w and -c can be used to check battery charge percentage" >&2
+  exit 1
+}
+
+while getopts ":hC:c:w:" opt; do
+  case $opt in
+    h|\?)
+      usage
+      ;;
+    C)
+      cmd=$OPTARG
+      ;;
+    c)
+      crit=$OPTARG
+      ;;
+    w)
+      warn=$OPTARG
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+[ -z "$1" ] && usage
+
+[ "$cmd" != "upower" ] && cmd=upsc
+
+! which which > /dev/null 2>&1 && alias which='command -v'
+
+if ! which $cmd > /dev/null 2>&1; then
+  echo "UNKNOWN - Cannot find $cmd"
+  exit 3
+fi
+
+if [ $cmd = upsc ]; then
+  state=$(upsc $1 ups.status 2>&1)
+
+  if [ $? != 0 ]; then
+    echo "UNKONWN - Command error ($(echo $state | sed -r 's/Init SSL without certificate database ?//'))"
+    exit 3
+  fi
+
+  if ! echo "$state" | sed -r 's/Init SSL without certificate database ?//' | grep -Eq "\bOL\b"; then
+    echo "UPS CRITICAL - '$1' on battery power"
+    exit 2
+  fi
+
+  echo "UPS OK - '$1' online"
+  exit 0
+else
+  state=$(upower -i $1 | awk '$1=="state:" {print $2}')
+  if [ $? != 0 ]; then
+    echo "UNKONWN - Command error ($state)"
+    exit 3
+  fi
+  perc=$(upower -i $1 | awk '$1=="percentage:" {print $2}')
+  perc_num=$(echo $perc | sed 's/%//')
+  case $state in
+    fully-charged)
+      msg="UPS OK - '$1' fully-charged"
+      retval=0
+      ;;
+    charging)
+      msg="UPS WARNING - '$1' is charging ($perc)"
+      retval=1
+      ;;
+    *)
+      msg="UPS CRITICAL - '$1' is $state"
+      retval=2
+      ;;
+  esac
+  if [ $perc_num -lt $warn ]; then
+    msg="UPS WARNING - '$1' is below $warn% ($perc)"
+    retval=1
+  fi
+  if [ $perc_num -lt $crit ]; then
+    msg="UPS CRITICAL - '$1' is below $crit% ($perc)"
+    retval=2
+  fi
+
+  echo $msg
+  exit $retval
+fi

@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+
+[[ "$(id -u)" != 0 ]] && { echo "Error: This program requires root" >&2 ; exit 1 ; }
+
+kernchecked=false
+if [ -e /usr/bin/needs-restarting ]; then
+  kernchecked=true
+  /usr/bin/needs-restarting -r
+  [ $? != 0 ] && echo
+fi
+if [ "$ID" = debian ] || [[ $ID_LIKE =~ debian ]]; then
+  kernchecked=true
+  if [ -f /var/run/reboot-required ]; then
+    echo "System reboot required"
+    cat /var/run/reboot-required
+    echo
+  fi
+fi
+if [ -f /var/run/reboot-required.pkgs ]; then
+  cat /var/run/reboot-required.pkgs
+  echo
+fi
+if ! $kernchecked && [ -x /usr/bin/pacman ]; then
+  kernchecked=true
+  if pacman -Q linux-rpi-pikvm > /dev/null 2>&1; then
+    #filever=$(zcat /boot/initramfs-linux.img | strings | awk -F '[= ]' '$1=="vermagic"&&$2{print $2;exit}')
+    filever=$(pacman -Q linux-rpi-pikvm | cut -d " " -f 2-)-rpi
+  else
+    filever=$(file /boot/vmlinuz-$(awk -F'[(@]' '{print $2}' /proc/version)|sed -r 's/^.*version (.*) \(.*$/\1/')
+  fi
+  if [ "$filever" != $(uname -r) ]; then
+    echo "New kernel ($filever) requires a reboot"
+    echo
+  fi
+fi
+! $kernchecked && echo "Warning: Kernel reboot requirement not checked"
+if command -v lsof &> /dev/null; then
+  libs=$(lsof -nlPOXbw +c0|awk '
+    /DEL.*lib/ {
+      pid = $2
+      lib = $NF
+      c = sudo " test -e /proc/" pid "/exe && echo exists"
+      c | getline e
+      close(c)
+      c = sudo " grep -q app.slice/app-flatpak- /proc/" pid "/cgroup && echo flatpak"
+      c | getline f
+      close(c)
+      if (e == "exists" && f != "flatpak") {
+        c = sudo " realpath /proc/" pid "/exe"
+        c | getline r
+        close(c)
+        n = split(r, a, "/")
+        p = a[n]
+        if (match(p, /^python/) != 0) {
+          c = "cat /proc/" pid "/cmdline"
+          c | getline r
+          close(c)
+          n = split(r, a, "[\x00[:space:]]+")
+          if (a[1] !~ /python/) {
+            p = a[1]
+          } else {
+            p = ""
+            for (i = 2; i <= n; i++) {
+              if (a[i] !~ /^-/ && a[i] != "") {
+                p = a[i]
+                break
+              }
+            }
+          }
+          gsub(/^.*\//, "", p)
+        }
+        gsub(/ /, "", p)
+      } else {
+        c = "ps -p " pid " -o args= 2>/dev/null"
+        c | getline r
+        close(c)
+        n = split(r, a, "[\x00[:space:]]+")
+        p = a[1]
+
+        # Truncate long command lines and clean up
+        #p = substr(p, 1, 50)
+        #gsub(/^[[:space:]]+|[[:space:]]+$/, "", p)
+      }
+      printf "%s (%s): %s\n", p, pid, lib
+    }'|grep -Ev "^firewalld \([0-9]+\): /memfd:libffi$"|sort -u|column -t)
+  if [[ -n $libs ]]; then
+    echo "Library Updates Requiring Restart/Reboot:"
+    cat <<< $libs
+    echo
+    rc=0
+  fi
+else
+  echo "Warning: Could not check for processes and libraries that have been updated (missing lsof)"
+fi

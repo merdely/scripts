@@ -1,0 +1,27 @@
+#!/bin/sh
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h]"
+  echo "       -h      : this help text"
+  exit 1
+}
+
+while getopts ":h" opt; do
+  case $opt in
+    h|\?) usage
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+root_readonly=$(mount | awk 'BEGIN{o="false"}$3=="/"&&$6~/(\(ro,|,ro\)|,ro,|\(ro\))/{o="true"}END{print o}')
+
+if ! $root_readonly; then
+  echo "CRITICAL - / is mounted read-write"
+  exit 2
+fi
+
+echo "OK - / is mounted read-only"
+exit 0

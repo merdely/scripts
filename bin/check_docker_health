@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+
+export COMPOSE_FILE=/srv/docker/compose.yaml
+
+[ "$1" = "-h" -o -z "$1" ] && echo "usage: $0 [-h] containername" >&2 && exit 1
+
+# Alias which to 'command -v' if not found
+! which which > /dev/null 2>&1 && alias which='command -v'
+
+# Function to check if a program exists and print an error message
+check_prog() {
+  [[ ! $1 ]] && echo "usage: check_prog prog" && exit 1
+  ! which $1 &> /dev/null && echo "UNKNOWN - Cannot find $1 command" && exit 3
+}
+
+# Check to see if required commands are found
+check_prog docker
+check_prog jq
+
+# helper functions
+get_checks() {
+  echo $(awk '/() {$/ && $1 !~ /^(usage|get_checks|get_name|get_status)\(\)$/ {gsub(/\(\)$/,"",$1);print $1}' $0)
+}
+[ "$1" = "-l" ] && printf "Configured health checks: %s\n" "$(get_checks)" && exit 0
+
+get_name() {
+  [ -z "$1" ] && echo "Error: You must supply container name" && return 1
+  [ "$1" = "-h" ] && echo "usage: get_name CONTAINER" && return 0
+
+  docker compose ps --format '{{.Name}}' $1
+}
+
+get_status() {
+  [ -z "$1" ] && echo "Error: You must supply container name" && return 1
+  [ "$1" = "-h" ] && echo "usage: get_status CONTAINER" && return 0
+
+  docker compose ps --all --format {{.Status}} $1
+}
+
+container=$1
+health_check=${container//-/_}
+
+# Check to make sure health check exists
+if [[ ! " $(get_checks) " == *" $health_check "* ]]; then
+  echo "CONTAINER CRITICAL - $health_check health check not found"
+  exit 2
+fi
+
+# Check to see if container is running or found
+docker compose ps $container > /dev/null 2>&1
+if [ $? != 0 ]; then
+  echo "CONTAINER CRITICAL - $container container not found"
+  exit 2
+fi
+docker_name=$(get_name $container)
+
+# health checks
+audiobookshelf() {
+  docker compose exec $container wget -qO- http://127.0.0.1:80 | grep -q "<title>Audiobookshelf</title>"
+}
+authelia() {
+  docker compose exec $container /app/healthcheck.sh
+}
+booklore() {
+  docker compose exec $container wget -qO- http://localhost:6060 2>&1 | grep -q "<title>BookLore</title>"
+}
+bookstack() {
+  docker compose exec $container curl http://localhost:80/login 2>&1 | grep -q "<title>BookStack</title>"
+}
+calibre() {
+  docker compose exec $container curl -s http://localhost:8080/vnc | grep -q "universalTouchGamepad\.js"
+}
+calibre_web() {
+  docker compose exec $container curl -s http://localhost:8083/login | grep -q "<title>Calibre-Web | Login</title>"
+}
+collabora() {
+  docker compose exec $container /bin/bash -c "{ printf \"GET / HTTP/1.1\r\nHost: collabora\r\nConnection: close\r\n\r\n\" >&3; cat <&3; } 3<> /dev/tcp/localhost/9980" 2>&1 | grep -q "^OK$"
+}
+fcgiwrap() {
+  docker compose exec $container wget -qO- http://nginx/cgitest.musl | grep -q 'CGI is working!'
+}
+feishin() {
+  docker compose exec $container wget -qO- http://127.0.0.1:9180 2>&1 | grep -q "<title>Feishin</title>"
+}
+forgejo() {
+  docker compose exec $container curl -s http://localhost:3000/explore/repos | grep -q "<title>Explore - Forgejo: Beyond coding. We Forge.</title>"
+}
+immich() {
+  docker compose exec $container immich-healthcheck
+}
+immich_machine_learning() {
+  docker compose exec $container python3 healthcheck.py
+}
+immichframe() {
+  docker compose exec $container /bin/bash -c "{ printf \"GET / HTTP/1.1\r\nHost: immichframe\r\nConnection: close\r\n\r\n\" >&3; cat <&3; } 3<> /dev/tcp/localhost/8080" 2>&1 | grep -q "content=\"ImmichFrame\" />"
+}
+jellyfin() {
+  docker compose exec $container curl -s http://127.0.0.1:8096/web/index.html | grep -q "content=\"Jellyfin\">"
+}
+jellyfin_vue() {
+  docker compose exec $container wget -qO- http://127.0.0.1:80/ | grep -q "<title>Jellyfin Vue</title>"
+}
+jellysearch() {
+  docker compose exec $container /bin/bash -c "{ printf \"GET /Items HTTP/1.1\r\nHost: jellysearch\r\nConnection: close\r\n\r\n\" >&3; cat <&3; } 3<> /dev/tcp/localhost/5000" 2>&1 | grep -q "TotalRecordCount"
+}
+jellyseerr() {
+  docker compose exec $container wget -qO- http://127.0.0.1:5055 2>&1 | grep -q "<title>Sign In - Jellyseerr</title>"
+}
+jellystat() {
+  docker compose exec $container /usr/bin/wget --no-verbose --tries=1 --spider http://localhost:3000/auth/isconfigured
+}
+johan_sshd() {
+  docker compose exec $container pgrep -f "sshd: /usr/sbin/sshd -D \[listener\]" > /dev/null
+}
+linkwarden() {
+  docker compose exec $container /usr/bin/curl --silent --fail http://127.0.0.1:3000/ | grep -q "<title>Linkwarden</title>"
+}
+lldap() {
+  docker compose exec $container /app/lldap healthcheck --config-file /data/lldap_config.toml
+}
+meilisearch() {
+  docker compose exec $container curl -s http://127.0.0.1:7700/health 2>&1 | grep -qE "\{\s*\"status\"\s*:\s*\"available\"\s*\}"
+}
+memcached() {
+  echo version | docker compose exec -T $container nc -vn -w 1 127.0.0.1 11211 2>&1 | grep -qE "^127.0.0.1 .* open$"
+}
+mollysocket() {
+  docker compose exec $container wget -q --tries=1 "http://127.0.0.1:8020/discover" -O - | grep -q '"mollysocket":{"version":'
+}
+mysql() {
+  docker compose exec $container mariadb -u status -pstatus -e status | grep -q "Uptime:"
+}
+nagios() {
+  docker compose exec $container /healthcheck.sh
+}
+naemon() {
+  docker compose exec $container /usr/lib/monitoring-plugins/check_nagios -t 20 -e 5 -F /var/log/naemon/naemon.log -C "naemon /etc/naemon/naemon.cfg"
+}
+navidrome() {
+  docker compose exec $container wget -qO- http://127.0.0.1:4533 2>&1 | grep -q "<title>Navidrome</title>"
+}
+nginx() {
+  docker compose exec $container curl -sf http://127.0.0.1:80/nginx.html | grep -q "<h1>Welcome to nginx!</h1>"
+}
+ntfy() {
+  docker compose exec $container wget -qO- http://127.0.0.1:80/ | grep -q "<title>ntfy web</title>"
+}
+ollama() {
+  docker compose exec $container /bin/bash -c "{ printf \"GET / HTTP/1.1\r\nHost: ollama\r\nConnection: close\r\n\r\n\" >&3; cat <&3; } 3<> /dev/tcp/localhost/11434" | grep -q "Ollama is running"
+}
+open_webui() {
+  docker compose exec $container curl --silent --fail http://localhost:8080/health | grep -Eq '^{"?status"?: ?"?true"?}$'
+}
+openregex() {
+  docker compose exec $container curl -s 127.0.0.1:5000 | grep -q '<title>OpenRegex - Open source, self-hosted, web-based regular expression (regex) tester and debugger.</title>'
+}
+php_fpm() {
+  docker compose exec $container curl -sf http://nginx:80/phptest.php | grep -q "PHP is working!"
+}
+portainer() {
+  docker compose exec $container wget -qSO- http://localhost:9000/api/system/status 2>&1 | grep -q "HTTP/1.1 200 OK"
+}
+portainer_agent() {
+  docker compose exec $container wget --no-check-certificate -qSO- https://localhost:9001/ping 2>&1 | grep -q "HTTP/1.1 204"
+}
+postgres() {
+  docker compose exec $container pg_isready --dbname="postgres" --username="postgres"
+}
+redis() {
+  docker compose exec $container redis-cli --no-auth-warning --user ping --pass pong PING | grep -q PONG
+}
+seafile() {
+  docker compose exec $container curl -s http://127.0.0.1:80/accounts/login/ | grep -qE "<title>Log In - (.*)?Seafile</title>"
+}
+shlink() {
+  docker compose exec $container curl -s http://localhost:8080/rest/v3/health | grep -q '"status":"pass"'
+}
+shlink_web_client() {
+  docker compose exec $container curl http://localhost:8080 2>&1 | grep -q "<title>Shlink — The URL shortener</title>"
+}
+smtpd() {
+  docker compose exec $container smtpctl show status
+}
+speedtest() {
+  docker compose exec $container curl -s http://localhost:8080 | grep "<title>LibreSpeed</title>"
+}
+streamystats() {
+  docker compose exec streamystats wget -qO- http://localhost:3005/api/health | jq -r .status | grep "^ok$"
+}
+syncthing() {
+  docker compose exec syncthing curl -s http://192.168.25.44:8384/rest/noauth/health | jq -r .status | grep "^OK$"
+}
+syncthingdiscovery() {
+  docker compose exec syncthingdiscovery wget -qO- http://127.0.0.1:8080/metrics | grep -E "^go_threads [0-9]"
+}
+trilium() {
+  docker compose exec $container su-exec node node /usr/src/app/docker_healthcheck.cjs
+}
+trilium_holly() {
+  trilium
+}
+trilium_mike() {
+  trilium
+}
+traefik() {
+  docker compose exec $container wget -qO- http://127.0.0.1:8080/ping | grep -q ^OK$
+}
+upmpdcli() {
+  docker compose top $container | grep "/usr/bin/upmpdcli -c /tmp/current-upmpdcli.conf"
+}
+vpnproxy() {
+  docker compose exec $container /scripts/healthcheck.sh
+}
+whoami() {
+  docker compose exec $container wget -qSO- http://127.0.0.1:80 2>&1 | grep -q "HTTP/1.1 200 OK"
+}
+wireguardcfg() {
+  docker compose exec $container curl -s http://127.0.0.1:8088 2>&1 | grep -q "<title>WireGuard Configuration Manager</title>"
+}
+
+# Jitsi Meet containers
+jitsi_meet() {
+  docker compose exec $container curl -s http://127.0.0.1:80 | grep -q '<meta property="og:title" content="Jitsi Meet"/>'
+}
+etherpad() {
+  docker compose exec $container curl --silent http://localhost:9001/health | grep -qE "(pass|ok|up)"
+}
+jibri() {
+  docker compose exec $container pgrep -f "java .*-jar /opt/jitsi/jibri/jibri.jar" > /dev/null 2>&1
+}
+jicofo() {
+  docker compose exec $container curl -v http://127.0.0.1:8888/about/health 2>&1 | grep -q "^OK$"
+}
+jvb() {
+  docker compose exec $container curl -v http://127.0.0.1:8080/about/health 2>&1 | grep -q "HTTP/1.1 200 OK"
+}
+prosody() {
+  docker compose exec $container curl -s http://127.0.0.1:5280/health 2>&1 | grep -q "^OK$"
+}
+whiteboard() {
+  docker compose exec $container /bin/bash -c "{ printf \"GET / HTTP/1.1\r\nHost: whiteboard\r\nConnection: close\r\n\r\n\" >&3; cat <&3; } 3<> /dev/tcp/localhost/80" 2>&1 | grep -q "^Excalidraw backend is up :)$"
+}
+
+# Media containers
+bazarr() {
+  docker compose exec $container curl -s http://127.0.0.1:6767 | grep -q "<title>Bazarr</title>"
+}
+browser() {
+  docker compose exec $container curl -s http://127.0.0.1:3000 | grep -q "universalTouchGamepad\.js"
+}
+browser_media() {
+  docker compose exec $container curl -s http://127.0.0.1:3000 | grep -q "universalTouchGamepad\.js"
+}
+browser_music() {
+  docker compose exec $container curl -s http://127.0.0.1:3000 | grep -q "universalTouchGamepad\.js"
+}
+flaresolverr() {
+  docker compose exec $container curl -s http://127.0.0.1:8191 | grep -q "FlareSolverr is ready!"
+}
+gateway() {
+  docker compose exec $container ping -c 2 -W 1 9.9.9.9 > /dev/null 2>&1
+}
+gateway_media() {
+  docker compose exec $container ping -c 2 -W 1 9.9.9.9 > /dev/null 2>&1
+}
+gateway_music() {
+  docker compose exec $container ping -c 2 -W 1 9.9.9.9 > /dev/null 2>&1
+}
+jackett() {
+  docker compose exec $container bash -c 'curl -s -c /tmp/cookies.txt http://127.0.0.1:9117/UI/Login > /dev/null 2>&1; curl -sL -b /tmp/cookies.txt http://127.0.0.1:9117/UI/Dashboard | grep -q "<title>Jackett</title>"'
+}
+lidarr() {
+  docker compose exec $container curl -s http://127.0.0.1:8686 | grep -q "<title>Lidarr</title>"
+}
+mylar() {
+  docker compose exec $container curl -s http://127.0.0.1:8090/home | grep -q "<title>Mylar - Home</title>"
+}
+proxy() {
+  docker compose exec $container sh -c 'ping -c2 -W1 9.9.9.9>/dev/null 2>&1 && curl -sfx http://127.0.0.1:8888 ip.me' > /dev/null 2>&1
+}
+proxy_media() {
+  docker compose exec $container sh -c 'ping -c2 -W1 9.9.9.9>/dev/null 2>&1 && curl -sfx http://127.0.0.1:8888 ip.me' > /dev/null 2>&1
+}
+proxy_music() {
+  docker compose exec $container sh -c 'ping -c2 -W1 9.9.9.9>/dev/null 2>&1 && curl -sfx http://127.0.0.1:8888 ip.me' > /dev/null 2>&1
+}
+radarr() {
+  docker compose exec $container curl -s http://127.0.0.1:7878 | grep -q "<title>Radarr</title>"
+}
+readarr() {
+  docker compose exec $container curl -s http://127.0.0.1:8787 | grep -q "<title>Readarr</title>"
+}
+sonarr() {
+  docker compose exec $container curl -s http://127.0.0.1:8989 | grep -q "<title>Sonarr</title>"
+}
+media_status() {
+  docker compose exec $container true
+}
+torrent() {
+  docker compose exec $container bash -c 'ping -c 2 -W 1 9.9.9.9 > /dev/null 2>&1 && curl -s http://127.0.0.1:3080/ | grep -q "<title>qBittorrent WebUI</title>" && { test -x /usr/lib/nagios/plugins/check_ping || apk add --no-cache --update nagios-plugins-ping > /dev/null 2>&1; true; }'
+}
+unpackerr() {
+  docker compose exec $container /unpackerr -v
+}
+yts() {
+  docker compose exec $container curl -s http://127.0.0.1:8558/status | grep -q "^OK$"
+}
+
+if [ $? != 0 ]; then
+  echo "UNKONWN - Command error ($(echo $state))"
+  exit 3
+fi
+
+# Run health check function
+status=$(get_status $container)
+output=$($health_check 2>&1)
+state=$?
+
+if [ "$state" != 0 ]; then
+  echo "CONTAINER CRITICAL - $1: $status state='$state' output='$output'"
+  exit 2
+fi
+
+if echo "$status" | grep -qi "starting"; then
+  echo "CONTAINER WARNING - $1: $status"
+  exit 1
+fi
+
+if [ -n "$output" ]; then
+  echo "CONTAINER OK - $1: $status output='$output'"
+else
+  echo "CONTAINER OK - $1: $status"
+fi
+exit 0

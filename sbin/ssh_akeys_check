@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+# Alias which to 'command -v' if which does not exist
+! which which > /dev/null 2>&1 && alias which='command -v'
+
+if which hostname > /dev/null 2>&1; then
+  hostname=$(hostname)
+else
+  hostname=$(hostnamectl hostname)
+fi
+hostname=${hostname%%.*}
+
+which getent > /dev/null 2>&1
+if [ $? != 0 ]; then
+  getent() {
+    cat /etc/passwd
+    for dir in /Users/*; do
+      [ ! -d $dir ] && continue
+      id ${dir##*/} > /dev/null 2>&1 || continue
+      user=${dir##*/}
+      shell=$(dscl . -read /Users/$user UserShell | awk '{print $2}')
+      name=$(dscl . -read /Users/$user RealName | paste -sd ' ' - | sed -E 's/^RealName: +//')
+      echo "$user:*:$(id -u $user):$(id -g $user):$name:$dir:$shell"
+    done
+  }
+fi
+
+unset add_dirs
+if mount | grep -q " on /export/homes "; then
+  add_dirs=/export/homes/*
+fi
+[ -d /etc/ssh/authorized_keys.d ] && add_dirs="$add_dirs /etc/ssh/authorized_keys.d/*"
+
+declare -A keys def_keys checked
+
+def_keys[/home/mike/.ssh/authorized_keys]=edc3511c5f60bd2a30720b5546cdde5d28f56cb761b8fa504e672bf13bf4f81a
+def_keys[/etc/ssh/authorized_keys.d/mike]=edc3511c5f60bd2a30720b5546cdde5d28f56cb761b8fa504e672bf13bf4f81a
+def_keys[/home/splunk/.ssh/authorized_keys]=edc3511c5f60bd2a30720b5546cdde5d28f56cb761b8fa504e672bf13bf4f81a
+#def_keys[/root/.ssh/authorized_keys]=95bcceb9611a49e6e0fea4ce7dc75787bf852f2035ec5b67eaf99102b32cd40d  # mike + root@earth
+def_keys[/root/.ssh/authorized_keys]=777ab2f005173f3c0cd50677c257c604e99ea0a35cd50d44180a19780cd264cb  # mike + root@earth + rsync_ssh_client
+
+keys[jupiter,/home/mike/.ssh/authorized_keys.local]=1030e792b47afea3df1d6a7a3f881cc5e6431b48c62c787ca6f8dc1285a2e2fe
+keys[mercury,/home/mike/.ssh/authorized_keys.local]=b8695a8ff6c6c79c56554c779f9b39459dd307fd4aa8cf102ba0f854decf2f32
+keys[mercury,/root/.ssh/authorized_keys]=ccd2a34056198be16f456077361d5e1b8d9ae362e06a7724909e19346eed2f04
+keys[sinope,/home/mike/.ssh/authorized_keys]=f2133add0e1d6ea90658e7544707b9bc6d7938cf7fb2b4b026e752a2cc3fb66e
+keys[sinope,/home/picframe/.ssh/authorized_keys]=7f6d41764985a774109aa94319e33387624cbea8e9257cd0bdfb1eca811f1e61
+keys[BedroomSpeaker,/home/picframe/.ssh/authorized_keys]=7f6d41764985a774109aa94319e33387624cbea8e9257cd0bdfb1eca811f1e61
+keys[carpo,/home/ha/.ssh/authorized_keys]=3c3606a749f96b37ca0b9c187983a2e823ff73dba75739b77c326402b8245ae6
+keys[venus,/Users/holly/.ssh/authorized_keys]=5d73d284af63be1c82fd2e27481e0dd83960e9e5e59dc9666ef3b074498772b0
+keys[venus,/Users/mike/.ssh/authorized_keys]=75774f534f4cfa6baf38017a960eb4384816bcf5fb1b9f789349716b10436bdd
+keys[venus,/Users/splunk/.ssh/authorized_keys]=edc3511c5f60bd2a30720b5546cdde5d28f56cb761b8fa504e672bf13bf4f81a
+keys[venus,/var/root/.ssh/authorized_keys]=16bbdbb88c84ab0fde1f92f88136b1c710a5152bb117c4a43b3cedc77ffa9d17
+
+for hdir in $(getent passwd | awk -F: '{print $6}') $add_dirs; do
+  for ak in $hdir/.ssh/authorized_keys $hdir/.ssh/authorized_keys2 $hdir/.ssh/authorized_keys.local; do
+    [ "${checked[$ak]}" = true ] && continue
+    unset keysum
+    [ -n "${def_keys[$ak]}" ] && keysum=${def_keys[$ak]}
+    [ -n "${keys[$hostname,$ak]}" ] && keysum=${keys[$hostname,$ak]}
+    if sudo test -f $ak; then
+      dgst=$(openssl dgst -sha256 $ak | awk '{print $2}')
+      if [ -n "$keysum" ] && [ "$dgst" = "$keysum" ]; then
+        echo "$ak: OK"
+      elif [ -n "$keysum" ] && [ "$dgst" != "$keysum" ]; then
+        echo "$ak: ERROR - HAS BEEN MODIFIED ($dgst)"
+      else
+        echo "$ak: WARNING - Key exists and is untracked ($dgst)"
+      fi
+    fi
+    checked[$ak]=true
+  done
+done

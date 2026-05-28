@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+##############################################################
+## This library provides the following functions:
+## - get_config_value: Reads configuration settings from a configuration file
+##   If the key appears more than once, a list is returned that can be stored in an array
+
+##############################################################
+## Usage:
+## libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
+## PATH="$libpath" . _config 2> /dev/null || { echo "Error: Cannot load config library" >&2; exit 1; }
+##
+## value=( $(get_config_value ~/.config/myfile mykey) )
+## value=( $(get_config_value ~/.config/myfile mysection mykey) )
+
+get_config_value() {
+  # No section: variable=( $(get_config_value file key) )
+  # Section:    variable=( $(get_config_value file section key) )
+
+  local opt OPTARG OPTIND=1 ltrim=1 rtrim=1
+
+  # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
+  local localdebug=${debug:-false} ncm=false
+  shopt -q nocasematch && ncm=true ; shopt -s nocasematch
+  case "$localdebug" in true|debug|y|yes|on|[1-9]|[1-9]0|[0-9][1-9]|[1-9][0-9]0|[0-9][0-9][1-9])localdebug=true;;*)localdebug=false;;esac
+  ! $ncm && shopt -u nocasematch ; unset ncm
+
+  # Handle options -L and -T for preserving leading/trailing whitespace in values
+  while getopts ":LT" opt;do case "$opt" in L)ltrim=0;;T)rtrim=0;;*);;esac;done;shift $((OPTIND-1))
+
+  # Require at least two arguments (file and key with section being optional)
+  (( $# < 2 )) && return 1
+
+  local configfile=$1 section="" key=$2
+  # Replace ^~ with $HOME
+  [[ "$configfile" == ~* ]] && configfile=$HOME${configfile#~}
+
+  # If 3 arguments provided
+  (( $# >= 3 )) && section=$2 && key=$3
+
+  # Validate that configfile can be read
+  if [[ ! -r "$configfile" ]]; then
+    $localdebug && echo "Warning: Cannot read ${configfile##*/} for ${section:+[$section] }$key" >&2
+    return 1
+  fi
+  if [[ -n "$section" ]]; then
+    awk -v section="$section" -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
+      BEGIN {
+        in_section = 0
+      }
+      $0 ~ /^[[:space:]]*\[/ {
+        in_section = 0
+      }
+      $0 ~ "^[[:space:]]*\\["section"\\]" {
+        in_section = 1
+      }
+      in_section == 1 && $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
+        sub(/^[^:=]+[:=]/, "")
+        if (ltrim == 1) sub(/^[[:space:]]+/, "")
+        if (rtrim == 1) sub(/[[:space:]]+$/,"")
+        print
+      }' "$configfile"
+  else
+    awk -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
+      $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
+        sub(/^[^:=]+[:=]/, "")
+        if (ltrim == 1) sub(/^[[:space:]]+/, "")
+        if (rtrim == 1) sub(/[[:space:]]+$/, "")
+        print
+      }' "$configfile"
+  fi
+}
+
+main() {
+  # library is being called directory
+  local test_config=$(mktemp)
+  printf "test_key = testvalue \n[test_section]\ntest_key1: testvalue1 \n" > "$test_config"
+  echo "=> Test config file"
+  nl "$test_config" | sed 's/$/↩/'
+  echo
+  echo "=> Testing without section"
+  echo "get_config_value \"$test_config\" \"test_key\""
+  printf "test_key = '%s'\n" "$(get_config_value "$test_config" "test_key")"
+
+  echo
+  echo "=> Testing without section without trimming leading spaces"
+  echo "get_config_value -L \"$test_config\" \"test_key\""
+  printf "test_key = '%s'\n" "$(get_config_value -L "$test_config" "test_key")"
+
+  echo
+  echo "=> Testing without section without trimming trailing spaces"
+  echo "get_config_value -T \"$test_config\" \"test_key\""
+  printf "test_key = '%s'\n" "$(get_config_value -T "$test_config" "test_key")"
+
+  echo
+  echo "=> Testing with section"
+  echo "get_config_value \"$test_config\" \"test_section\" \"test_key1\""
+  printf "test_section / test_key1 = '%s'\n" "$(get_config_value "$test_config" "test_section" "test_key1")"
+
+  echo
+  echo "=> Testing with section without trimming leading spaces"
+  echo "get_config_value -L \"$test_config\" \"test_section\" \"test_key1\""
+  printf "test_section / test_key1 = '%s'\n" "$(get_config_value -L "$test_config" "test_section" "test_key1")"
+
+  echo
+  echo "=> Testing with section without trimming trailing spaces"
+  echo "get_config_value -T \"$test_config\" \"test_section\" \"test_key1\""
+  printf "test_section / test_key1 = '%s'\n" "$(get_config_value -T "$test_config" "test_section" "test_key1")"
+}
+
+# If called as a program, run main, otherwise exit with 0 return code
+if (return 2> /dev/null); then
+  return 0
+else
+  main
+fi
+
+##############################################################
+## Examples without using the function
+
+## Without sections
+# test_key1=( $(awk -vk="test_key1" '$0~"^[[:space:]]*"k"[[:space:]]*[:=]"{sub(/^[^:=]+[:=][[:space:]]*/,"");sub(/[[:space:]]+$/,"");print}' config_test.ini) )
+
+## With sections
+# test_key1=( $(awk -vs="test_section" -vk="test_key1" 'BEGIN{p=0}$0~/^[[:space:]]*\[/{p=0}$0~"^[[:space:]]*\\["s"\\]"{p=1}p==1&&$0~"^[[:space:]]*"k"[[:space:]]*[:=]"{sub(/^[^:=]+[:=][[:space:]]*/,"");sub(/[[:space:]]+$/,"");print}' config_test.ini) )
+

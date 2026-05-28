@@ -1,0 +1,105 @@
+#!/bin/sh
+
+debug=false
+force=false
+uselocal=false
+verbose=false
+
+list_pids() {
+  for pid in $(pgrep -f "^sshd(-session)?: $LOGNAME@pts/"); do
+    echo $pid
+  done
+}
+
+list_socks() {
+  for pid in $(list_pids); do
+    ls /tmp/ssh-* > /dev/null 2>&1 && \
+    for sock in $(find /tmp/ssh-* -name "agent.$pid" -user $LOGNAME -type s); do
+      echo $sock
+    done
+    [ -d $HOME/.ssh/agent ] && \
+    for sock in $(find $HOME/.ssh/agent -name "s.*.sshd.*" -user $LOGNAME -type s); do
+      echo $sock
+    done
+  done
+}
+
+test_sock() {
+  $debug && set -x
+  env SSH_AUTH_SOCK=$1 timeout 1 ssh-add -l > /dev/null 2>&1
+  ret=$?
+  $debug && set +x
+  return $ret
+}
+
+while getopts ":hdvflPS" opt; do
+  case $opt in
+    d) debug=true ;;
+    f) force=true ;;
+    l) uselocal=true ;;
+    P) list_pids ; exit ;;
+    S) list_socks ; exit ;;
+    v) verbose=true ;;
+    *)
+      echo "usage: fixsock [-h] [-v] [-f] [-l] [-P] [-S]"
+      echo "          -h: this help"
+      echo "          -f: force"
+      echo "          -l: use local"
+      echo "          -P: list ssh pids"
+      echo "          -S: list sock files"
+      exit
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+auth_sock_file=$XDG_RUNTIME_DIR/ssh-auth-sock
+
+if ! $force; then
+  $verbose && echo "Checking $SSH_AUTH_SOCK file" >&2
+  timeout 1 ssh-add -l > /dev/null 2>&1 && echo "No fix needed" && exit
+fi
+
+unset fixed
+
+pgrep='-af'
+[ $(uname -s) = "OpenBSD" ] && pgrep='-lf'
+
+# Loop through SSH socket files (uselocal=0)
+$verbose && echo "Looping through SSH socket files" >&2
+if ! $uselocal; then
+  # Try to use $SSH_AUTH_SOCK_ORIG
+  if [ -z "$fixed" ] && [ -n "$SSH_TTY" ] && \
+     [ -n "$SSH_AUTH_SOCK_ORIG" ] && [ -S "$SSH_AUTH_SOCK_ORIG" ]; then
+    $verbose && echo "Testing $SSH_AUTH_SOCK file" >&2
+    test_sock $SSH_AUTH_SOCK_ORIG && ln -sf "$SSH_AUTH_SOCK_ORIG" $auth_sock_file && fixed=sshconn
+  fi
+
+  # Loop through active SSH connections looking for an active auth sock
+  if [ -z "$fixed" ]; then
+    for sock in $(list_socks); do
+      $verbose && echo "Testing $sock file" >&2
+      test_sock $sock && ln -sf $sock $auth_sock_file && fixed=sshconnloop && break
+    done
+  fi
+fi
+
+# Try to use local sockets (ssh-agent & Gnome Keyring)
+$verbose && echo "Checking local files" >&2
+if $uselocal || [ -z "$fixed" ]; then
+  if [ -z "$SSH_TTY" ]; then
+    if [ -S "$XDG_RUNTIME_DIR/ssh-agent.socket" ]; then
+      $verbose && echo "Testing $XDG_RUNTIME_DIR/ssh-agent.socket file" >&2
+      test_sock $XDG_RUNTIME_DIR/ssh-agent.socket && \
+        ln -sf "$XDG_RUNTIME_DIR/ssh-agent.socket" $auth_sock_file && fixed=xdg
+    fi
+    keyring=$(pgrep $pgrep "/usr/bin/ssh-agent -D -a $XDG_RUNTIME_DIR/keyring/.ssh"|awk '{print $NF}')
+    if [ -z "$fixed" ] && [ -S "$keyring" ]; then
+      $verbose && echo "Testing $keyring (gnome keyring) file" >&2
+      test_sock $keyring && ln -sf $keyring $auth_sock_file && fixed=keyring
+    fi
+  fi
+fi
+
+[ -z "$fixed" ] && echo "Could not fix the SSH_AUTH_SOCK link" || echo "Fixed with $fixed"
+

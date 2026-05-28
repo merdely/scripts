@@ -1,0 +1,31 @@
+#!/bin/sh
+
+o=$IFS
+IFS=$(printf "\n\b")
+uptime | awk -v now=$(date "+%s") '
+  BEGIN {
+    t["se"]=1;
+    t["mi"]=60;
+    t["hr"]=3600;
+    t["da"]=86400
+  }
+  $4 ~ "^(sec|min|hr|day)s?,$" && ($6 ~ "^users?,$" || ($8 ~ "^users?,$")) {
+    s=$3*t[substr($4,1,2)];
+    if ($6 ~ "^(min|hr)s?,$")
+      s+=$5*t[substr($6,1,2)]
+  }
+  $3 ~ "^[0-9]+:[0-9]+,$" {
+    split($3,a,":");
+    s=a[1]*3600+a[2]*60
+  }
+  $4 ~ "^days?,$" && $5 ~ "^[0-9]+:[0-9]+,$" {
+    s = $3 * t["da"];
+    split($5,a,":");
+    s += a[1] * 3600 + a[2] * 60
+  }
+  END {
+    print strftime("%F %r", now-s)
+  }'
+IFS=$o
+unset o
+

@@ -1,0 +1,99 @@
+#!/bin/sh
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h] [-m] -c CRITICAL -w WARNING DIRECTORY [PATTERN]"
+  echo "       -h             : this help text"
+  echo "       -m             : -c and -w compare as 'more than' instead of 'less than'"
+  echo "       -c CRITICAL    : Critical if less than CRITICAL"
+  echo "       -w WARNING     : Warning if less than WARNING"
+  echo "       DIRECTORY      : directory to count files"
+  echo "       PATTERN        : pattern to search for (optional)"
+  exit $1
+}
+
+unset critical warning directory pattern
+comparison=less
+while getopts ":hc:w:m" opt; do
+  case $opt in
+    m)
+      comparison=more
+      ;;
+    c)
+      printf "$OPTARG" | grep -Eq "^[0-9]+$" || { echo "Error: Value for CRITICAL must be an integer"; exit 1; }
+      critical=$OPTARG
+      ;;
+    C)
+      printf "$OPTARG" | grep -Eq "^[0-9]+$" || { echo "Error: Value for CRITICAL must be an integer"; exit 1; }
+      critical=$OPTARG
+      ;;
+    w)
+      printf "$OPTARG" | grep -Eq "^[0-9]+$" || { echo "Error: Value for WARNING must be an integer"; exit 1; }
+      warning=$OPTARG
+      ;;
+    W)
+      printf "$OPTARG" | grep -Eq "^[0-9]+$" || { echo "Error: Value for WARNING must be an integer"; exit 1; }
+      warning=$OPTARG
+      ;;
+    *) usage
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+directory=$1
+pattern=$2
+
+if [ -z "$critical" ]; then
+  echo "UNKNOWN - -c or -C must be specified on the commandline"
+  usage 3
+fi
+
+[ -z "$warning" ] && warning=$critical
+
+if [ -z "$directory" ]; then
+  echo "UNKNOWN - directory missing from commandline"
+  usage 3
+fi
+
+dofind() {
+  local path="$1"
+  local pattern="$2"
+  command -v fd > /dev/null 2>&1
+  local fd_found="$?"
+  command -v fdfind > /dev/null 2>&1
+  local fdfind_found="$?"
+  if [ $fd_found = 0 -o $fdfind_found = 0 ]; then
+    local cmd=fd
+    [ $fdfind_found = 0 ] && cmd=fdfind
+    [ -z "$pattern" ] && pattern='*'
+    $cmd -HIg -t file "$pattern" "$path"
+  else
+    if [ -z "$pattern" ]; then
+      find "$path" -type f
+    else
+      find "$path" -type f -name "$pattern"
+    fi
+  fi
+}
+
+filecount=$(dofind "$directory" "$pattern" | wc -l)
+
+if [ $comparison = less ] && [ $filecount -lt $critical ]; then
+  echo "CRITICAL - $filecount files found; expected at least $critical files"
+  exit 2
+elif [ $comparison = more ] && [ $filecount -gt $critical ]; then
+  echo "CRITICAL - $filecount files found; expected at most $critical files"
+  exit 2
+elif [ $comparison = less ] && [ $filecount -lt $warning ]; then
+  echo "WARNING - $filecount files found; expected at least $warning files"
+  exit 1
+elif [ $comparison = more ] && [ $filecount -gt $warning ]; then
+  echo "WARNING - $filecount files found; expected at most $warning files"
+  exit 1
+else
+  echo "OK - Found $filecount files"
+  exit 0
+fi
+

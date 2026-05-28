@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+all_hosts=(jupiter earth mercury)
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h] [-a|hostname1..hostnameN]"
+  echo "  -h           : Print this help text"
+  echo "  -a           : Print gitstatus for: ${all_hosts[@]}"
+  echo "  [hostname1..]: Print gitstatus for listed host(s) (default: localhost)"
+  exit $1
+}
+
+if which hostname > /dev/null 2>&1; then
+  hostname=$(hostname)
+else
+  hostname=$(hostnamectl hostname)
+fi
+hostname=${hostname%%.*}
+
+for a in $*; do [ $a = --help -o $a = -h ] && usage; done
+all=false
+while getopts ":ha" opt; do
+  case $opt in
+    a) all=true ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND -1))
+
+hostlist=()
+for arg in $*; do
+  hostlist+=($arg)
+done
+
+# If no hosts passed, use the local host
+[ -z "$1" ] && hostlist=($hostname)
+
+$all && hostlist=("${all_hosts[@]}")
+[ "${#hostlist[@]}" -eq 0 ] && echo "Error: No valid hosts ($*)" && usage 1
+
+maxlen=0
+for host in ${hostlist[@]}; do
+  [ ${#host} -gt $maxlen ] && maxlen=${#host}
+done
+
+for host in ${hostlist[@]}; do
+  printf '=%.0s' $(seq 1 $((maxlen+6)))
+  echo
+  left_padding=$(( (maxlen - ${#host}) / 2 ))
+  right_padding=$(( maxlen - ${#host} - left_padding ))
+  printf "== %*s%s%*s ==\n" "$left_padding" "" "$host" "$right_padding" ""
+  printf '=%.0s' $(seq 1 $((maxlen+6)))
+  echo
+  ssh -o ClearAllForwardings=yes root@$host /srv/scripts/sbin/daily_report_linux git
+  echo
+done

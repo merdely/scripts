@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+
+progname=${0##*/}
+progname=${progname%.sh}
+
+case $progname in
+  ga)
+    action=add
+    ;;
+  gss)
+    action=status
+    ;;
+  gp)
+    action=push
+    ;;
+  gd)
+    action=diff
+    ;;
+  *)
+    action=commit
+    ;;
+esac
+
+usage() {
+  if [[ $action = add ]]; then
+    echo "usage: $progname [-h] [-C dir] file1 [.. fileN]"
+  elif [[ $action = push ]] || [[ $action = diff ]]; then
+    echo "usage: $progname [-h] [-C dir] [..]"
+  else
+    echo "usage: $progname [options]"
+    echo "Options:"
+    echo "-h, --help                : this help text"
+    echo "-t, --test                : test mode"
+    echo "-C, --changedir PATH      : Run as if git was started in PATH instead of the current directory"
+    echo "-a, --all                 : automatically stage modified/deleted files (new files must be added like git commit)"
+    echo "-A, --add PATH            : run 'git add' on specified PATH before commit (can be used more than once)"
+    echo "-p, --path PATH           : commit specific paths instead of --all (can be used more than once)"
+    echo "-P, --print-latest-tag    : print latest version tag for repo"
+    echo "-L, --latest-tag          : update latest version tag for commit (overrides -t/--tag)"
+    echo "-F, --tag-from-file       : get the tag from CONTAINER_VERSION in Dockerfile for commit (overrides -t/--tag)"
+    echo "-T, --tag TAG             : save or update tag for commit"
+    echo "-S, --skip-ci             : add [skip ci] tag to commit message"
+    echo "--allow-empty             : Allow commit without any changed files"
+    echo "--allow-empty-message     : Allow empty commit message"
+    echo "--allow-status-as-message : Allow \"status\" as the commit message"
+    echo
+    echo "COMMIT MESSAGE            : Free form text for commit message (may need quoting in some cases)"
+    echo "For 'COMMIT MESSAGE' to contain new lines, use '\n'"
+    echo "If passing 'COMMIT MESSAGE without quotes, use '\\\n'"
+    echo "Running 'g status' is probably a mistake... if it isn't run 'g --allow-status-as-message status'"
+  fi
+  exit
+}
+
+shopt -s extglob
+
+unset dir latest_tag
+test_mode=false
+allow_empty=false
+allow_empty_message=false
+allow_status_as_message=false
+skip_ci=false
+all=true
+all_set=false
+add_paths=()
+commit_paths=()
+print_latest_tag=false
+use_latest_tag=false
+use_dockerfile_for_tag=false
+[[ $# -gt 1 ]] && allow_status_as_message=true
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -t|--test) test_mode=true ; shift ;;
+    -C|--changedir)
+      [[ -z "$2" || $2 =~ ^- ]] && shift && echo "Error: Missing argument" && usage 1; dir=$2 ; shift 2 ;;
+    -a|--all) all_set=true ; all=true ; shift ;;
+    -A|--add)
+      if [[ -z "$2" || $2 =~ ^- ]]; then
+        shift
+        echo "Error: Missing argument"
+        usage 1
+      else
+        add_paths+=("$2")
+        shift 2
+      fi ;;
+    -p|--path)
+      if [[ -z "$2" || $2 =~ ^- ]]; then
+        shift
+        echo "Error: Missing argument"
+        usage 1
+      else
+        commit_paths+=("$2")
+        shift 2
+        all=false
+      fi ;;
+    -P|--print-latest-tag) print_latest_tag=true ; shift ;;
+    -L|--latest-tag) use_latest_tag=true ; shift ;;
+    -F|--tag-from-file) use_dockerfile_for_tag=true ; shift ;;
+    -T|--tag)
+      [[ -z "$2" || $2 =~ ^- ]] && shift && echo "Error: Missing argument" && usage 1; tag=$2 ; shift 2 ;;
+    -S|--skip-ci) skip_ci=true ; shift ;;
+    --allow-empty) allow_empty=true ; all=false ; shift ;;
+    --allow-empty-message) allow_empty_message=true ; shift ;;
+    --allow-status-as-message) allow_status_as_message=true ; shift ;;
+    -h|--help) usage ;;
+    -*) echo "Error: $1 is an invalid option" >&2 && usage 1 ;;
+    *) break ;;
+  esac
+done
+
+# Determine git working directory
+git_working_directory=$(git ${dir:+-C "$dir" }rev-parse --show-toplevel)
+[[ -z "$git_working_directory" && -n "$dir" ]] && git_working_directory=$dir
+[[ -z "$git_working_directory" && -z "$dir" ]] && git_working_directory=$(pwd)
+
+[[ "$1" = "status" ]] && ! $allow_status_as_message && echo "You probably did not mean '$0 status'" && usage 1
+
+if [[ $action = commit ]] && $all_set && [[ ${#commit_paths[@]} -gt 0 ]]; then
+  echo "Error: Cannot use -a/--all with -p/--path" >&2
+  exit 1
+fi
+
+if $print_latest_tag || $use_latest_tag; then
+  latest_tag=$(git ${dir:+-C "$dir" }tag | sort -Vr | head -n1)
+  if [[ -z "$latest_tag" ]]; then
+    echo "Error: Could not determine latest tag" >&2
+    exit 1
+  fi
+fi
+
+if $use_dockerfile_for_tag; then
+  [[ ! -r "$git_working_directory"/Dockerfile ]] && echo "Error: Cannot find Dockerfile" >&2 && exit 1
+  dockerfile_tag=$(awk -F= '/^ARG CONTAINER_VERSION=/{print $2;exit}' "$git_working_directory"/Dockerfile)
+  [[ -n "$dockerfile_tag" ]] && latest_tag=$dockerfile_tag
+fi
+
+if $print_latest_tag; then
+  echo "Latest tag $($use_dockerfile_for_tag && echo "from Dockerfile ")= '$latest_tag'"
+  exit 0
+fi
+
+[[ -z "$1" ]] && ! $allow_empty_message && [[ ! $action =~ ^(push|diff|status)$ ]] && usage
+
+# Set tag to latest tag or $tag if unset
+tag=${latest_tag:-$tag}
+tag=${tag/#+(v)/}
+commitmsg=$(echo "$@")
+$skip_ci && commitmsg="$commitmsg [skip ci]"
+
+if $test_mode; then
+  [[ -z "$dir" ]] && dir=.
+  if [[ $action = add ]]; then
+    echo "Running 'git add'"
+    for f in "${args[@]:1}"; do
+      echo " - $f"
+    done
+  elif [[ $action = status ]]; then
+    echo "Running 'git status'"
+  elif [[ $action = push ]]; then
+    echo "Running 'git push'"
+    echo "Additional args: '$@'"
+  elif [[ $action = diff ]]; then
+    echo "Running 'git diff'"
+    echo "Additional args: '$@'"
+  else
+    if [[ ${#add_paths[@]} -gt 0 ]]; then
+      echo "Running 'git add ${add_paths[@]}"
+    fi
+    if [[ ${#commit_paths[@]} -gt 0 ]]; then
+      echo "Running 'git add ${commit_paths[@]}"
+    fi
+    if [[ -n "$tag" ]]; then
+      echo "Adding tag v$tag to commit"
+    fi
+    if $all; then
+      echo "Running 'git commit -a' and 'git push'${tag:+ (with tag options)}"
+    else
+      echo "Running 'git commit ${commit_paths[@]}' and 'git push'${tag:+ (with tag options)}"
+    fi
+    $allow_empty && echo "Empty commits allowed"
+    $allow_empty_message && echo "Empty commit messages allowed"
+    echo "commit message = '$commitmsg'"
+  fi
+  echo "Using dir $dir"
+  exit
+fi
+
+if [[ $action = add ]]; then
+  git ${dir:+-C "$dir" }add "$@"
+elif [[ $action = status ]]; then
+  git ${dir:+-C "$dir" }status
+elif [[ $action = push ]]; then
+  git ${dir:+-C "$dir" }push "$@"
+elif [[ $action = diff ]]; then
+  git ${dir:+-C "$dir" }diff "$@"
+else
+  if [[ ${#add_paths[@]} -gt 0 ]]; then
+    git ${dir:+-C "$dir" }add "${add_paths[@]}"
+  fi
+  if [[ ${#commit_paths[@]} -gt 0 ]]; then
+    git ${dir:+-C "$dir" }add "${commit_paths[@]}"
+  fi
+  ! $all_set && $allow_empty && [[ ${#commit_paths[@]} -eq 0 ]] && commit_paths=("--allow-empty")
+  [[ $all == true || ${#commit_paths[@]} -eq 0 ]] && commit_paths=("--all")
+  if $allow_empty_message && [[ -z "$commitmsg" ]]; then
+    git ${dir:+-C "$dir" }commit "${commit_paths[@]}" --allow-empty-message
+  else
+    git ${dir:+-C "$dir" }commit "${commit_paths[@]}" -m "$(printf "$commitmsg")"
+  fi
+  if [[ -n "$tag" ]]; then
+    git ${dir:+-C "$dir" }tag -f -a "v$tag" -m "v$tag"
+    git ${dir:+-C "$dir" }push origin HEAD
+    git ${dir:+-C "$dir" }push -f origin "v$tag"
+  else
+    git ${dir:+-C "$dir" }push
+  fi
+fi

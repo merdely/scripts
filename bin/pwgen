@@ -1,0 +1,123 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Std;
+use File::Basename;
+
+my $LENGTH = 15;
+my $COUNT = 15;
+my $PWMIN = 8;
+
+my $WORDLIST = '/usr/share/dict/words';
+
+if (! -e $WORDLIST) {
+	warn "Error: Wordlist ($WORDLIST) does not exist ('yum install words'?).\n";
+	exit 1;
+}
+
+my %opts = ();
+my $opt = getopts('hc:l:', \%opts);
+sub usage {
+	warn "usage: ", basename($0), " [-h] [-c count] [-l length]\n",
+		"\t-h:\t\tThis help\n",
+		"\t-c count:\tNumber of passwords to print (Default: $COUNT).\n",
+		"\t-l length:\tLength of each password to print (Default: $LENGTH).\n",
+		"\t\t\tlength must not be less than $PWMIN.\n",
+		"\n",
+		;
+	exit 0;
+}
+
+if (defined($opts{'h'})) {
+	usage;
+}
+
+if (defined($opts{'c'})) {
+	if ($opts{'c'} =~ m/\D/ || $opts{'c'} < 1) {
+		warn "Error: '" . $opts{'c'} . "' is not a valid number for -c.\n\n";
+		usage;
+	}
+	$COUNT = $opts{'c'};
+}
+
+if (defined($opts{'l'})) {
+	if ($opts{'l'} =~ m/\D/) {
+		warn "Error: '" . $opts{'l'} . "' is not a valid number for -l.\n\n";
+		usage;
+	}
+	if ($opts{'l'} < 8) {
+		warn "Error: length must not be less than $PWMIN.\n\n";
+		usage;
+	}
+	$LENGTH = $opts{'l'};
+}
+
+# print "COUNT = $COUNT\n";
+# print "LENGTH = $LENGTH\n";
+
+my $mmin = 12;
+my $mmax = 987;
+my $mdig = 3;
+
+if ($LENGTH < 10) {
+	$mmin = 1;
+	$mmax = 9;
+	$mdig = 1;
+} elsif ($LENGTH < 13) {
+	$mmin = 1;
+	$mmax = 99;
+	$mdig = 2;
+}
+
+my $fh;
+open($fh, '<', $WORDLIST) || die "Cannot open file ($WORDLIST): $!";
+my @words = <$fh>;
+close($fh);
+
+my @chars = ('!', '@', '#', '%', '^', '&', '-', '_', '=', '+', ']', '[', '}', '{', ':', ';', '.', ',', '<', '>');
+
+for (my $i = 0; $i < $COUNT; $i++) {
+	my $first = '';
+	my $second = '';
+	my $num = sprintf("%0${mdig}d", int(rand($mmax)) + $mmin);
+
+	my $word_max = $LENGTH / 2 - int(rand(2));
+	my $word_min = $word_max - $mdig;
+	while (length($first) <= $word_min || length($first) >= $word_max) {
+		$first = $words[1 + rand($#words)];
+		chomp($first);
+		if ($first !~ /[a-zA-Z]+/) {
+			$first = '';
+		}
+	}
+	$word_max = $LENGTH - length($first) - $mdig - 1;
+	$word_min = $word_max;
+	while (length($second) != $word_max) {
+		$second = $words[1 + rand($#words)];
+		chomp($second);
+		if ($second !~ /[a-zA-Z]+/) {
+			$second = '';
+		}
+	}
+
+	my $num_caps = int(rand(3) + 1);
+	if ($num_caps == 1) {
+		$first = ucfirst(lc($first));
+		$second = lc($second);
+	} elsif ($num_caps == 2) {
+		$first = lc($first);
+		$second = ucfirst(lc($second));
+	} else {
+		$first = ucfirst(lc($first));
+		$second = ucfirst(lc($second));
+	}
+
+	my $char = $chars[int(rand($#chars) + 1)];
+	if (int(rand(2)) == 0) {
+		print "$first$num$char$second\n";
+	} else {
+		print "$first$char$num$second\n";
+	}
+}
+

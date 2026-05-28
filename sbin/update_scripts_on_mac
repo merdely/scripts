@@ -1,0 +1,18 @@
+#!/bin/sh
+
+[ $EUID != 0 ] && echo "Error: This program must be run as root" && exit 1
+[ ! -r /etc/git_token ] && echo "Error: Cannot find /etc/git_token" && exit 1
+token=$(cat /etc/git_token)
+
+quiet=false
+[ "$1" = -q ] && quiet=true
+
+! $quiet && echo "Updating /usr/local/scripts files:"
+for file in $(find /usr/local/scripts -type f); do
+  tmpfile=$(mktemp)
+  curl -sfLo $tmpfile -H "Authorization: token $token" https://src.erdely.in/api/v1/repos/home/scripts/raw/${file#/usr/local/scripts/}
+  if [ $? = 0 ] && [ -s $tmpfile ]; then
+    diff -q $file $tmpfile > /dev/null || { echo " - $file"; rm $file; cp $tmpfile $file; chmod 755 $file; true; }
+  fi
+  rm -f $tmpfile
+done

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+progname=${0##*/}
+progname=${progname%.sh}
+config_file=$HOME/.config/hassrc
+config_section=notifications
+[ ! -e $config_file ] && echo "Error: Cannot read $config_file" && exit 1
+
+! which which > /dev/null 2>&1 && alias which='command -v'
+! which curl > /dev/null 2>&1 && echo "Error: Cannot find curl command" && exit 1
+! which jq > /dev/null 2>&1 && echo "Error: Cannot find jq command" && exit 1
+! which awk > /dev/null 2>&1 && echo "Error: Cannot find awk command" && exit 1
+
+unset target
+unset title
+signal=false
+verbose=false
+while getopts ":vt:T:s" opt; do
+  case $opt in
+    v)
+      verbose=true
+      ;;
+    s)
+      signal=1
+      ;;
+    t)
+      target=$OPTARG
+      ;;
+    T)
+      title=$OPTARG
+      ;;
+    *)
+      echo "usage: $progname [-v] [-T TITLE] -t TARGET MESSAGE"
+      echo "         -t TARGET : Notification target (eg. signal_mike, mobile_app_mike9p"
+      echo "         -T TITLE  : An optional title for the message"
+      echo "         -s        : Sending via signal"
+      echo "         -v        : Be verbose"
+      echo "         You can see valid TARGET values under Developer Tools -> Actions"
+      echo "           look at all of the actions that start with 'notify.'"
+      exit
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+unset title_field
+[ -z "$target" ] && echo "Error: TARGET must be specified with -T" && exit 1
+message="$@"
+[ -z "$message" ] && echo "Error: A message must be specified" && exit 1
+[ -n "$title" ] && ! $signal && title_field=", \"title\": \"$title\""
+[ -n "$title" ] && $signal && message="**$title**\n$message"
+
+libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
+PATH="$libpath" . _config 2> /dev/null || { echo "Error: Cannot load _config library" >&2; exit 1; }
+
+ha_server=$(get_config_value "$config_file" "$config_section" ha_server)
+ha_token=$(get_config_value "$config_file" "$config_section" ha_token)
+
+[ -z "$ha_server" ] && echo "Error: Could not read '$config_section' ha_server from $config_file" && exit 1
+[ -z "$ha_token" ] && echo "Error: Could not read '$config_section' ha_token from $config_file" && exit 1
+
+curl -X POST -H "Authorization: Bearer $ha_token" \
+  -H "Content-Type: application/json" \
+  -d "{
+      \"message\": \"$message\"
+      $title_field
+    }" $ha_server/api/services/notify/$target
+
+echo

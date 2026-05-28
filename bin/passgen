@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+
+progname=${0##*/}
+progname=${progname%.sh}
+wordlist=${wordlist:-/usr/share/dict/words}
+count=${count:-1}
+words_length=${length:-15}
+alnum_length=${alnum_length:-64}
+base64_length=${base64_length:-32}
+pwmin=${pwmin:-8}
+method=alnum
+[ -r "$HOME/.config/passgenrc" ] && source "$HOME/.config/passgenrc"
+
+declare -A length_array
+length_array[alnum]=$alnum_length
+length_array[base64]=$base64_length
+length_array[words]=$words_length
+
+usage() {
+  echo "usage: $progname [-h] [-A|-B|-W] [-c COUNT] [-l LENGTH] [-w WORDLIST]"
+  echo "  -c COUNT       : Number of passwords (default: $count)"
+  echo "  -l LENGTH      : Length of passwords (default: ${length_array[$method]})"
+  echo "  -w WORDLIST    : Word list file to use (default: $wordlist)"
+  echo "  -A             : Generate random alpha numberic password (default: $method)"
+  echo "  -B             : Generate base64 encoded string (default: $method)"
+  echo "  -W             : Generate password using words, a symbol, and a number (default: $method)"
+  echo "  NOTE: with -A, the default length changes to ${alnum_length}"
+  echo "  NOTE: with -B, the length refers to the number of random bytes used; defaults to ${base64_length}"
+  echo "  NOTE: with -W, the default length to ${words_length}"
+  exit $1
+}
+
+length_passed=false
+while getopts ":hABWc:l:w:" opt; do
+  case $opt in
+    A) method=alnum ;;
+    B) method=base64 ;;
+    W) method=words ;;
+    c)
+       if [[ $OPTARG =~ ^[0-9]+$ ]]; then
+         count=$OPTARG
+       else
+         echo "Error: Invalid count for -c ($OPTARG)" >&2 && exit 1
+       fi ;;
+    l)
+       if [[ $OPTARG =~ ^[0-9]+$ ]]; then
+         length=$OPTARG
+         length_passed=true
+       else
+         echo "Error: Invalid length for -l ($OPTARG)" >&2 && exit 1
+       fi ;;
+    w) [ -r "$OPTARG" ] && wordlist=$OPTARG ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND -1))
+
+[[ ! $method =~ ^(alnum|base64|words)$ ]] && echo "Error: Invalid method ($method)" >&2 && exit 1
+
+if [[ $method == alnum ]]; then
+  ! $length_passed && length=${alnum_length:-64}
+  i=0
+  while [ $i -lt $count ]; do
+    ((i++))
+    tr -cd '[:alnum:]' < /dev/urandom | fold -w ${length:-64} | head -n 1 | tr -d '\n'
+    echo
+  done
+  exit
+fi
+
+if [[ $method == base64 ]]; then
+  ! $length_passed && length=${base64_length:-32}
+  i=0
+  while [ $i -lt $count ]; do
+    ((i++))
+    openssl rand -base64 $length | tr -d '\n'
+    echo
+  done
+  exit
+fi
+
+! $length_passed && length=${words_length:-15}
+[ ! -r "$wordlist" ] && echo "Error: Cannot open word list file ($wordlist)" >&2 && exit 1
+mapfile -t words < <(env LC_ALL=C grep -Ev "[^A-Za-z"'"'"]" "$wordlist")
+
+mmin=12
+mmax=987
+mdig=3
+
+if ((length < 10)); then
+  mmin=1
+  mmax=9
+  mdig=1
+elif ((length < 13)); then
+  mmin=1
+  mmax=99
+  mdig=2
+fi
+
+chars=('!' '@' '#' '%' '^' '&' '-' '_' '=' '+' ']' '[' '}' '{' ':' ';' '.' ',' '<' '>')
+
+random() {
+  [ -z "$1" ] && echo $RANDOM && return
+  local start=$1
+  local end=$2
+  [ -z "$end" ] && end=$start && start=0
+  echo $(( start + ($RANDOM * $RANDOM) % (end - start + 1) ))
+}
+
+i=0
+while [ $i -lt $count ]; do
+  ((i++))
+  unset first second
+  num=$( printf "%0${mdig}d" $(random $mmin $mmax) )
+  word_max=$(( length / 2 - $(random 0 1) ))
+  word_min=$(( word_max - mdig ))
+  while (( ${#first} <= word_min )) || (( ${#first} >= word_max)); do
+    first=${words[$(( 1 + $(random 0 ${#words[@]}) ))]}
+  done
+  word_max=$(( length - ${#first} - mdig - 1))
+  word_min=$word_max
+  while (( ${#second} != word_max )); do
+    second=${words[$(( 1 + $(random 0 ${#words[@]}) ))]}
+  done
+  case $(random 1 3) in
+    1)
+       first=${first,,}
+       first=${first^}
+       second=${second,,}
+       ;;
+    2)
+       first=${first,,}
+       second=${second,,}
+       second=${second^}
+       ;;
+    *)
+       first=${first,,}
+       second=${second,,}
+       first=${first^}
+       second=${second^}
+       ;;
+  esac
+  char=${chars[$(random 0 ${#chars[@]})]}
+  if (( $(random 0 1) == 0 )); then
+    echo $first$char$num$second
+  else
+    echo $first$num$char$second
+  fi
+done
+

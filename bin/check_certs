@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+# Check a list of servers certs
+
+# Configuration file should look like:
+# certs=( host1 host2 host3 )
+if [[ -r "$HOME"/.config/check_certs ]]; then
+  source "$HOME"/.config/check_certs
+elif [[ -r /etc/check_certs.conf ]]; then
+  source /etc/check_certs.conf
+fi
+
+(( ${#certs[@]} < 1 )) && { echo "Error: Could not load config file" >&2 ; exit 1 ; }
+
+if [[ -n "$1" ]] && grep -qw "$1" <<< "${certs[@]}"; then
+  certs=$1
+fi
+
+seriallen=10
+l=0
+# Get the length of the longest hostname
+for f in "${certs[@]}"; do
+  #h=$(echo $f|cut -d: -f1)
+  h=$f
+  [ ${#h} -gt $l ] && l=${#h}
+done
+
+unset errors
+
+ipv4_dns=$(awk '/^nameserver\s+[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/{sub(/#.*$/,"");sub(/\s*$/,"");print $NF;exit}' /etc/resolv.conf)
+if [ -z "$ipv4_dns" ]; then
+  ipv6_dns=$(awk '/^nameserver\s/{sub(/#.*$/,"");sub(/\s*$/,"");print $NF;exit}' /etc/resolv.conf)
+  dns_server=$(dig +short -x $ipv6_dns)
+  ipv4_dns=$(dig +short -t A $dns_server)
+fi
+
+# Print certs + expiration dates
+not_avail=""
+tmpf=$(mktemp)
+for f in "${certs[@]}"; do
+  h=${f%:*}
+  ip=$(dig +short $h | awk '/^([0-9]{1,3}\.){3}[0-9]{1,3}$/{print;exit}')
+  [ -z "$ip" ] && errors="${errors}Error: Could not determine $ip for $h\n" && continue
+  host=$(dig @$ipv4_dns +short -x $ip | awk '/.*\..*\./{sub(/\.$/,"");print;exit}')
+  p=443
+  [ ${f#*:} != $h ] && p=${f#*:}
+  echo -n | openssl s_client -connect $h:$p -servername $h 2> /dev/null > $tmpf
+  if [ $? = 0 ]; then
+    #cat $tmpf | openssl x509 -noout -subject -serial -dates | \
+    #  awk -F= -v sl=$seriallen -v h=$h -v l=$l '$1=="subject"{s=$3}$1=="serial"{r=$2}$1=="notAfter"{printf "%-" l "s expires %s (%s|%s)\n",h,$2,substr(s,2),substr(r,1,sl)}'
+    out=$(openssl x509 -in $tmpf -noout -enddate -checkend $((29*60*60*24)) 2>&1)
+    ret=$?
+    expire=false
+    echo "$out" | grep -q "Certificate will expire" && expire=true
+    date=$(echo "$out" | awk -F= '/^notAfter=/{print $2}')
+    seconds=$(($(date -d "$date" +%s) - $(date +%s)))
+    days=$((seconds/3600/24))
+    if ! $expire; then
+      printf "%-${l}s : Valid for %s days (%s)\n" "$f" "$days" "$host"
+    else
+      printf "%-${l}s : EXPIRES IN %s DAYS (%s)\n" "$f" "$days" "$host"
+    fi
+  else
+    not_avail="$not_avail $f|$host"
+  fi
+done
+for f in $not_avail; do
+  printf "%-${l}s : Not available (%s)\n" "${f%|*}" "${f#*|}"
+done
+rm -f $tmpf
+
+if [ -n "$errors" ]; then
+  echo
+  echo "Errors:"
+  printf "$errors"
+fi

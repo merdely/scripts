@@ -1,0 +1,10 @@
+#!/bin/sh
+
+echo "Available System Updates:"
+/usr/sbin/syspatch -c
+
+echo
+
+echo "Available Package Updates:"
+pkg_add -usv | grep -v "Adding quirks-" | grep -c "^Adding "
+

@@ -1,0 +1,14 @@
+#!/bin/sh
+
+/usr/bin/find /share/media -name "*.mp4" \
+  -not -path "/share/media/0-Queue" \
+  -not -path "/share/media/Books" \
+  -not -path "/share/Cameras" \
+  -not -path "/share/media/Emby" \
+  -not -path "/share/media/Jellyfin" \
+  -not -path "/share/media/Music" \
+  -not -path "/share/media/Photos" \
+  -not -path "/share/media/Test" | \
+  /usr/bin/sort -n | \
+  /usr/bin/xargs -d '\n' /srv/scripts/bin/avinfo | \
+  grep "|$"

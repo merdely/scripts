@@ -1,0 +1,35 @@
+#!/bin/sh
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h]"
+  echo "       -h      : this help text"
+  exit 1
+}
+
+debug=false
+test=false
+unset printer
+while getopts ":h" opt; do
+  case $opt in
+    h|\?) usage
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+reboot_required=false
+tmpfile=$(mktemp)
+[ -e /usr/bin/needs-restarting ] && { /usr/bin/needs-restarting -r > $tmpfile || reboot_required=true; }
+[ -f /var/run/reboot-required ] && reboot_required=true && cat /var/run/reboot-required > $tmpfile
+
+if $reboot_required; then
+  echo "CRITICAL - Reboot is required ($(cat $tmpfile))"
+  rm -f $tmpfile
+  exit 2
+fi
+
+echo "OK - Reboot is not required ($(cat $tmpfile | tr '\n' ' ' | sed 's/ $//'))"
+rm -f $tmpfile
+exit 0

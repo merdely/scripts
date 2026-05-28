@@ -1,0 +1,16 @@
+#!/bin/sh
+
+sleep=.5
+max=240
+count=0
+ready=false
+while ! $ready && [ $count -lt $max ]; do
+  count=$((count + 1))
+  for int in $(ls /sys/class/net | grep -Ev "^(br-|docker|lo$|veth|virbr)"); do
+    ip address show dev $int | grep -q "\Winet [0-9]" && ready=true
+  done
+  ! $ready && sleep $sleep
+done
+
+! $ready && exit 1
+exit 0

@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+
+export HTTP_PROXY=http://10.99.99.99:3128
+export HTTPS_PROXY=http://10.99.99.99:3128
+export NO_PROXY=127.0.0.1,localhost,192.168.0.0/16,172.16.0.0/12,10.0.0.0/8
+
+# Alias which to 'command -v' if which does not exist
+! which which > /dev/null 2>&1 && alias which='command -v'
+
+which jq > /dev/null 2>&1 || { echo "Error: jq is required for this program" && exit; }
+
+[ $(id -u) != 0 ] && echo "Error: This program must be run as root" && exit 1
+[ "$1" = "-h" ] && echo "usage: $0 [-h] [tag]" && exit
+
+if [ $(arch) = "aarch64" ]; then
+  arch="-arm64"
+elif [ $(arch) = "x86_64" ]; then
+  unset arch
+else
+  echo "Error: Unsupported architecture"
+  exit 1
+fi
+
+current_version=$(/usr/bin/head /var/log/zwave.out | /usr/bin/awk '/INFO.* .*(APP|STORE).*: Version:/{print "v" $NF}')
+
+if [ -z "$1" ]; then
+  echo Determining download link for Zwave JS
+  release_info=$(mktemp)
+  file_url=$(curl -sL https://api.github.com/repos/zwave-js/zwave-js-ui/releases/latest | \
+    jq -r ".assets | .[] | select (.browser_download_url | contains(\"-linux${arch}.zip\")).browser_download_url")
+  new_version=$(echo $file_url | awk -F/ '{print $8}')
+else
+  release_info=$(mktemp)
+  file_url=$(curl -sL https://api.github.com/repos/zwave-js/zwave-js-ui/releases | \
+    jq -r ".[] | select(.tag_name==\"v${1#v}\") | .assets | .[] | select (.browser_download_url | contains(\"-linux${arch}.zip\")).browser_download_url")
+  echo $file_url
+  [ -z "$file_url" ] && echo "Error: $1 does not seem to be a valid tag"
+  new_version=v${1#v}
+fi
+
+if [ "$current_version" = "$new_version" ]; then
+  echo "Error: Already running the latest version ($new_version)"
+  rm -f $release_info
+  exit 1
+fi
+
+rev=$(echo $file_url | rev)
+if [ "${file_url:0:4}" != "http" ] && [ "${rev:0:4}" != "piz." ]; then
+  echo "Error: Invalid download URL ($file_url)"
+  echo "Available releases:"
+  jq -r .assets[].browser_download_url $release_info
+  rm -f $release_info
+  exit 1
+fi
+
+echo Downloading Zwave JS $new_version
+zip_file=$(mktemp)
+curl -sLo $zip_file $file_url
+
+st_size=$(stat -c %s $zip_file)
+# Successful download size was 27,395,726 bytes
+if [ $st_size -lt $((25 * 1000 * 1000)) ]; then
+  echo "Error: Could not download $zip_file (size: $st_size)"
+  rm -f $release_info
+  exit 1
+fi
+
+echo Stopping Zwave JS
+systemctl stop zwave.service
+
+if /usr/bin/pgrep -x zwave-js-ui > /dev/null; then
+  echo "Error: Could not stop Zwave JS"
+  rm -f $release_info
+  exit 1
+fi
+
+echo Remounting / as read-write
+/usr/local/bin/rw
+
+echo Removing old version
+rm /opt/zwave/zwave-js-ui
+
+echo Installing new version
+unzip -q $zip_file -d /opt/zwave/
+
+echo Remounting / as read-only
+sleep 2
+sync
+/usr/local/bin/ro
+
+if /usr/local/bin/rc | grep " rw$"; then
+  echo "Error: Could not re-mount / as read-only"
+  rm -f $release_info
+  exit 1
+fi
+
+echo Starting Updated Zwave JS
+systemctl start zwave.service
+
+sleep 2
+
+if ! /usr/bin/pgrep -x zwave-js-ui > /dev/null; then
+  echo "Error: Could not start Zwave JS"
+  rm -f $release_info
+  exit 1
+fi
+
+max=10
+count=0
+unset new_current_version
+while [ -z "$new_current_version" ] && [ $count -lt $max ]; do
+  new_current_version=$(/usr/bin/head /var/log/zwave.out | /usr/bin/awk '/INFO.* .*(APP|STORE).*: Version:/{print "v" $NF}')
+  count=$((count+1))
+  sleep 2
+done
+
+if [ -z "$new_current_version" ]; then
+  echo "Error: Timed out determining new version"
+  rm -f $release_info
+  exit 1
+fi
+
+if [ "$new_current_version" != "$new_version" ]; then
+  echo "Error: Upgrade unsuccessful (Still running $new_current_version vs. $new_version)"
+  rm -f $release_info
+  exit 1
+else
+  echo "Upgrade successful ($current_version -> $new_current_version)"
+fi
+
+rm -f $zip_file
+
+[ -x /srv/scripts/bin/info2mqtt ] && [ -r $HOME/.config/mqttrc ] && /srv/scripts/bin/info2mqtt -n zwave_js

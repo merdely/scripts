@@ -1,0 +1,55 @@
+#!/bin/sh
+
+progname=${0##*/}
+progname=${progname%.sh}
+LLMDIR=/srv/docker/ollama/dot.ollama/models/manifests/registry.ollama.ai/library
+BLOBDIR=/srv/docker/ollama/dot.ollama/models/blobs
+ARCHIVEDIR=/home/mike/Work/tmp/
+
+print_files() {
+  if [ "$2" = short ]; then
+    flags=""
+  else
+    flags="-lh"
+  fi
+  if echo "$1" | grep -qe "/"; then
+    dirpart=${1%/*}
+    filepart=${1#*/}
+  elif echo "$1" | grep -qe ":"; then
+    dirpart=${1%:*}
+    filepart=${1#*:}
+  else
+    echo "Error: '$1' is not a valid model format (e.g. model:tag)"
+    exit 1
+  fi
+  ls $flags $LLMDIR/$dirpart/$filepart
+  if [ -e $LLMDIR/$dirpart/$filepart ]; then
+    for file in $(cat $LLMDIR/$dirpart/$filepart | jq -r '.config.digest,.layers[].digest'); do
+      ls $flags $BLOBDIR/sha256-${file#*:}
+    done
+  else
+    echo "Error: Model '$1' not found"
+    exit 1
+  fi
+}
+case "$1" in
+  list)
+    find $LLMDIR -type f | sed -e "s#^$LLMDIR/##;s#/#:#"
+    ;;
+  print)
+    print_files $2
+    ;;
+  archive)
+    echo Creating ${2/:/-}.tar:
+    tar --transform 's/.*\///g' -cvf $ARCHIVEDIR/${2/:/-}.tar $(print_files $2 short) 2> /dev/null
+    ;;
+  *)
+    echo "usage: $progname cmd"
+    echo "    cmd can be:"
+    echo "      help          : print this help text"
+    echo "      list          : list models"
+    echo "      print MODEL   : print files for model"
+    echo "      archive MODEL : archive model to $ARCHIVEDIR"
+    exit
+    ;;
+esac

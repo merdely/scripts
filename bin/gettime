@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""
+NTP Time Checker
+Queries an NTP server and compares its time with local system time.
+Uses built-in Python libraries only - no external dependencies required.
+"""
+
+import argparse
+import socket
+import struct
+import sys
+from datetime import datetime, timezone
+
+# NTP epoch is January 1, 1900
+NTP_EPOCH = datetime(1900, 1, 1, tzinfo=timezone.utc)
+NTP_PACKET_FORMAT = "!12I"
+NTP_PACKET_SIZE = struct.calcsize(NTP_PACKET_FORMAT)
+
+def ntp_to_system_time(ntp_timestamp):
+    """Convert NTP timestamp to system time (seconds since Unix epoch)."""
+    # NTP timestamp is seconds since 1900-01-01
+    # Unix timestamp is seconds since 1970-01-01
+    # Difference is 70 years (accounting for leap years)
+    NTP_TO_UNIX_OFFSET = 2208988800
+    return ntp_timestamp - NTP_TO_UNIX_OFFSET
+
+def get_ntp_time(ntp_server, port=123, timeout=5):
+    """Query NTP server and return the server time."""
+    try:
+        # Create NTP request packet (48 bytes)
+        # Set version (3) and mode (3 for client)
+        ntp_packet = bytearray(48)
+        ntp_packet[0] = 0x1B  # 00011011: LI=0, VN=3, Mode=3
+
+        # Create UDP socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+
+        try:
+            # Send request
+            sock.sendto(ntp_packet, (ntp_server, port))
+
+            # Receive response
+            response, address = sock.recvfrom(1024)
+
+            if len(response) < 48:
+                raise Exception("Invalid NTP response")
+
+            # Parse the response
+            # The transmit timestamp is at bytes 40-47 (2 32-bit integers)
+            tx_timestamp_int = struct.unpack("!I", response[40:44])[0]
+            tx_timestamp_frac = struct.unpack("!I", response[44:48])[0]
+
+            # Convert to floating point seconds
+            ntp_timestamp = tx_timestamp_int + (tx_timestamp_frac / 2**32)
+
+            # Extract stratum (quality indicator)
+            stratum = struct.unpack("B", response[1:2])[0]
+
+            # Extract precision
+            precision = struct.unpack("b", response[2:3])[0]  # signed byte
+
+            # Extract root delay (at bytes 4-7)
+            root_delay_raw = struct.unpack("!I", response[4:8])[0]
+            root_delay = root_delay_raw / 2**16  # Convert from NTP short format
+
+            return {
+                'timestamp': ntp_timestamp,
+                'stratum': stratum,
+                'precision': precision,
+                'root_delay': root_delay
+            }
+
+        finally:
+            sock.close()
+
+    except socket.timeout:
+        print(f"Error: Connection to {ntp_server} timed out", file=sys.stderr)
+        sys.exit(1)
+    except socket.gaierror as e:
+        print(f"Error: Could not resolve hostname {ntp_server}: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error querying NTP server: {e}", file=sys.stderr)
+        sys.exit(1)
+
+def format_time_difference(seconds):
+    """Format time difference in a human-readable way."""
+    abs_seconds = abs(seconds)
+
+    # Convert to appropriate units
+    minutes = int(abs_seconds // 60)
+    remaining_seconds = abs_seconds % 60
+    milliseconds = int((remaining_seconds % 1) * 1000)
+
+    # Build the output string
+    parts = []
+    if minutes > 0:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+
+    seconds_int = int(remaining_seconds)
+    if seconds_int > 0 or not parts:
+        parts.append(f"{seconds_int} second{'s' if seconds_int != 1 else ''}")
+
+    if milliseconds > 0 or not parts:
+        parts.append(f"{milliseconds} millisecond{'s' if milliseconds != 1 else ''}")
+
+    result = ", ".join(parts)
+
+    # Add direction
+    if seconds > 0:
+        return f"{result} ahead"
+    elif seconds < 0:
+        return f"{result} behind"
+    else:
+        return "in sync"
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Query an NTP server and compare with local system time",
+        epilog="Example: %(prog)s pool.ntp.org"
+    )
+    parser.add_argument(
+        "server",
+        help="NTP server hostname or IP address (e.g., pool.ntp.org, time.google.com)"
+    )
+    parser.add_argument(
+        "-p", "--port",
+        type=int,
+        default=123,
+        help="NTP server port (default: 123)"
+    )
+    parser.add_argument(
+        "-t", "--timeout",
+        type=int,
+        default=5,
+        help="Connection timeout in seconds (default: 5)"
+    )
+
+    args = parser.parse_args()
+
+    print(f"Querying NTP server: {args.server}")
+    print("-" * 60)
+
+    # Get NTP time
+    ntp_response = get_ntp_time(args.server, args.port, args.timeout)
+    ntp_timestamp_unix = ntp_to_system_time(ntp_response['timestamp'])
+    ntp_time = datetime.fromtimestamp(ntp_timestamp_unix)
+
+    # Get local system time
+    local_time = datetime.now()
+
+    # Calculate difference (NTP time - local time)
+    time_diff = (ntp_time - local_time).total_seconds()
+
+    # Display results
+    print(f"\nNTP Server Time:   {ntp_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    print(f"Local System Time: {local_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    print(f"\nTime Difference:   {format_time_difference(time_diff)}")
+    print(f"                   ({time_diff:.3f} seconds)")
+
+    # Additional NTP information
+    print(f"\nNTP Server Details:")
+    print(f"  Stratum: {ntp_response['stratum']} ", end="")
+    if ntp_response['stratum'] == 0:
+        print("(unspecified/invalid)")
+    elif ntp_response['stratum'] == 1:
+        print("(primary reference - atomic clock, GPS, etc.)")
+    else:
+        print(f"(secondary reference)")
+
+    print(f"  Precision: 2^{ntp_response['precision']} seconds")
+    print(f"  Root delay: {ntp_response['root_delay']:.6f} seconds")
+
+if __name__ == "__main__":
+    main()

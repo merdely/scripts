@@ -1,0 +1,364 @@
+#!/usr/bin/env bash
+
+# Setting defaults
+configfile=$HOME/.config/vpn_configs
+providers="mullvad airvpn"
+provider=mullvad
+profile=$provider
+configdir=/etc/wireguard
+proxyurl=socks5h://127.0.0.1:1080
+link=wg0
+backup=false
+debug=false
+list=false
+list_profiles=false
+removeold=true
+tag=/provider
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h] [-b|-B] [-l] [-L] [-R] [-t TAG] [-D CONFIGDIR] [-X|-x PROXYURL]"
+  echo "              [-o] [-p PROVIDER] [-P PROFILE] [-c 'CITIESLIST'|-C 'COUNTRIESLIST']"
+  echo "         -b               : Backup existing configs"
+  echo "         -B               : No not backup existing configs"
+  echo "         -c CITIESLIST    : List of cities (example: Montreal,Toronto)"
+  echo "         -C COUNTRIESLIST : List of countries (example: 'United Kingdom',Canada)"
+  echo "         -D CONFIGDIR     : Save configs to this directory (default: $configdir)"
+  echo "         -f CONFIGFILE    : Use configfile (default: $configfile)"
+  echo "         -l               : List countries and cities for provider"
+  echo "         -L LINKNAME      : Filename for symbolic link (default: $link)"
+  echo "         -o               : List profiles from configfile"
+  echo "         -p PROVIDER      : Use PROVIDER (options: $providers)"
+  echo "         -P PROFILE       : Use PROFILE (default: $provider)"
+  echo "         -R               : Do not remove old configs in CONFIGDIR (default: remove old configs)"
+  echo "         -t TAG           : Tag filenames with provider at the beginning (default)"
+  echo "                            special tags:"
+  echo "                                /none: no tag"
+  echo "                                /provider: tag each file with the provider"
+  echo "                                /profile: tag each file with the profile"
+  echo "         -x PROXY         : Use PROXYURL (default: $proxyurl, 'none' to disable)"
+  echo "   -p and -c/-C are required if they are not in the configuration file"
+  exit $1
+}
+
+libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
+PATH="$libpath" . _config 2> /dev/null || { echo "Error: Cannot load _config library" >&2; exit 1; }
+
+# Whether a flag was given
+bflag=false
+Bflag=false
+cflag=false
+Cflag=false
+Dflag=false
+lflag=false
+Lflag=false
+oflag=false
+pflag=false
+Pflag=false
+Rflag=false
+tflag=false
+xflag=false
+while getopts ":hbBc:C:dD:f:lL:op:P:Rt:x:" opt; do
+  case $opt in
+    b) bflag=true ; backup=true ;;
+    B) Bflag=true ; backup=false ;;
+    d) debug=true ;;
+    c) cflag=true ; cities="$OPTARG" ;;
+    C) Cflag=true ; countries="$OPTARG" ;;
+    f) if [[ ! $OPTARG ]] || [[ ! -r $OPTARG ]]; then
+         echo "Error: '$OPTARG' is not a valid configfile"
+         exit 1
+       fi
+       configfile=$OPTARG
+       ;;
+    D) Dflag=true
+       if [[ ! $OPTARG ]] || [[ ! -d $OPTARG ]]; then
+         echo "Error: '$OPTARG' is not a valid directory"
+         exit 1
+       fi
+       tmpfile=.${progname}_$RANDOM$RANDOM$RANDOM.tmp
+       while [ -e $OPTARG/$tmpfile ]; do
+         tmpfile=.${progname}_$RANDOM$RANDOM$RANDOM.tmp
+       done
+       touch $OPTARG/$tmpfile &> /dev/null
+       ret=$?
+       rm -f $OPTARG/$tmpfile &> /dev/null
+       [ $ret != 0 ] && echo "Error: Cannot write to $OPTARG directory" && exit 1
+       configdir=$OPTARG
+       ;;
+    l) lflag=true ; list=true ;;
+    L) Lflag=true ; link=$OPTARG ;;
+    o) oflag=true ; list_profiles=true ;;
+    p) pflag=true
+       if ! echo " $providers " | grep -q " $OPTARG "; then
+         echo "Error: '$OPTARG' is not a valid provider"
+         usage 1
+       fi
+       provider=$OPTARG
+       ;;
+    P) Pflag=true ; profile=$OPTARG ;;
+    R) Rflag=true ; removeold=false ;;
+    t) tflag=true ; tag=$OPTARG ;;
+    x) xflag=true
+       if [[ ! $OPTARG =~ ^(none$|(socks4|socks4a|socks5|socks5h|http)://) ]]; then
+         echo "Error: '$OPTARG' is an invalid proxy url for curl"
+         echo "  See curl(1), '-x, --proxy'"
+         exit 1
+       fi
+       proxyurl=$OPTARG
+       ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND -1))
+
+[[ ! $configfile ]] && echo "Error: Config file not set and default is missing" && exit 1
+[ ! -r $configfile ] && echo "Error: Cannot read config file ($configfile)" && exit 1
+
+if $list_profiles; then
+  awk -F '[][]' '/^\[/&&$2!="main"{print $2}' $configfile
+  exit
+fi
+
+cfg_profile=$(get_config_value "$configfile" main profile)
+! $Pflag && [[ $cfg_profile ]] && profile=$cfg_profile
+
+cfg_provider=$(get_config_value "$configfile" "$profile" provider)
+! $pflag && [[ $cfg_provider ]] && provider=$cfg_provider
+
+cfg_proxyurl=$(get_config_value "$configfile" main proxyurl)
+! $xflag && [[ $cfg_proxyurl ]] && proxyurl=$cfg_proxyurl
+cfg_proxyurl=$(get_config_value "$configfile" "$profile" proxyurl)
+! $xflag && [[ $cfg_proxyurl ]] && proxyurl=$cfg_proxyurl
+
+cfg_configdir=$(get_config_value "$configfile" "$profile" configdir)
+! $Dflag && [[ $cfg_configdir ]] && configdir=$cfg_configdir
+cfg_cities=$(get_config_value "$configfile" "$profile" cities)
+! $cflag && ! $Cflag && [[ $cfg_cities ]] && cities=$cfg_cities
+cfg_countries=$(get_config_value "$configfile" "$profile" countries)
+! $cflag && ! $Cflag && [[ $cfg_countries ]] && countries=$cfg_countries
+
+[[ ! -d "$configdir" ]] && echo "Error: $configdir directory does not exist" && exit 1
+[[ ! $configdir ]] && usage 1
+[[ ! $profile ]] && usage 1
+[[ ! $provider ]] && usage 1
+
+if ! $list; then
+  $bflag && $Bflag && echo "Error: Only one of -b and -B can be used" && usage 1
+  cfg_backup=$(get_config_value "$configfile" main backup)
+  ! $bflag && ! $Bflag && [[ $cfg_backup ]] && backup=$cfg_backup
+
+  cfg_link=$(get_config_value "$configfile" main link)
+  ! $lflag && [[ $cfg_link ]] && link=$cfg_link
+  cfg_link=$(get_config_value "$configfile" "$profile" link)
+  ! $lflag && [[ $cfg_link ]] && link=$cfg_link
+
+  cfg_removeold=$(get_config_value "$configfile" main removeold)
+  ! $Rflag && [[ $cfg_removeold ]] && removeold=$cfg_removeold
+  cfg_removeold=$(get_config_value "$configfile" "$profile" removeold)
+  ! $Rflag && [[ $cfg_removeold ]] && removeold=$cfg_removeold
+
+  cfg_tag=$(get_config_value "$configfile" main tag)
+  ! $tflag && [[ $cfg_tag ]] && tag=$cfg_tag
+  cfg_tag=$(get_config_value "$configfile" "$profile" tag)
+  ! $tflag && [[ $cfg_tag ]] && tag=$cfg_tag
+
+  $cflag && $Cflag && echo "Error: Only cities (-c) OR countries (-C) can be given" && exit 1
+  [[ $cities ]] && [[ $countries ]] && echo "Error: Only cities OR countries can be given" && exit 1
+  [[ ! $cities ]] && [[ ! $countries ]] && usage 1
+fi
+
+if $debug; then
+  echo configfile=$configfile
+  echo configdir=$configdir
+  echo profile=$profile
+  echo provider=$provider
+  echo list=$list
+  echo tag=$tag
+  echo link=$link
+  echo backup=$backup
+  echo removeold=$removeold
+  echo proxyurl=$proxyurl
+  echo cities=$cities
+  echo countries=$countries
+  exit
+fi
+
+unset proxy_opt
+[ $proxyurl != none ] && proxy_opt="-x $proxyurl"
+
+if ! $list; then
+  confcount=$(ls "$configdir"/*.conf 2> /dev/null | wc -l)
+  if $backup; then
+    if ! $confcount; then
+      echo "Warning: There are no existing configuration files to back up"
+    else
+      backup_file=$(date +"$configdir/${profile}_configs-%Y%m%d-%H%M%S.tgz")
+      echo "Backing up existing configurations to $backup_file"
+      tar -C "$configdir" -czf "$backup_file" \
+        $(find "$configdir" -name "*.conf" -printf "%P\n")
+    fi
+  fi
+fi
+
+# Delete servers list if script exits
+server_list=$(mktemp)
+json_file=$(mktemp)
+trap 'rm -f $server_list $json_file' EXIT
+
+if [ $provider = mullvad ]; then
+  # Download Mullvad server info
+  echo "Downloading Mullvad Servers"
+  curl $proxy_opt -s -o $json_file https://api.mullvad.net/public/relays/wireguard/v1/
+  if $list; then
+    cat $json_file | jq -r '.countries[] | .name as $country | .cities[] | "\($country), \(.name)"' | sort -u
+    exit
+  fi
+  count=$(cat $server_list | wc -l)
+  if [[ $cities ]]; then
+    IFS=',' read -ra city_array <<< "$cities"
+    for city in "${city_array[@]}"; do
+      jq --arg city "$city" -r \
+        '.countries[].cities[]|select(.name|startswith($city)).relays[]|"name=\(.hostname|gsub(" ";"")) ip=\(.ipv4_addr_in) publickey=\(.public_key)"' $json_file >> $server_list
+      echo "Getting servers for $city ($(($(cat $server_list | wc -l)-count)))"
+      count=$(cat $server_list | wc -l)
+    done
+  fi
+  if [[ $countries ]]; then
+    IFS=',' read -ra country_array <<< "$countries"
+    for country in "${country_array[@]}"; do
+      jq --arg country "$country" -r \
+        '.countries[]|select(.name==$country).cities[].relays[]|"name=\(.hostname|gsub(" ";"")) ip=\(.ipv4_addr_in) publickey=\(.public_key)"' $json_file >> $server_list
+      echo "Getting servers for $country ($(($(cat $server_list | wc -l)-count)))"
+      count=$(cat $server_list | wc -l)
+    done
+  fi
+  [ ! -s $server_list ] && echo "Error: Unreadable or empty VPN Servers List" && exit 1
+
+  # Get Mullvad settings
+  [ -z "$privatekey" ] && privatekey=$(get_config_value "$configfile" "$profile" privatekey)
+  [ -z "$privateip" ] && privateip=$(get_config_value "$configfile" "$profile" privateip)
+  [ -z "$dnsserver" ] && dnsserver=$(get_config_value "$configfile" "$profile" dnsserver)
+  [ -z "$port" ] && port=$(get_config_value "$configfile" "$profile" port)
+  [ -z "$keepalive" ] && port=$(get_config_value "$configfile" "$profile" keepalive)
+  [ -z "$mtu" ] && port=$(get_config_value "$configfile" "$profile" mtu)
+
+  $removeold && rm -f "$configdir"/*.conf
+  # Create Mullvad Config Files
+  IFS=$'\n'
+  for line in $(cat $server_list); do
+    eval "$line"
+    [ -z "$name" ] && echo "Error: name for $profile config not set" && exit 1
+    [ -z "$privatekey" ] && echo "Error: privatekey for $profile not set" && exit 1
+    [ -z "$privateip" ] && echo "Error: privateip for $profile not set" && exit 1
+    [ -z "$publickey" ] && echo "Error: publickey for $profile/$name not set" && exit 1
+    [ -z "$ip" ] && echo "Error: ip for $profile/$name not set" && exit 1
+
+    case "$tag" in
+      /none) file=${name%-wireguard}.conf ;;
+      /provider) file=$provider-${name%-wireguard}.conf ;;
+      /profile) file=$profile-${name%-wireguard}.conf ;;
+      *) file="$tag"-${name%-wireguard}.conf ;;
+    esac
+
+    echo Creating $file
+    echo "[Interface]" > "$configdir"/"$file"
+    echo "PrivateKey = $privatekey" >> "$configdir"/"$file"
+    echo "Address = $privateip/32" >> "$configdir"/"$file"
+    [[ $mtu ]] && echo "MTU = $mtu" >> "$configdir"/"$file"
+    echo "DNS = ${dnsserver:-100.64.0.7}" >> "$configdir"/"$file"
+    echo "" >> "$configdir"/"$file"
+    echo "[Peer]" >> "$configdir"/"$file"
+    echo "PublicKey = $publickey" >> "$configdir"/"$file"
+    echo "AllowedIPs = 0.0.0.0/0" >> "$configdir"/"$file"
+    echo "Endpoint = $ip:${port:-51820}" >> "$configdir"/"$file"
+    [[ $keepalive ]] && echo "PersistentKeepalive = $keepalive" >> "$configdir"/"$file"
+  done
+  unset IFS
+elif [ $provider = airvpn ]; then
+  # Download AirVPN server info
+  echo "Downloading AirVPN Server List"
+  curl $proxy_opt -s -o $json_file https://airvpn.org/api/status/
+  if $list; then
+    cat $json_file | jq -r '.servers[]|select(.health=="ok")|"\(.country_name), \(.location)"' | sort -u
+    exit
+  fi
+  count=$(cat $server_list | wc -l)
+  if [[ $cities ]]; then
+    IFS=',' read -ra city_array <<< "$cities"
+    for city in "${city_array[@]}"; do
+      jq --arg city "$city" -r \
+          '.servers[]|select(.health=="ok")|select(.location|startswith($city))|"name=\(.country_code)-\(.location|split(",")[0]|gsub(" ";"")|ascii_downcase)-\(.public_name|ascii_downcase) ip1=\(.ip_v4_in1) ip2=\(.ip_v4_in2) ip3=\(.ip_v4_in3) ip4=\(.ip_v4_in4)"' $json_file >> $server_list
+      echo "Getting servers for $city ($(($(cat $server_list | wc -l)-count)))"
+      count=$(cat $server_list | wc -l)
+    done
+  fi
+  if [[ $countries ]]; then
+    IFS=',' read -ra country_array <<< "$countries"
+    for country in "${country_array[@]}"; do
+      jq --arg country "$country" -r \
+        '.servers[]|select(.health=="ok")|select(.country_name==$country)|select(.location)|"name=\(.country_code)-\(.location|split(",")[0]|gsub(" ";"")|ascii_downcase)-\(.public_name|ascii_downcase) ip1=\(.ip_v4_in1) ip2=\(.ip_v4_in2) ip3=\(.ip_v4_in3) ip4=\(.ip_v4_in4)"' $json_file >> $server_list
+      echo "Getting servers for $country ($(($(cat $server_list | wc -l)-count)))"
+      count=$(cat $server_list | wc -l)
+    done
+  fi
+  [ ! -s $server_list ] && echo "Error: Unreadable or empty VPN Servers List" && exit 1
+
+  # Get Airvpn settings
+  [ -z "$privatekey" ] && privatekey=$(get_config_value "$configfile" "$profile" privatekey)
+  [ -z "$privateip" ] && privateip=$(get_config_value "$configfile" "$profile" privateip)
+  [ -z "$presharedkey" ] && presharedkey=$(get_config_value "$configfile" "$profile" presharedkey)
+  [ -z "$publickey" ] && publickey=$(get_config_value "$configfile" "$profile" publickey)
+  [ -z "$dnsserver" ] && dnsserver=$(get_config_value "$configfile" "$profile" dnsserver)
+  [ -z "$port" ] && port=$(get_config_value "$configfile" "$profile" port)
+  [ -z "$keepalive" ] && port=$(get_config_value "$configfile" "$profile" keepalive)
+  [ -z "$mtu" ] && mtu=$(get_config_value "$configfile" "$profile" mtu)
+
+  $removeold && rm -f "$configdir"/*.conf
+  # Create AirVPN Config Files
+  IFS=$'\n'
+  for line in $(cat $server_list); do
+    eval "$line"
+
+    [ -z "$name" ] && echo "Error: name for $profile config not set" && exit 1
+    [ -z "$privatekey" ] && echo "Error: privatekey for $profile not set" && exit 1
+    [ -z "$privateip" ] && echo "Error: privateip for $profile not set" && exit 1
+    [ -z "$presharedkey" ] && echo "Error: presharedkey for $profile not set" && exit 1
+
+    for ip in 001:$ip1 002:$ip2 003:$ip3 004:$ip4; do
+      [ ${ip##*:} = null ] && continue
+      case "$tag" in
+        /none) file=${name%-wireguard}-${ip%%:*}.conf ;;
+        /provider) file=$provider-${name%-wireguard}-${ip%%:*}.conf ;;
+        /profile) file=$profile-${name%-wireguard}-${ip%%:*}.conf ;;
+        *) file="$tag"-${name%-wireguard}-${ip%%:*}.conf ;;
+      esac
+
+      echo Creating $file
+      echo "[Interface]" > "$configdir"/"$file"
+      echo "Address = $privateip/32" >> "$configdir"/"$file"
+      echo "PrivateKey = $privatekey" >> "$configdir"/"$file"
+      echo "MTU = ${mtu:-1320}" >> "$configdir"/"$file"
+      echo "DNS = ${dnserver:-10.128.0.1}" >> "$configdir"/"$file"
+      echo "" >> "$configdir"/"$file"
+      echo "[Peer]" >> "$configdir"/"$file"
+      echo "PublicKey = ${publickey:-PyLCXAQT8KkM4T+dUsOQfn+Ub3pGxfGlxkIApuig+hk=}" >> "$configdir"/"$file"
+      echo "PresharedKey = $presharedkey" >> "$configdir"/"$file"
+      echo "Endpoint = ${ip##*:}:${port:-1637}" >> "$configdir"/"$file"
+      echo "AllowedIPs = 0.0.0.0/0" >> "$configdir"/"$file"
+      echo "PersistentKeepalive = ${keepalive:-15}" >> "$configdir"/"$file"
+    done
+  done
+  unset IFS
+fi
+
+link_random_wg() {
+  local linkfile
+  [ -n "$1" ] && linkfile="|${1##*/}"
+  ln -sf "$(ls "$configdir" | grep -vE "^(.*\.sh|$link\.conf$linkfile)" | shuf -n1)" "$configdir"/$link.conf
+}
+
+# If no wg0.conf file exists, link one
+[ ! -e "$configdir"/$link.conf ] && link_random_wg
+

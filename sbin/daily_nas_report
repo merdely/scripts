@@ -1,0 +1,86 @@
+#!/bin/sh
+
+## Send daily report about new files downloaded that day
+
+days=1
+progname=${0##*/}
+progname=${progname%.sh}
+[ "$1" = "-h" ] && echo 'usage: $progname [-h] [# days]' >&2 && exit
+if [ -n "$1" ]; then
+  if ! echo "$1" | grep -qE "^[0-9]+$"; then
+    echo "Error: $1 is not a number (for number of days)" >&2
+    exit 1
+  fi
+  days=$1
+fi
+
+messagebody=$(mktemp /tmp/messagebody.XXXXXXXXXXXXXXXXXX)
+
+echo New Movies: >> "$messagebody"
+find /share/media/Movies \
+  -type f \
+  -not -name "*.nfo" \
+  -not -name "*.srt" \
+  -not -name "*.xml" \
+  -not -wholename "*/.tm/*" \
+  -not -name "*.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]" \
+  -mtime -"$days" | \
+  sed -r 's#^/share/media/Movies[^/]*/##' | \
+  sort >> "$messagebody"
+echo >> "$messagebody"
+
+echo New Shows: >> "$messagebody"
+find /share/media/TV \
+  -type f \
+  -not -name "*.nfo" \
+  -not -name "*.srt" \
+  -not -name "*.xml" \
+  -not -name "*.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]" \
+  -mtime -"$days" | \
+  sed -r 's#^/share/media/TV[^/]*/##' | \
+  sort >> "$messagebody"
+echo >> "$messagebody"
+
+echo New Music: >> "$messagebody"
+find /share/media/Music* \
+  -type f \
+  -mtime -"$days" \
+  -not -name "*.jpg" \
+  -not -name "*.png" | \
+  sed -r 's#^/share/media/Music[^/]*/##' | \
+  sort >> "$messagebody"
+echo >> "$messagebody"
+
+echo New Books: >> "$messagebody"
+find /share/media/Books* \
+  -type f \
+  -not -name "cover.jpg" \
+  -not -name "*metadata.opf" \
+  -not -name "metadata.json" \
+  -not -name "metadata.db*" \
+  -not -name "metadata_db*" \
+  -not -wholename "*/Import/*" \
+  -not -wholename "*/.caltrash/*" \
+  -mtime -"$days" | \
+  sed -r 's#^/share/media/Books[^/]*/##' | \
+  sort >> "$messagebody"
+echo >> "$messagebody"
+
+echo "-----" >> "$messagebody"
+
+echo "Samples" >> "$messagebody"
+/srv/scripts/bin/find_media_samples >> "$messagebody" 2>&1
+echo >> "$messagebody"
+
+echo "No Audio" >> "$messagebody"
+/usr/bin/find /share/media/TV /share/media/Movies \
+  \( -name "*.mp4" -or -name "*.mkv" \) \
+  -mtime -1 \
+  | /usr/bin/sort -n | \
+  /usr/bin/xargs -d '\n' /srv/scripts/bin/avinfo | \
+  grep "|$" >> "$messagebody"
+echo >> "$messagebody"
+
+mail -s "$(date +%F)" mike@erdelynet.com < "$messagebody"
+rm -f "$messagebody"
+

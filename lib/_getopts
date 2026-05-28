@@ -1,0 +1,559 @@
+#!/usr/bin/env bash
+
+##############################################################
+## This library provides the following functions:
+## - prep_getopts: Command line pre-processesing before using getopts
+##   This handles complex flags like -ddd and --debug
+
+##############################################################
+## Usage:
+## libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
+## PATH="$libpath" . _getopts 2>/dev/null||{ echo "Error: Cannot load _getopts library" >&2;exit 1; }
+## flaglist=":hvc:"
+## longlist=("help:h" "verbose:v" "config:c")
+## newcmdline=()
+## prep_getopts "$@" 2> /dev/null
+
+prep_getopts() {
+  # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
+  local _debug=$debug _ncm=false
+  shopt -q nocasematch && _ncm=true ; shopt -s nocasematch
+  case "$_debug" in true|debug|y|yes|on|[1-9]|[1-9]0|[0-9][1-9]|[1-9][0-9]0|[0-9][0-9][1-9])_debug=true;;*)_debug=false;;esac
+  ! $_ncm && shopt -u nocasematch ; unset _ncm
+
+  local _cmdline=("$@") _flags=() _args=()
+  local _i=-1 _stub _flag _param _long
+  if [ -z "$flaglist" ]; then
+    echo "${FUNCNAME[@]} Error"
+    echo "  \$flaglist must be defined with the optstring for getopts"
+    echo "  Then getopts must be used like this: getopts \"\$flaglist\""
+    echo "  Example: flaglist=\"hab:cd:e\""
+    exit 1
+  fi
+  [ -z "$longlist" ] && longlist=() || flaglist="${flaglist}:"
+  [ -z "$newcmdline" ] && newcmdline=()
+
+  while [[ ${_i} -lt "${#_cmdline[@]}" ]]; do
+    _i=$(( _i + 1 ))
+    $_debug && echo "${_i} - ${_cmdline[${_i}]}" >&2
+    _stub="${_cmdline[${_i}]}"
+    while [[ ${#_stub} -gt 0 ]]; do
+      if [[ "${_stub}" == "--" ]]; then
+        $_debug && echo stop processing flags with -- >&2
+        _args=("${_args[@]}" "${_cmdline[@]:$(( _i + 1 ))}")
+        break 2
+      elif [[ "${_stub}" == --* && "${_stub}" =~ = ]]; then
+        _cmdline=( "${_cmdline[@]:0:${_i}}" "${_stub%%=*}" "${_stub##*=}" "${_cmdline[@]:$(( _i + 1 ))}" )
+        _i=$(( _i - 1 ))
+        break
+      elif [[ "${_stub}" == --* ]]; then
+        $_debug && echo "processing long arg (${_stub})" >&2
+        for _long in "${longlist[@]}"; do
+          $_debug && echo "checking '${_stub}' against '${_long}' : ${_long%%:*} == ${_long##*:}" >&2
+          if [[ "${_stub}" == "--${_long%%:*}" ]]; then
+            $_debug && echo "stub (${_stub}) == long opt (--${_long%%:*})" >&2
+            _cmdline[${_i}]="-${_long##*:}"
+            _i=$(( _i - 1 ))
+            break 2
+          fi
+        done
+        $_debug && echo "Adding flag (${_stub}) back with -^L" >&2
+        _flags=("${_flags[@]}" "-" "${_stub}")
+        break
+      elif [[ "${_stub}" == -* && $flaglist =~ "${_stub:1:1}": ]]; then
+        _flag=${_stub:1:1}
+        _param="${_stub:2}"
+        if [[ -z "${_param}" ]]; then
+          _param=${_cmdline[$(( _i + 1 ))]}
+          _i=$(( _i + 1 ))
+        fi
+        $_debug && echo "processing flag (${_flag}) + param (${_param})" >&2
+        $_debug && echo "add '-${_flag}' and '${_param}' to flags move on" >&2
+        _flags=("${_flags[@]}" "-${_flag}" "${_param}")
+        break
+      elif [[ "${_stub}" == -* ]]; then # && $flaglist =~ "${_stub:1:1}" ]]; then
+        _flag=${_stub:1:1}
+        _stub="${_stub:2}"
+        $_debug && echo "processing flag (${_flag})${_stub:+ + rest (${_stub})}" >&2
+        $_debug && echo "add '-${_flag}' to flags${_stub:+ and continue processing '-${_stub}'}" >&2
+        _flags=("${_flags[@]}" "-${_flag}")
+        _stub="-${_stub}"
+      else
+        _args=("${_args[@]}" "${_stub}")
+        break
+      fi
+      [[ "${_stub}" == "-" ]] && break
+    done
+  done
+  $_debug && echo "newcmdline=("${_flags[@]}" "--" "${_args[@]}")" >&2
+  newcmdline=("${_flags[@]}" "--" "${_args[@]}")
+}
+
+# getoptsng ": a about c: config: verbose" "$@"
+getoptsng_good() {
+  # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
+  local _debug=$debug _ncm=false
+  shopt -q nocasematch && _ncm=true ; shopt -s nocasematch
+  case "$_debug" in true|debug|y|yes|on|[1-9]|[1-9]0|[0-9][1-9]|[1-9][0-9]0|[0-9][0-9][1-9])_debug=true;;*)_debug=false;;esac
+  ! $_ncm && shopt -u nocasematch ; unset _ncm
+
+  [[ "$#" -lt 4 ]] && echo "usage: gettoptsng optstring name paramlist arg ..." >&2 && return 1
+  local _optstring _silent=false
+  [[ "$1" == ": "* ]] && _silent=true
+  # readarray -t _optstring < <(xargs printf '%s\n' <<< "${1#: }")
+  read -ra _optstring <<< "${1#: }"
+  [[ ! " ${_optstring[@]} " =~ " help:"?" " ]] && _optstring=(help "${_optstring[@]}")
+  [[ ! " ${_optstring[@]} " =~ " h:"?" " ]] && _optstring=(h "${_optstring[@]}")
+  shift
+  local _name=$1
+  if [[ ! "${_name}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    echo "Error: Invalid characters in name '${_name}'" >&2
+    return 1
+  fi
+  shift
+  local _paramlist=$1
+  if [[ ! "${_paramlist}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    echo "Error: Invalid characters in paramlist '${_paramlist}'" >&2
+    return 1
+  fi
+  shift
+  local _cmdline=("$@") _flags=() _args=()
+  local _i=-1 _stub _flag _param
+
+  # Preprocess commandline
+  while [[ ${_i} -lt $(( ${#_cmdline[@]} - 1 )) ]]; do
+    _i=$(( _i + 1 ))
+    $_debug && echo "${_i} - ${_cmdline[${_i}]}" >&2
+    _stub="${_cmdline[${_i}]}"
+    while [[ ${#_stub} -gt 0 ]]; do
+      unset _param
+      if [[ "${_stub}" == "--" ]]; then
+        $_debug && echo stop processing flags with -- >&2
+        _args=("${_args[@]}" "${_cmdline[@]:$(( _i + 1 ))}")
+        break 2
+      elif [[ "${_stub}" == --* ]]; then
+        $_debug && echo "processing long arg (${_stub})" >&2
+        _flag=${_stub#--}
+        if [[ ( "${_stub}" =~ = || " ${_optstring[@]} " == *" ${_stub#--}: "* ) ]]; then
+          if [[ "${_stub}" =~ = ]]; then
+            _flag=${_flag%%=*}
+            _param=${_stub##*=}
+            if [[ ! " ${_optstring[@]} " == *" ${_flag}: "* ]]; then
+              $_debug && echo "Warning: ${_stub} has a parameter but does not support one, ignoring '${_param}'" >&2
+              unset _param
+            fi
+          else
+            _param=${_cmdline[$(( _i + 1 ))]}
+            _i=$(( _i + 1 ))
+          fi
+        fi
+        _flags=("${_flags[@]}" "--${_flag}"${_param:+ "${_param}"})
+        $_debug && echo "processing flag (${_flag})${_param:+ + param (${_param})}" >&2
+        $_debug && echo "add '--${_flag}'${_param:+ and '${_param}'} to flags move on" >&2
+        break
+      elif [[ "${_stub}" == -* && " ${_optstring[@]} " == *" ${_stub:1:1}: "* ]]; then
+        _flag=${_stub:1:1}
+        _param="${_stub:2}"
+        if [[ -z "${_param}" ]]; then
+          _param=${_cmdline[$(( _i + 1 ))]}
+          _i=$(( _i + 1 ))
+        fi
+        $_debug && echo "processing flag (${_flag}) + param (${_param})" >&2
+        $_debug && echo "add '-${_flag}' and '${_param}' to flags move on" >&2
+        _flags=("${_flags[@]}" "-${_flag}" "${_param}")
+        break
+      elif [[ "${_stub}" == -* ]]; then # && $flaglist =~ "${_stub:1:1}" ]]; then
+        _flag=${_stub:1:1}
+        _stub="${_stub:2}"
+        $_debug && echo "processing flag (${_flag})${_stub:+ + rest (${_stub})}" >&2
+        $_debug && echo "add '-${_flag}' to flags${_stub:+ and continue processing '-${_stub}'}" >&2
+        _flags=("${_flags[@]}" "-${_flag}")
+        _stub="-${_stub}"
+      else
+        $_debug && echo "add '${_stub}' to paramlist" >&2
+        _args=("${_args[@]}" "${_stub}")
+        break
+      fi
+      [[ "${_stub}" == "-" ]] && break
+    done
+  done
+  printf -v "${_paramlist}" ''
+  [[ ${#_args[@]} -gt 0 ]] && printf -v "${_paramlist}" '%q ' "${_args[@]}"
+
+  local _extglob=($(shopt extglob))
+  [[ "${_extglob[-1]}" == off ]] && shopt -s extglob
+
+  unset OPTARG
+  _i=$(( ${OPTIND:=1} - 1))
+  _flag=${_flags[$_i]}
+  if [[ " ${_optstring[@]} " == *" ${_flag/#-?(-)/}: "* ]]; then
+    _i=$(( _i + 1 ))
+    _param=${_flags[${_i}]}
+  elif [[ " ${_optstring[@]} " == *" ${_flag/#-?(-)/} "* ]]; then
+    true
+  elif [[ -z "${_flag}" ]]; then
+    return 1
+  else
+    $_debug && echo "Warning: Invalid option ${_flag}" >&2
+    OPTARG=${_flag}
+    _flag=?
+    ! ${_silent} && echo "$0: illegal option -- ${OPTARG/#-?(-)/}" >&2 && unset OPTARG
+  fi
+  printf -v "${_name}" '%s' "${_flag/#-?(-)/}"
+  [[ -n "${_param}" ]] && OPTARG=${_param}
+  OPTIND=$(( _i + 2))
+  $_debug && echo ${_name}=${!_name} OPTARG=$OPTARG OPTIND=$OPTIND >&2
+
+  [[ "${_extglob##* }" == off ]] && shopt -u extglob
+  return 0
+}
+
+# getoptsng ": a about c: config: verbose" "$@"
+getoptsng() {
+  # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
+  local _debug=$debug _ncm=false
+  shopt -q nocasematch && _ncm=true ; shopt -s nocasematch
+  case "$_debug" in true|debug|y|yes|on|[1-9]|[1-9]0|[0-9][1-9]|[1-9][0-9]0|[0-9][0-9][1-9])_debug=true;;*)_debug=false;;esac
+  ! $_ncm && shopt -u nocasematch ; unset _ncm
+
+  if ! command -v mapfile &> /dev/null; then
+    mapfile() {
+      [[ "$1" == "-t" ]] && shift
+      local __line __arrname=$1 __i=0
+      while IFS= read -r __line; do
+        eval "${__arrname}[${__i}]=\"\${__line}\""
+        __i=$(( __i + 1 ))
+      done
+    }
+  fi
+
+  ___getopts_update_chars() {
+    [[ $# -gt 2 ]] && return 1
+    local __arglist=$1 __i=$2
+    local __pp=$(( $2 - 1 ))
+    local __p=${__arglist:${__pp}:1} ; [[ $2 == 0 ]] && unset __p
+    local __cp=$2
+    local __c=${__arglist:${__cp}:1}
+    local __np=$(( $2 + 1 ))
+    local __n=${__arglist:${__np}:1} ; [[ $2 == ${#__arglist} ]] && unset __n
+    (( __pp < 0 )) && __pp=-1
+    (( __np >= ${#__arglist} )) && __np=-1
+    local __pd __ps __nd __ns __pw __nw
+
+    __i=$2
+    while [[ $__i -gt 0 && "${__arglist:$(( __i - 1)):1}" != "-" ]]; do
+      __i=$(( __i - 1 ))
+    done
+    __pd=$(( __i - 1))
+    (( __pd < 0 )) && __pd=-1
+
+    __i=$2
+    while [[ $__i -gt 0 && "${__arglist:$(( __i - 1)):1}" != " " ]]; do
+      __i=$(( __i - 1 ))
+    done
+    __ps=$(( __i - 1 ))
+    (( __ps < 0 )) && __ps=-1
+
+    __i=$2
+    while [[ $__i -lt ${#__arglist} && "${__arglist:$(( __i + 1)):1}" != "-" ]]; do
+      __i=$(( __i + 1 ))
+    done
+    __nd=$(( __i + 1 ))
+    (( __nd >= ${#__arglist} )) && __nd=99999
+
+    __i=$2
+    while [[ $__i -lt ${#__arglist} && "${__arglist:$(( __i + 1)):1}" != " " ]]; do
+      __i=$(( __i + 1 ))
+    done
+    __ns=$(( __i + 1 ))
+    (( __ns >= ${#__arglist} )) && __ns=99999
+
+    __pw=$(( __ps + 1 ))
+    if [[ "${__ns}" -eq -1 && "${__nd}" -eq -1 ]]; then
+      __pl=$(( ${#__arglist} - __ps - 1))
+    elif [[ "${__c}" == " " ]]; then
+      __pl=$(( __cp - __ps - 1 ))
+    else
+      __pl=$(( __ns - __pw ))
+    fi
+    __nw=$(( __ns + 1 ))
+
+    local __word=${__arglist:${__pw}:${__pl}}
+
+    # current char, previous char, next char
+    # ptr to cur, ptr to prev, ptr to next
+    # previous dash, next dash, previous space, next space
+    # ptr to prev word, prev word len, ptr to next word
+    printf '%s\n' "${__c}" "${__p}" "${__n}" \
+                  "${__cp}" "${__pp}" "${__np}" \
+                  "${__pd}" "${__nd}" "${__ps}" "${__ns}" \
+                  "${__word}" "${__pw}" "${__pl}" "${__nw}"
+  }
+
+  trap 'unset -f ___getopts_update_chars mapfile &> /dev/null' RETURN
+
+  [[ "$#" -lt 4 ]] && echo "usage: gettoptsng optstring name paramlist arg ..." >&2 && return 1
+  local _optstring _silent=false
+  [[ "$1" == ": "* ]] && _silent=true
+  # readarray -t _optstring < <(xargs printf '%s\n' <<< "${1#: }")
+  read -ra _optstring <<< "${1#: }"
+  [[ ! " ${_optstring[@]} " =~ " help:"?" " ]] && _optstring=(help "${_optstring[@]}")
+  [[ ! " ${_optstring[@]} " =~ " h:"?" " ]] && _optstring=(h "${_optstring[@]}")
+  shift
+  local _name=$1
+  if [[ ! "${_name}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    echo "Error: Invalid characters in name '${_name}'" >&2
+    return 1
+  fi
+  shift
+  local _paramlist=$1
+  if [[ ! "${_paramlist}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    echo "Error: Invalid characters in paramlist '${_paramlist}'" >&2
+    return 1
+  fi
+  shift
+
+  local _arglist="$@" _flags=() _args=() _cur=() _nxt=() _i=$(( ${OPTIND:=1} - 1 ))
+  local _stub _nextword _flag _param _remaining _quoted
+
+  # If pointer is larger than list, we're done
+  [[ "${OPTIND:-1}" -gt "${#_arglist}" ]] && return 1
+
+  #cur prv nxt prv/nxt_dash prv/nxt_space
+  local _c=0 _p=1 _n=2 _cp=3 _pp=4 _np=5 _pd=6 _nd=7 _ps=8 _ns=9 _word=10 _pw=11 _pl=12 _nw=13
+
+  # _i=15
+  # _i=3
+  # _i=19
+  # _i=18
+  # _i=17
+  # _i=16
+
+  # echo ${_arglist} >&2
+  # echo "01234567890123456789012345678901234567890123456789" >&2
+  # echo "          1         2         3         4         " >&2
+  # echo printing the character after the previous space
+  # for ((i=0; i<${#_arglist}; i++)); do
+  #   mapfile -t _f < <(___getopts_update_chars "${_arglist}" "${i}")
+  #   echo "$i: ${_f[${_word}]}"
+  # done
+  # return 1
+
+  # Get the character that OPTIND is pointing to
+  mapfile -t _cur < <(___getopts_update_chars "${_arglist}" "${_i}")
+
+  # If the character is a space, go to the next one
+  while [[ ${_cur[${_c}]} == " " ]]; do
+    _i=$(( _i + 1))
+    mapfile -t _cur < <(___getopts_update_chars "${_arglist}" "${_i}")
+  done
+
+  # Beginning of a word and it is not a flag
+  #if ( [[ ${_i} -eq 0 || "${_cur[${_p}]}" == " " ]] && [[ "${_cur[${_c}]}" != "-" ]] ) \
+  #     || ( [[ "${_cur[${_ps}]}" -lt 1  ]] ) ; then
+  #
+  while [[ "${_cur[${_word}]}" != "-"* ]]; do
+    $_debug && echo "Saving '${_cur[${_word}]}' as a param" >&2
+    printf -v _quoted '%q' "${_cur[${_word}]}" && printf -v "${_paramlist}" '%s%s ' "${!_paramlist}" "${_quoted}"
+    _i=${_cur[${_nw}]}
+    mapfile -t _cur < <(___getopts_update_chars "${_arglist}" "${_i}")
+  done
+
+  # Get the first character of the next word
+  mapfile -t _nxt < <(___getopts_update_chars "${_arglist}" "$((${_cur[${_ns}]} + 1))")
+
+  unset _stub _nextword
+  _stub=${_cur[${_word}]}
+  # set | grep ^_nxt= >&2
+  [[ ${_cur[${_nw}]} -lt 90000 ]] && _nextword=${_nxt[${_word}]}
+  $_debug && echo stub=$_stub >&2
+  $_debug && echo next=$_nextword >&2
+  #OPTIND=${_cur[${_nw}]}
+  #return 0
+
+  #$_debug && set | grep ^_cur= >&2
+  #$_debug && set | grep ^_nxt= >&2
+  #set | grep ^_nxt= >&2
+
+  # If the previous character is a space or this is the first character and it is a -
+  #if [[ ( "${_cur[${_p}]}" == " " || $_i == 0 ) && "${_cur[${_c}]}" == "-" ]]; then
+  #  _stub=${_arglist:${_i}:$(( ${_cur[${_ns}]} - _i ))}
+  #  _nextword=${_arglist:$(( ${_cur[${_ns}]} + 1 )):$(( ${_nxt[${_ns}]} - ${_cur[${_ns}]} - 1 ))}
+#
+#  # We are in the middle of a word, find the beginning
+#  else
+#    _stub=${_arglist:$(( ${_cur[${_ps}]} + 1 )):$(( ${_cur[${_ns}]} - ${_cur[${_ps}]} - 1 ))}
+#    _nextword=${_arglist:$(( ${_cur[${_ns}]} + 1 )):$(( ${_nxt[${_ns}]} - ${_cur[${_ns}]} - 1 ))}
+#  fi
+#
+#  # If starting a word like "-abc" at "b", strip the "-a" and add "-"
+#  if [[ "${_stub}" =~ ^-[^-] && "${_cur[${_c}]}" != "-" ]]; then
+#    $_debug && echo adjusting '$_stub' for $_i >&2
+#    _stub=${_arglist:$OPTIND:$(( ${_cur[${_ns}]} - ${_i} - 1 ))}
+#    _stub="-${_stub#-}"
+#    $_debug && echo "    new stub = '$_stub'" >&2
+#  fi
+
+  # Reset name and OPTARG
+  printf -v "${_name}" '%s' ""
+  unset OPTARG
+
+  # If the word is "--"
+  if [[ "${_stub}" == "--" ]]; then
+    $_debug && echo stop processing flags with -- >&2
+
+    # Put remaining arglist into _paramlist
+    _remaining=${_arglist:${_cur[${_ns}]}}
+    [[ -n "${_remaining}" ]] && printf -v _quoted '%q' "${_remaining}" && printf -v "${_paramlist}" '%s%s ' "${!_paramlist}" "${_quoted}"
+    OPTIND=$(( ${_cur[${_ns}]} + 1 ))
+
+    # Return 1 to stop the while loop
+    return 1
+
+  # If the word starts with --
+  elif [[ "${_stub}" == --* ]]; then
+    $_debug && echo "processing long arg (${_stub})" >&2
+    _flag=${_stub#--}
+    OPTIND=$(( ${_cur[${_ns}]} + 1 ))
+    if [[ ( "${_stub}" =~ = || " ${_optstring[@]} " == *" ${_stub#--}: "* ) ]]; then
+      if [[ "${_stub}" =~ = ]]; then
+        _flag=${_flag%%=*}
+        _param=${_stub##*=}
+        if [[ ! " ${_optstring[@]} " == *" ${_flag}: "* ]]; then
+          $_debug && echo "Warning: ${_stub} has a parameter but does not support one, ignoring '${_param}'" >&2
+          unset _param
+        fi
+      else
+        _param=${_nextword}
+        OPTIND=$(( ${_nxt[${_ns}]} + 1 ))
+      fi
+    fi
+    $_debug && echo "processing flag (${_flag})${_param:+ + param (${_param})}" >&2
+    $_debug && echo "add '--${_flag}'${_param:+ and '${_param}'} to flags move on" >&2
+
+    printf -v "${_name}" '%s' "${_flag}"
+    [[ -n "${_param}" ]] && OPTARG=${_param}
+
+  # If the word starts with - and its optstring component ends with :
+  elif [[ "${_stub}" == -* && " ${_optstring[@]} " == *" ${_stub:1:1}: "* ]]; then
+    _flag=${_stub:1:1}
+    _param="${_stub:2}"
+    $_debug && echo "processing flag (${_flag}) + param (${_param})" >&2
+    $_debug && echo "add '-${_flag}' and '${_param}' to flags move on" >&2
+    OPTIND=$(( ${_cur[${_ns}]} + 1 ))
+    if [[ -z "${_param}" ]]; then
+      _param=${_nextword}
+      OPTIND=$(( ${_nxt[${_ns}]} + 1 ))
+    fi
+    printf -v "${_name}" '%s' "${_flag}"
+    [[ -n "${_param}" ]] && OPTARG=${_param}
+
+  # The word starts with -
+  elif [[ "${_stub}" == -* ]]; then # && $flaglist =~ "${_stub:1:1}" ]]; then
+    _flag=${_stub:1:1}
+    _remaining=${_stub:2}
+
+    $_debug && echo "processing flag (${_flag})${_remaining:+ + rest (${_remaining})}" >&2
+    $_debug && echo "add '-${_flag}' to flags${_remaining:+ and continue processing '-${_remaining}'}" >&2
+
+    $_debug && echo "= stub=$_stub flag=${_flag} remaining=${_stub:2}" >&2
+    printf -v "${_name}" '%s' "${_flag}"
+
+    $_debug && echo "next char = '${_arglist:$(( ${_i} + 2 )):1}'" >&2
+
+    if [[ "${_arglist:$(( ${_i} + 2 )):1}" == " " ]]; then
+      OPTIND=$(( _i + 3 ))
+    else
+      OPTIND=$(( _i + 2 ))
+    fi
+
+  # There is no dash
+  else
+    $_debug && echo "add '${_stub}' to paramlist" >&2
+
+    printf -v _quoted '%q' "${_stub}" && printf -v "${_paramlist}" '%s%s ' "${!_paramlist}" "${_quoted}"
+    $_debug && set | grep ^_cur= >&2
+    OPTIND=$(( ${_cur[${_ns}]} + 1 ))
+  fi
+  return 0
+}
+
+if ! (return 2> /dev/null); then
+  # library is being called directory
+
+  # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
+  debug=${debug:-false} _ncm=false
+  shopt -q nocasematch && _ncm=true ; shopt -s nocasematch
+  case "$_debug" in true|debug|y|yes|on|[1-9]|[1-9]0|[0-9][1-9]|[1-9][0-9]0|[0-9][0-9][1-9])_debug=true;;*)_debug=false;;esac
+  ! $_ncm && shopt -u nocasematch ; unset _ncm
+
+  # debug=true
+  if [[ $# -eq 0 ]]; then
+    # set -- -a bout --a --about param1 -aaa -c foo param2 --config bar param3 -avc baz --config="quux file" -v --verbose=ignore param\ 4 --help -- param5
+    set -- -a bout -a --about param1 -aaa -c foo param2 --config bar param3 -avc baz --config="quux file" -v --verbose=ignore "param 4" --help -- param5
+    echo "args = $@" >&2
+    echo "       01234567890123456789012345678901234567890123456789" >&2
+    echo "                 1         2         3         4         " >&2
+  else
+    ${debug:-false} && echo "args = $@" >&2
+    ${debug:-false} && echo "       01234567890123456789012345678901234567890123456789" >&2
+    ${debug:-false} && echo "                 1         2         3         4         " >&2
+  fi
+  # while getoptsng "a about c: config: v verbose" opt params "$@"; do
+  while getoptsng ": a about c: config: v verbose" opt params "$@"; do
+    ${debug:-false} && echo "opt='$opt' OPTARG='$OPTARG' OPTIND='$OPTIND'" >&2
+    case $opt in
+      a|about) echo "about flag ($opt) set" ;;
+      c|config) echo "config flag ($opt) set to '$OPTARG'" ;;
+      v|verbose) echo "verbose flag ($opt) set" ;;
+      h|help) echo "printing usage for ($opt)" ;;
+      *) echo "Error: Unknown flag ($OPTARG)" ;;
+    esac
+    ${debug:-false} && echo "" >&2
+  done
+  eval "set -- $params"
+  for ((i=1;i<=$#;i++)); do echo "param$i = '${!i}'"; done
+
+  exit
+  _lists=(
+    "--help --verbose --config long --verbose -- --verbose other args here"
+    "-hvc long -v -- -v other args here"
+    "--badflag -hvc long other args here"
+    "-b -hvc long other args here"
+  )
+  for _list in "${_lists[@]}"; do
+    echo "=> Testing with: $_list"
+    set -- $_list
+    flaglist=":hvc:"
+    longlist=("help:h" "verbose:v" "config:c")
+    newcmdline=()
+    # debug=true
+    prep_getopts "$@"  # >&2
+    set -- "${newcmdline[@]}"
+    OPTIND=1
+    while getopts "$flaglist" opt; do
+      case $opt in
+        ) echo "ERROR: $OPTARG is an invalid flag" >&2 ; echo print usage here ; echo; continue 2 ;;
+        :) case $OPTARG in
+             *) echo "ERROR: -$OPTARG requires an argument" >&2 ; echo print usage here ; echo ; continue 2 ;;
+           esac ;;
+        h|v|c) echo "$opt${OPTARG:+ with '$OPTARG'}" ;;
+        *) echo "ERROR: -$OPTARG is an invalid flag" >&2 ; echo print usage here ; echo ; continue 2 ;;
+      esac
+    done
+    shift $((OPTIND - 1))
+    echo "remaining args: $@"
+    echo
+  done
+fi
+
+main() {
+  echo testing goes here
+}
+
+# If called as a program, run main, otherwise exit with 0 return code
+if (return 2> /dev/null); then
+  return 0
+else
+  main
+fi

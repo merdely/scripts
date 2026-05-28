@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+progname=${0##*/}
+progname=${progname%.sh}
+if [ "$1" = -h ] || [ "$1" = --help ]; then
+  echo "usage: $progname [-h]"
+  exit
+fi
+
+if ! command -v aur > /dev/null 2>&1; then
+  echo "AUR UNKNOWN: aur from aurutils is required for this program"
+  exit 3
+fi
+
+list=$(pacman -Sl home | awk '{print $2,$3}' | aur vercmp | awk '{print $1}')
+count=$(echo "$list" | wc -w)
+
+if [ "$count" = 0 ]; then
+  echo "AUR OK: $count AUR package updates available"
+  exit 0
+else
+  echo "AUR WARNING: $count AUR package updates available ($(echo "$list" | paste -sd ' '))"
+  exit 1
+fi
+

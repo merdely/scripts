@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+
+## Script to create a self-signed RSA x509 keypair
+
+# FUTURE: Support other key algorithms (man openssl-genpkey)
+
+progname=${0##*/}
+progname=${progname%.sh}
+debug=${debug:-false}
+verbose=${verbose:-false}
+force=${force:-false}
+create_key=${create_key:-true}
+create_csr=${create_csr:-true}
+bits=${bits:-4096}
+digest=${digest:-sha256}
+years=${years:-10}
+days=${days:-$((years * 365))}
+org=${org:-erdelynet.com}
+city=${city:-Brookeville}
+state=${state:-MD}
+country=${country:-US}
+
+usage() {
+  echo "usage: $progname [-h] [-D|-v] [-L] [-f] [-k KEYFILE] [-r CSRFILE] [-b BITS] [-a DIGEST]"
+  echo "                      [-d DAYS|-y YEARS] [-o ORG] [-l CITY] [-s STATE] [-c COUNTRY] FQDN"
+  echo "  -D         : Print summary and exit"
+  echo "  -L         : List available digest algorithms"
+  echo "  -v         : Print summary and continue"
+  echo "  -f         : Force file creation and overwrite existing files (default: exit)"
+  echo "  -k KEYFILE : Use KEYFILE (default: create key)"
+  echo "  -r CSRFILE : Use CSRFILE (default: create CSR)"
+  echo "  -b BITS    : Number of bits for key (default: $bits)"
+  echo "  -a DIGEST  : Digest algorithm to use for certificate (default: $digest)"
+  echo "  -d DAYS    : Number of days for cert (default: $days)"
+  echo "  -y YEARS   : Number of years for cert (default: $years)"
+  echo "  -o ORG     : Organization (default: $org)"
+  echo "  -l CITY    : Location/City (default: $city)"
+  echo "  -s STATE   : State (default: $state)"
+  echo "  -c COUNTRY : Country (default: $country)"
+  echo
+  echo "  Run '$progname -L' for a list of acceptable digests for '-a DIGEST'"
+  exit $1
+}
+
+# Function to check if an rsa_digest_works
+rsa_digest_works() {
+  tmp=$(mktemp -d)
+  openssl genrsa -out "$tmp/k.pem" 4096 &> /dev/null
+  openssl req -new -key "$tmp/k.pem" -subj /CN=x -out "$tmp/r.csr" &> /dev/null
+  openssl x509 -req -in "$tmp/r.csr" -signkey "$tmp/k.pem" -days 1 -"$1" -out "$tmp/c.pem" &> /dev/null
+  ret=$?
+  rm -Rf "$tmp"
+  return $ret
+}
+
+while getopts ":hDvLfk:r:b:a:d:y:o:l:s:c:" opt; do
+  case $opt in
+    D) debug=true ;;
+    v) verbose=true ;;
+    L)
+       echo "Available digest algorithms for use with -a:"
+       for f in $(openssl list -signature-algorithms | sed -n 's/.*RSA-\([A-Za-z0-9\/-]*\).*/\1/p' | tr 'A-Z' 'a-z' | sort -u); do rsa_digest_works $f && echo " - $f"; done
+       exit ;;
+    f) force=true ;;
+    b) 
+       [[ ! $OPTARG =~ ^[0-9]+$ ]] && echo "Error: Invalid BITS ($OPTARG); must be numeric" && exit 1
+       [ $OPTARG -lt 512 ] && echo "Error: Invalid BITS ($OPTARG); must be more than 511" && exit 1
+       bits=$OPTARG ;;
+    a) 
+       found=false
+       # Loop through available signature algorithms to see if given digest is valid
+       for f in $(openssl list -signature-algorithms | sed -n 's/.*RSA-\([A-Za-z0-9\/-]*\).*/\1/p' | tr 'A-Z' 'a-z' | sort -u); do [ ${OPTARG#-} = ${f#-} ] && found=true; done
+       # Test given digest to see if it will work on this system with the key algorithm (RSA)
+       ! $found && echo "Error: Invalid digest algorithm ($OPTARG); run 'openssl dgst -list'" && exit 1
+       ! rsa_digest_works $OPTARG && echo "Error: Digest algorithm $OPTARG does not work on this system" && exit 1
+       digest=${OPTARG#-} ;;
+    k)
+       [ ! -r "$OPTARG" ] && echo "Error: Cannot find KEYFILE '$OPTARG'" && exit 1
+       ! openssl rsa -noout -in "$OPTARG" &> /dev/null && echo "Error: Invalid KEYFILE '$OPTARG'" && exit 1
+       create_key=false
+       keyfile=$OPTARG ;;
+    r)
+       [ ! -r "$OPTARG" ] && echo "Error: Cannot find CSRFILE '$OPTARG'" && exit 1
+       ! openssl req -noout -in "$OPTARG" &> /dev/null && echo "Error: Invalid CSRFILE '$OPTARG'" && exit 1
+       create_csr=false
+       csrfile=$OPTARG ;;
+    d) 
+       [[ ! $OPTARG =~ ^[0-9]+$ ]] && echo "Error: Invalid DAYS ($OPTARG); must be numeric" && exit 1
+       days=$OPTARG ;;
+    y)
+       [[ ! $OPTARG =~ ^[0-9]+$ ]] && echo "Error: Invalid YEARS ($OPTARG); must be numeric" && exit 1
+       days=$((OPTARG * 365)) ;;
+    o) org=$OPTARG ;;
+    l) city=$OPTARG ;;
+    s)
+       [[ ! ${OPTARG^^} =~ ^[A-Z][A-Z]$ ]] && echo "Error: Invalid STATE ($OPTARG); expecting two letters" && exit 1
+       state=${OPTARG^^} ;;
+    c)
+       [[ ! ${OPTARG^^} =~ ^[A-Z][A-Z]$ ]] && echo "Error: Invalid COUNTRY ($OPTARG); expecting two letters" && exit 1
+       country=${OPTARG^^} ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND -1))
+
+[[ ! $1 ]] && usage 1
+fqdn=$1
+short=${fqdn%%.*}
+[[ ! $keyfile ]] && keyfile=$short.key
+[[ ! $csrfile ]] && csrfile=$short.csr
+
+if $debug || $verbose; then
+  echo Summary:
+  echo " - force: $force"
+  echo " - fqdn: $fqdn ($short)"
+  echo " - keyfile: $keyfile"
+  echo " - csrfile: $csrfile"
+  echo " - bits: $bits"
+  echo " - digest: $digest"
+  echo " - days: $days"
+  echo " - org: $org"
+  echo " - location: $city"
+  echo " - state: $state"
+  echo " - country: $country"
+  $debug && exit
+fi
+
+# Set SAN info
+extinfo="subjectAltName=DNS:$fqdn"
+ip=$(dig +short -t a $fqdn);[ -n "$ip" ] && extinfo="$extinfo,IP:$ip"
+ip6=$(dig +short -t aaaa $fqdn);[ -n "$ip6" ] && extinfo="$extinfo,IP:$ip6"
+
+# Create key file
+if $create_key; then
+  ! $force && [ -r $short.key ] && echo "Error: Key file $short.key already exists" && exit 1
+  $force && [ -r $short.key ] && echo "Warning: Key file $short.key exists; overwriting" && rm -f $short.key
+  $verbose && echo Creating key file $short.key with $bits bits
+  install -m 600 /dev/null $short.key
+  openssl genrsa -out $short.key $bits &> /dev/null
+  ! openssl rsa -noout -in $short.key &> /dev/null && echo "Error: Could not create key '$short.key'" && exit 1
+else
+  tmpbits=$(openssl rsa -text -noout -in "$keyfile" | awk -F'[( ]' '/^Private-Key:/{print$3}')
+  $verbose && echo Using key file "$keyfile" with $tmpbits bits
+fi
+
+# Create Certificate Signing Request file (CSR)
+if $create_csr; then
+  ! $force && [ -r $short.csr ] && echo "Error: CSR file $short.csr already exists" && exit 1
+  $force && [ -r $short.csr ] && echo "Warning: CSR file $short.csr exists; overwriting" && rm -f $short.csr
+  $verbose && echo "Creating CSR file $short.csr with '/C=$country/ST=$state/L=$city/O=$org/CN=$fqdn'"
+  openssl req -new -key "$keyfile" -out $short.csr \
+    -subj "/C=$country/ST=$state/L=$city/O=$org/CN=$fqdn" &> /dev/null
+  ! openssl req -noout -in $short.csr &> /dev/null && echo "Error: Could not create CSR '$short.csr'" && exit 1
+else
+  tmpsubj=$(openssl req -noout -subject -in "$csrfile" | sed 's/^subject=/\//;s/, /\//g')
+  $verbose && echo "Using CSR file "$csrfile" with '$tmpsubj'"
+fi
+
+# Create and sign certificate
+! $force && [ -r $short.crt ] && echo "Error: Certificate file $short.crt already exists" && exit 1
+$force && [ -r $short.crt ] && echo "Warning: Certificate file $short.crt exists; overwriting" && rm -f $short.crt
+$verbose && echo Generating CSR file $short.crt for $days days using $digest
+openssl x509 -$digest -req -days $days -in "$csrfile" \
+  -signkey "$keyfile" -out $short.crt -extfile <(echo "$extinfo") &> /dev/null
+! openssl x509 -noout -in $short.crt &> /dev/null && echo "Error: Could not create certificate '$short.crt'" && exit 1
+
+# Clean up
+$create_csr && rm $short.csr && $verbose && echo "Removing $short.csr"
+

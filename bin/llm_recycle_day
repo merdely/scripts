@@ -1,0 +1,1323 @@
+#!/usr/bin/env bash
+
+# Allow for extended globbing
+shopt -s extglob
+
+# Set system variables
+progstart=$(date +%s)
+progname=${0##*/}
+config_file="${config_file:-/etc/$progname.yaml}"
+[ -r $HOME/.config/$progname.yaml ] && config_file=$HOME/.config/$progname.yaml
+output_file="${output_file:-/dev/stdout}"
+log_file="${log_file:-/dev/stderr}"
+supported_engines=(localai ollama mistral openrouter gemini claude chatgpt github)
+engine_settings=(enabled url api_key model prompt match max_tokens extra thinking_level agent_id)
+today_date="$(date "+%Y-%m-%d")"
+answer_error=true
+answer_error_msg=("Not enough agreements")
+aff_answer=false
+failures=()
+num_answer=0
+agreements=0
+run_count=0
+unset answer_json answer_day
+declare -A ${supported_engines[@]} manual days url model match max_tokens thinking_level \
+  extra response_engine response_model response_start response_end response_day \
+  response_aff response_days response_err response_errmsg response_weight
+responders=()
+day_list=(Sunday Monday Tuesday Wednesday Thursday Friday Saturday)
+for i in "${!day_list[@]}"; do days["${day_list[$i]}"]=$i; done
+
+# Deal with running in cron
+columns=$COLUMNS
+[[ ! $columns =~ ^[1-9][0-9]*$ || ! $columns -gt 50 ]] && columns=200
+
+# Set up some regex strings
+wday_regex='(sun|mon|tues|wednes|thurs|fri|satur)day'
+mon_regex='(january|february|march|april|may|june|july|august|september|october|november|december)'
+day_regex='[0-9]{1,2}'
+date_regex='1?[0-9]/[123]?[0-9]'
+
+# Setup function to handle deleting temp files on exit
+tmpfiles=()
+cleanup() {
+  local exit_code=$?
+  rm -Rf -- "${tmpfiles[@]}"
+  exit "$exit_code"
+}
+trap 'cleanup' EXIT
+trap 'exit 1' INT TERM
+
+# Handle reporting errors the right way (respecting output_json)
+handle_error() {
+  local tag="Error: "
+  local show_usage=false
+  local extra_newline=false
+  local do_exit=true
+  local retval=1
+
+  local OPTIND=1
+  while getopts ":uwieTnEr:" opt; do
+    case $opt in
+      u) show_usage=true ;;
+      w) tag="Warning: " ;;
+      i) tag="Info: " ;;
+      e) tag="Error: " ;;
+      T) unset tag ;;
+      n) extra_newline=true ;;
+      E) do_exit=false ;;
+      r) [[ $OPTARG =~ ^-?[0-9]+$ ]] && retval=$OPTARG ;;
+    esac
+  done
+  shift $((OPTIND -1))
+
+  if ${output_json:-false}; then
+    answer_error_msg+=("Error: $*")
+    err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
+    answer_json=$(gen_answer_json \
+      "${day_answer:-$normal_recycle_day}" \
+      "${aff_answer:-false}" \
+      "${num_answer:-0}" \
+      "${agreements:-0}" \
+      "$min_agree" \
+      "${weighted_answer:-false}" \
+      "${run_count:-0}" \
+      "true" \
+      "$err" \
+      "$((now - progstart))" \
+      "$now" \
+    )
+  else
+    echo "${tag:-Error: }$*" >> "$log_file"
+    if $show_usage; then
+      usage $retval
+    elif $do_exit; then
+      exit $retval
+    else
+      return $retval
+    fi
+  fi
+}
+
+# Print a log message with the date and debug level
+log() {
+  local tag="${log_level:-INFO}"
+  local name="${log_name:-logger}"
+  local fmt="${log_datefmt:-$date_fmt}"
+  local prefix="${log_prefix:-$log_prefix}"
+  local output="${log_file:-/dev/stderr}"
+  local write_tag="${log_write_tag:-true}"
+  local write_name="${log_write_name:-true}"
+  local write_date="${log_write_date:-true}"
+  local write_prefix="${log_write_prefix:-false}"
+  local OPTIND=1
+  while getopts ":p:Pt:Tn:Nd:Df:" opt; do
+    case $opt in
+      :) case $OPTARG in
+           p) write_prefix=true ;;
+           t) write_tag=true ;;
+           n) write_name=true ;;
+           d) write_date=true ;;
+           *) handle_error -u -- "log function -$OPTARG requires an argument" ;;
+         esac ;;
+      p) prefix=$OPTARG ; write_prefix=true ;;
+      P) write_prefix=false ;;
+      t) tag=$OPTARG ; ! $debug && write_tag=true ;;
+      T) write_tag=false ;;
+      n) name=$OPTARG ; write_name=true ;;
+      N) write_name=false ;;
+      d) fmt=$OPTARG ; write_date=true ;;
+      D) write_date=false ;;
+      f)
+        rp=$(realpath "$OPTARG" 2> /dev/null)
+        # if you can write to the file OR you can write to the containing directory
+        if [[ -e "$OPTARG" && -w "$OPTARG" ]] || \
+           [[ "$rp" && -w "${rp%/*}" ]]; then
+          output=$OPTARG
+        fi
+        ;;
+      *) ;;
+    esac
+  done
+  shift $((OPTIND -1))
+  [[ $prefix ]] && prefix=${prefix%+( )} && prefix=${prefix%:} && prefix="$prefix:"
+  [[ $name ]] && name="($name)"
+  ! $write_date && unset fmt
+  ! $write_tag && unset tag
+  ! $write_name && unset name
+  ! $write_prefix && unset prefix
+  if [[ $prefix ]]; then
+    date "+${fmt:+$fmt }${tag:+$tag }${name:+$name }$*" | sed "s/^/$prefix /" >> "$output"
+  else
+    date "+${fmt:+$fmt }${tag:+$tag }${name:+$name }$*" >> "$output"
+  fi
+}
+
+# Check to make sure required commands are installed
+for f in curl jq; do
+  ! command -v $f &> /dev/null && handle_error "The '$f' command is required"
+done
+
+# Print Usage information
+usage() {
+  echo "usage: $progname [-h] [-c CONFIG] [-o OUTFILE] [-l LOGFILE] [-s STATFILE ] [-m MIN_AGREE]"
+  echo "                 [-D] [-d] [-v] [-A] [-j|-J] [-g|-G] [-w WEIGHT]"
+  echo "                 [-L [ENGINE]] [-t TESTDATE] [-a ANSWER] [-Z]"
+  echo "                 [ENGINELIST] [MODELLIST]"
+  echo
+  echo "  -c CONFIG    : Path to $progname.yaml file (default: ${config_file/$HOME/\$HOME})"
+  echo "  -o OUTFILE   : Path to output file (default: print to screen/STDOUT)"
+  echo "  -l LOGFILE   : Path to log file (default: print to screen/STDERR)"
+  echo "  -s STATFILE  : Path to status file (default: none)"
+  echo "  -m MIN_AGREE : Minimum number of LLMs must agree on answer (default: $min_agree)"
+  echo "  -D           : Print debug information and exit"
+  echo "  -d           : Print debug information (second -d is extra debug information)"
+  echo "  -v           : Be verbose (second -v is extra verbose)"
+  echo "  -A           : Run all configured engines/models, even after agreement requirements met"
+  echo "  -j           : Output using JSON (default: simple plaintext answer)"
+  echo "  -J           : Output simple response (i.e. 'Friday' / default option)"
+  echo "  -g           : Make a guess at the date based on county message (default option)"
+  echo "  -G           : Do not make a guess at the date based on county message"
+  echo "  -w WEIGHT    : Weight for guess day (default: 1)"
+  echo "  -L [ENGINE]  : List models (optionally, for ENGINE)"
+  echo "  -t TESTDATE  : Use a test date instead of today (must be YYYY-mm-dd)"
+  echo "  -a ANSWER    : Hardcode an answer for testing"
+  echo "  -Z           : Do not use AI/LLM"
+  echo
+  echo "  $progname uses (in order of precedence: \$HOME/.config/$progname.yaml, then /etc/$progname.yaml"
+  echo "  ENGINELIST can one or more of: ${supported_engines[@]}"
+  echo "  If specified, MODELLIST must be: A list of models that would have to match the ENGINE list"
+  echo "  The first engine given would be matched with the first model given"
+  echo "  ENGINELIST and MODELLIST are space separated on the command line"
+  echo "  If MODELLIST is empty and ENGINELIST is set, models will be used from ${config_file/$HOME/\$HOME}"
+  echo "  ENGINES must precede MODELS on command line"
+  echo "  Examples:"
+  echo "    $progname -j ollama gemma3:4b localai gemma-3-4b-it"
+  echo "    $progname -j ollama localai gemma3:4b gemma-3-4b-it"
+  echo "    $progname -j gemma3:4b gemma-3-4b-it ollama localai"
+  exit $1
+}
+
+# Check for help flag
+for a in $*; do [ $a = --help -o $a = -h ] && usage; done
+
+# Set options string
+options=":hc:o:l:s:m:DdvAjJgGw:L:t:a:Z"
+
+# Check for config file on command line
+OPTIND=1
+dont_use_ai=false
+while getopts "$options" opt; do
+  case $opt in
+    :) case $OPTARG in c|o|l) handle_error -u -- "-$OPTARG requires an argument" ;; *) ;; esac ;;
+    c) case $OPTARG in -*) handle_error -u -- "-$opt requires an argument" ;; *) config_file=$OPTARG ;; esac ;;
+    o) case $OPTARG in -*) handle_error -u -- "-$opt requires an argument" ;; *) output_file=$OPTARG ;; esac ;;
+    l) case $OPTARG in -*) handle_error -u -- "-$opt requires an argument" ;; *) log_file=$OPTARG    ;; esac ;;
+    Z) dont_use_ai=true ;;
+    *) ;;
+  esac
+done
+
+# Validate secrets file
+[ ! -r "$config_file" ] && handle_error "Cannot open secrets file"
+! grep -qP "^\s*recycle_day_[^:]+:\s+\S+" "$config_file" && handle_error "No recycle_day secrets in secrets file"
+
+# Set a variable, cleaning up spaces and quotes
+setvar() {
+  local var=$1
+  var=${var# }  # Trim space
+  var=${var% }  # Trim space
+  var=${var#\"}  # Trim quote
+  var=${var%\"}  # Trim quote
+  var=${var#\'}  # Trim quote
+  var=${var%\'}  # Trim quote
+  echo "$var"
+}
+
+# Get common settings
+for var in home_assistant_base_url recycle_url_main recycle_default_day ; do
+  tmpval=$(awk "/^$var ?:/{sub(/^[^:]+ *: */,\"\");gsub(/^\"|\"$/,\"\");print;exit}" "$config_file")
+  [[ $tmpval ]] && [[ ! "${!var}" ]] && declare "$var=$(setvar "$tmpval")"
+  unset tmpval
+done
+
+# Get general program settings from config_file
+for var in output_file log_file stats_file hass_api_key engine_order llm_prompt min_agree min_agree_scale debug debug_extra debug_exit verbose verbose_extra run_all create_guess guess_weight output_json date_fmt log_level log_name log_datefmt log_prefix log_write_tag log_write_name log_write_date log_write_prefix ; do
+  tmpval=$(awk "/^recycle_day_$var ?:/{sub(/^[^:]+ *: */,\"\");gsub(/^\"|\"$/,\"\");print;exit}" "$config_file")
+  [ $var = llm_prompt ] && llm_prompt=$(printf "%b" "$tmpval")
+  [[ $tmpval ]] && [[ ! "${!var}" ]] && declare "$var=$(setvar "$tmpval")"
+  unset tmpval
+done
+
+# Validate output file
+rp=$(realpath "$output_file" 2> /dev/null)
+[[ ! $output_file =~ ^/dev/(null|stderr|stdout) ]] && [[ ( -e "$rp" && ! -w "$rp" ) || \
+   ( ! -e "$rp" && "$rp" && ! -w "${rp%/*}" ) ]] && handle_error "Cannot write to output file '$output_file'"
+if [[ ! -w "${rp%/*}" ]]; then
+  [[ ! $output_file =~ ^/dev/(null|stderr|stdout) ]] && log -t Warning "Cannot write to $output_file directory, cannot use tmpfile/tmpstats_file"
+  tmp_file=$output_file
+  tmpstats_file=$stats_file
+else
+  tmp_file="${rp%/*}"/$progname.XXXXXXXXXX
+  tmpstats_file="${rp%/*}"/$progname.XXXXXXXXXX
+fi
+
+# Check to see if Home Assistant is set to use AI for getting recycle_day
+[[ ! $hass_api_key ]] && handle_error "Cannot determine hass_api_key from $config_file"
+use_ai=$(curl -skSL -H "Authorization: Bearer $hass_api_key" $home_assistant_base_url/api/states/input_boolean.use_ai_for_recycle_day | jq -r '.state' 2>/dev/null)
+$dont_use_ai && use_ai=off
+
+if [ "${use_ai,,}" != "on" ]; then
+  use_ai=off
+  log -t WARNING "'Use AI for Recycle Day' is not 'on' in Home Assistant"
+  failures+=("Not using AI by Home Assistant config")
+fi
+
+# Validate logfile
+rp=$(realpath "$log_file" 2> /dev/null)
+[[ ! $log_file =~ ^/dev/(null|stderr|stdout) ]] && [[ ( -e "$rp" && ! -w "$rp" ) || \
+   ( ! -e "$rp" && "$rp" && ! -w "${rp%/*}" ) ]] && handle_error "Cannot write to logfile file '$log_file'"
+
+if [ "${use_ai,,}" = "on" ]; then
+  # Get program engine settings from config_file
+  for engine in ${supported_engines[@]}; do
+    for setting in ${engine_settings[@]}; do
+      tmpval=$(awk "/^recycle_day_${engine}_$setting ?:/{sub(/^[^:]+ *: */,\"\");gsub(/^\"|\"$/,\"\");print;exit}" "$config_file")
+      [ "$setting" = enabled ] && tmpval=${tmpval:-false}
+      [[ $tmpval ]] && declare "$engine[$setting]=$(setvar "$tmpval")"
+      unset tmpval
+    done
+  done
+fi
+
+# Get normal recycle day from Home Assistant
+normal_recycle_day=$(curl -skSL -H "Authorization: Bearer $hass_api_key" $home_assistant_base_url/api/states/input_select.recycle_day | jq -r '.state' 2>/dev/null)
+[[ ! $normal_recycle_day ]] && normal_recycle_day=$recycle_default_day
+day_answer=$normal_recycle_day
+
+# Settings that can be overwritten by command line arguments
+engine_order="${engine_order:-${supported_engines[@]}}"
+home_assistant_base_url="${home_assistant_base_url:-http://localhost:8123}"
+recycle_url_main="${recycle_url_main:-https://www.montgomerycountymd.gov/DEP/trash-recycling/index.html}"
+recycle_default_day="${recycle_default_day:-Friday}"
+min_agree=${min_agree:-2}
+min_agree_scale=${min_agree_scale:-10}
+debug="${debug:-false}"
+debug_extra="${debug_extra:-false}"
+debug_exit="${debug_exit:-false}"
+verbose="${verbose:-false}"
+verbose_extra="${verbose_extra:-false}"
+run_all="${run_all:-false}"
+create_guess="${create_guess:-true}"
+guess_weight="${guess_weight:-1}"
+output_json="${output_json:-false}"
+date_fmt="${date_fmt:-%Y-%m-%d %H:%M:%S.000}"
+log_level="${log_level:-INFO}"
+log_name="${log_name:-$progname}"
+log_datefmt="${log_datefmt:-$date_fmt}"
+log_write_tag="${log_write_tag:-true}"
+log_write_name="${log_write_name:-true}"
+log_write_date="${log_write_date:-true}"
+log_write_prefix="${log_write_prefix:-false}"
+chatgpt[url]="${chatgpt_url:-https://api.openai.com/v1/responses}"
+chatgpt[model]="${chatgpt_model:-gpt-5-mini}"
+chatgpt[match]="${chatgpt_match:-.output[0].content[0].text}"
+chatgpt[weight]=2.2
+claude[url]="${claude_url:-https://api.anthropic.com/v1/messages}"
+claude[model]="${claude_model:-claude-sonnet-4-20250514}"
+claude[max_tokens]="${claude_max_tokens:-100}"
+claude[match]="${claude_match:-.content[0].text}"
+claude[extra]="anthropic_version=${anthropic_version:-2023-06-01}|another_setting=a=1234%%PIPE%%5678|foobar=baz"
+claude[weight]=2.2
+gemini[url]="${gemini_url:-https://generativelanguage.googleapis.com/v1beta/models/%%MODEL%%:generateContent}"
+gemini[model]="${gemini_model:-gemini-3-flash-preview}"
+gemini[thinking_level]="${gemini_thinking_level:-low}"
+gemini[match]="${gemini_match:-.candidates[0].content.parts[0].text}"
+gemini[weight]=2.2
+github[url]="${github_url:-https://models.github.ai/inference/chat/completions}"
+github[model]="${github_model:-microsoft/Phi-4-mini-reasoning}"
+github[match]="${github_match:-.choices[0].message.content}"
+mistral[url]="${mistral_url:-https://api.mistral.ai/v1/conversations}"
+mistral[model]="${mistral_model:-mistral-medium-latest}"
+mistral[match]="${mistral_match:-.outputs[0].content}"
+mistral[weight]=2.2
+openrouter[url]="${openrouter_url:-https://openrouter.ai/api/v1/chat/completions}"
+openrouter[model]="${openrouter_model:-openai/gpt-5.2}"
+openrouter[match]="${openrouter_match:-.output[0].content[0].text}"
+manual[weight]=2
+[ -z "$llm_prompt" ] && llm_prompt='Consult a federal holiday calendar for 2026.
+If my recycling pickup day on {{ reference_date }} is during the same week as any federal holiday and the recycling pickup day is on or after the federal holiday during that week, my recycling pickup day will change and will be delayed by 1 day.  Will my recycling day be affected and by how many days?
+Return your answer in the following format (do not add any extra text or explanation):
+{
+  "date": "[INSERT_DATE]",
+  "is_affected": [true/false],
+  "delay_days": [number of days delayed, or 0 if not affected]
+}'
+
+# Define extra settings (for example: claude's anthropic_version)
+for engine in ${supported_engines[@]}; do
+  declare -n ref=$engine
+  oifs=$IFS
+  IFS='|'
+  for word in ${ref[extra]}; do
+    [[ ! $word =~ ^[A-Za-z0-9_]+=. ]] && handle_error "$word is not a valid extra setting"
+    key=${word%%=*}
+    value=${word#*=}
+    value=${value//%%PIPE%%/|}
+    ref[$key]=$value
+  done
+  IFS=$oifs
+  unset -n ref
+done
+
+# Parse command line options
+min_agree_set=false
+print_model_list=false
+OPTIND=1
+while getopts "$options" opt; do
+  case $opt in
+    :) case $OPTARG in
+         c|o|l) ;;
+             L) print_model_list=true ;;
+             *) handle_error -u "-$OPTARG requires an argument" ;;
+       esac ;;
+    c|o|l) ;;
+    s) case $OPTARG in -*) handle_error -u -- "-$opt requires an argument" ;; *) stats_file=$OPTARG ;; esac ;;
+    m) case $OPTARG in
+         -*) handle_error -u -- "-$opt requires an argument" ;;
+          *) [[ ! $OPTARG =~ ^[1-9][0-9]*$ ]] && handle_error -u "MIN_AGREE must be a positive number"
+             min_agree_set=true
+             min_agree=$OPTARG ;;
+       esac ;;
+    D) debug=true
+       debug_exit=true ;;
+    d) $debug && debug_extra=true
+       debug=true ;;
+    v) $verbose && verbose_extra=true
+       verbose=true ;;
+    A) run_all=true ;;
+    j) output_json=true ;;
+    J) output_json=false ;;
+    g) create_guess=true ;;
+    G) create_guess=false ;;
+    w) case $OPTARG in -*) handle_error -u -- "-$opt requires an argument" ;; *) guess_weight=$OPTARG ;; esac ;;
+    L) case $OPTARG in
+         -*) handle_error -wE -- "-$opt takes an unused argument" ; unset list_engine; print_model_list=true ; ((OPTIND--)) ;;
+          *) print_model_list=true ; list_engine=$OPTARG ;;
+       esac ;;
+    t) case $OPTARG in
+         -*) handle_error -u -- "-$opt requires an argument" ;;
+          *) if [[ $OPTARG =~ ^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$ ]]; then
+               today_date=$(date -d "$OPTARG" "+%Y-%m-%d")
+               [ $? != 0 ] && handle_error "Could not use date '$OPTARG'"
+             else
+               handle_error -u "Invalid date format ($OPTARG)"
+             fi
+             ;;
+       esac ;;
+    a) case $OPTARG in -*) handle_error -u -- "-$opt requires an argument" ;; *) answer=$OPTARG ;; esac ;;
+    Z) dont_use_ai=true ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND -1))
+
+# Validate stats file
+if [[ "$stats_file" ]]; then
+  rp=$(realpath "$stats_file" 2> /dev/null)
+  [[ $log_file != /dev/stdout ]] && [[ ( -e "$rp" && ! -w "$rp" ) || \
+     ( ! -e "$rp" && "$rp" && ! -w "${rp%/*}" ) ]] && handle_error "Cannot stats to output file '$stats_file'"
+fi
+
+# Validate Variables
+for var in min_agree_scale ; do
+  [[ ${!var} ]] || continue
+  ! [[ ${!var} =~ ^10*$ ]] && handle_error "$var must be powers of 10: 1,10,100,... (given: ${!var})"
+done
+
+# Validate float variables
+for var in guess_weight \
+           $(for v in ${supported_engines[@]};do echo $v[weight]; done); do
+  [[ ${!var} ]] || continue
+  ! [[ ${!var} =~ ^[0-9]+(\.[0-9]+)?$ ]] && handle_error "$var must be an float: 0.3,1.4,... (given: ${!var})"
+done
+
+# Validate integer variables
+for var in min_agree \
+           $(for v in ${supported_engines[@]};do echo $v[max_tokens]; done); do
+  [[ ${!var} ]] || continue
+  ! [[ ${!var} =~ ^[0-9]+$ ]] && handle_error "$var must be an integer (given: ${!var})"
+done
+
+# Validate boolean variables
+for var in debug debug_extra debug_exit verbose verbose_extra run_all \
+           create_guess output_json log_write_tag log_write_name log_write_date \
+           log_write_prefix create_model_list \
+           $(for v in ${supported_engines[@]};do echo $v[enabled]; done); do
+  [[ ${!var} ]] || continue
+  [ ${!var} = 1 ] && declare "$var=true"
+  [ ${!var} != true ] && declare "$var=false"
+done
+
+# Validate url variables
+for var in home_assistant_base_url recycle_url_main \
+           $(for v in ${supported_engines[@]};do echo $v[url]; done); do
+  [[ ${!var} ]] || continue
+  ! [[ ${!var} =~ ^https?:// ]] && handle_error "$var is not a valid URL (given: ${!var})"
+done
+
+# If printing debug info, don't print in log format
+$debug && log_write_tag=false log_write_name=false log_write_date=false log_write_prefix=true log_prefix="DEBUG:"
+
+# Print model list
+if $print_model_list; then
+  for engine in "${list_engine:-${supported_engines[@]}}"; do
+    if [ -z "$list_engine" ]; then
+      echo Models for $engine:
+      indent=(sed "s/^/    /")
+    else
+      indent=(cat)
+    fi
+    declare -n ref=$engine
+    echo ${ref[model]//\|/ } | fold -sw $columns | "${indent[@]}"
+  done
+  exit
+fi
+
+# Use to generate consistent answer_json data
+gen_answer_json() {
+  [ $# -lt 9 ] && return 1
+  local err=$8
+  local now=${11}
+  [[ -z "$now" ]] && now=$(date +%s)
+  local proctime=${10}
+  [[ -z "$proctime" ]] && proctime=$(( now - progstart ))
+  local failure_list="${failures[@]}"
+  if (( ${#failures[@]} > 1 )); then
+    # Make comma separated list
+    failure_list=$(printf "'%s', " "${failures[@]}" | sed 's/, $//')
+  fi
+
+  (( ${#failures[@]} > 0 )) && err=true
+
+  echo '{
+    "day": "'"$1"'",
+    "is_affected": '"$2"',
+    "num_days": '"$3"',
+    "agreements": '"$4"',
+    "min_agree": '"$5"',
+    "weighted_answer": '"$6"',
+    "run_count": '"$7"',
+    "error": '"$err"',
+    "error_msg": "'"${9:-$failure_list}"'",
+    "failure_count": '"${#failures[@]}"',
+    "failures": "'"$failure_list"'",
+    "process_time": '"$proctime"',
+    "last_updated": '"$now"'
+}'
+}
+
+gen_stats_file() {
+  [ -z "$stats_file" ] && return 1
+  local error=true
+  [ ${#answer_error_msg[@]} -eq 0 ] && error=false
+  local err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
+  echo '{
+    "program_status": "'"${1:-unknown}"'",
+    "stats": {
+        "engine_order": "'"$engine_order"'",
+        "current_engine": "'"${2:-unknown}"'",
+        "current_model": "'"${3:-unknown}"'",
+        "total_models": '"${model_count:-0}"',
+        "run_count": '"${run_count:-0}"',
+        "completed": "'"${responders[@]}"'",
+        "guess_day": "'"$guess_day"'",
+        "guess_weight": '"${guess_weight:-1}"',
+        "min_agree": '"${min_agree:-0}"',
+        "agreements": '"${agreements:-0}"',
+        "agreed_answer": "'"$answer_day"'",
+        "error": '"$error"',
+        "error_msg": "'"$err"'",
+        "last_updated": "'"$(date +%s)"'"
+    }
+}' > "$tmpstats_file"
+
+  # If tmpstats_file and stat file are not the same thing, move from tmp to statfile
+  if [ "$tmpstats_file" != "$stats_file" ]; then
+    $debug && log "Moving $tmpstats_file to $stats_file"
+    mv -f "$tmpstats_file" "$stats_file" > /dev/null 2>&1
+    [ $? != 0 ] && log "Could not write to $stats_file"
+  fi
+}
+gen_stats_file starting none none
+
+# Function to remove an variable from an array: delete_element array_name "value"
+delete_element() {
+  [ -z "$2" ] && return 1
+  declare -n ref=$1
+  local new_arr=()
+  for item in "${ref[@]}"; do
+    [ "$item" != "$2" ] && new_arr+=("$item")
+  done
+  ref=("${new_arr[@]}")
+}
+
+# Convert number to scaled version: 23.5 -> 2350 (scale = 100)
+upscale() {
+  local round=false
+  [ "$1" = -r ] && shift && round=true
+  ! $found && [ $min_agree_scale = 1 ] && [[ "$1" =~ ^[0-9][0-9.]*$ ]] && echo "$1" && return 0
+  [[ ! "$1" =~ ^[0-9][0-9.]*$ ]] && echo "$1" && return 1
+  local scale_power=$(( ${#min_agree_scale} - 1))
+  local pad=$(printf '%0*d' $scale_power 0)
+  local int="${1%.*}"
+  local frac="${1#*.}"
+  [ $frac = $1 ] && frac=0  # Handle the case where there's no fraction
+  [ ${frac:-0} -ge 5 ] && [ $min_agree_scale = 1 ] && int=$((int + 1))
+  frac="${frac}$pad"
+  frac="${frac:0:$scale_power}"
+  echo "$(( 10#$int * 10#$min_agree_scale + 10#${frac:-0} ))"
+}
+
+# Convert number to unscaled version (may be a fraction): 2350 -> 23.5 (scale=100)
+downscale() {
+  [ $min_agree_scale = 1 ] && [[ "$1" =~ ^[0-9][0-9.]*$ ]] && echo "$1" && return 0
+  [[ ! "$1" =~ ^[0-9]+$ ]] && echo "$1" && return 1
+  local int=$(( $1 / min_agree_scale ))
+  local frac=$(( $1 % min_agree_scale ))
+  frac="${frac%%+(0)}"
+  echo "${int}${frac:+.$frac}"
+}
+
+# Function to check if the minimum number of LLMs agree on their answer
+check_agreement() {
+  local responder response_error engine v tmpday engine list
+  local day_max=0 aff_max=0 num_max=0 day_add=0 aff_add=0 num_add=0
+  local answer="" weighted_answer=false
+  local scaled_min_agree=$(upscale $min_agree)
+  declare -A day_count aff_count num_count
+  gen_stats_file checking none none
+
+  [[ $guess_day ]] && $debug && log "Applying guess weight: $guess_weight"
+  for responder in ${responders[@]}; do
+    engine="${response_engine[$responder]:-${responder%-*}}"
+    declare -n ref=$engine
+
+    day_add=0 aff_add=0 num_add=0
+    if [[ $guess_day ]]; then
+      tmpday=${response_day[$responder]}
+      tmpaff=${response_aff[$responder]}
+      tmpnum=${response_days[$responder]}
+      [ ${tmpday:-none} = ${guess_day:-notset} ] && [ -n "$guess_weight" ] && day_add=$(upscale $guess_weight)
+      [ ${tmpaff:-none} = ${guess_aff:-notset} ] && [ -n "$guess_weight" ] && aff_add=$(upscale $guess_weight)
+      [ ${tmpnum:-none} = ${guess_num:-notset} ] && [ -n "$guess_weight" ] && num_add=$(upscale $guess_weight)
+      [[ $num_add -gt 0 || ${ref[weight]} != 1 ]] && weighted_answer=true
+      response_weight[$responder]=$(downscale $(($(upscale ${ref[weight]:-1}) + ${num_add:-0} )))
+    fi
+    [[ ${tmpday,,} =~ ^$wday_regex$ ]] && \
+      day_count[$tmpday]=$(( ${day_count[$tmpday]:-0} + $(upscale ${ref[weight]:-1}) + ${day_add:-0} ))
+    [[ ${tmpaff,,} =~ ^(true|1|false|0)$ ]] && \
+      aff_count[$tmpaff]=$(( ${aff_count[$tmpaff]:-0} + $(upscale ${ref[weight]:-1}) + ${aff_add:-0} ))
+    [[ $tmpnum =~ ^[0-9]$ ]] && \
+      num_count[$tmpnum]=$(( ${num_count[$tmpnum]:-0} + $(upscale ${ref[weight]:-1}) + ${num_add:-0} ))
+  done
+
+  for v in "${!day_count[@]}"; do (( day_count[$v] > day_max )) && day_max=${day_count[$v]} && day_answer=$v; done
+  for v in "${!aff_count[@]}"; do (( aff_count[$v] > aff_max )) && aff_max=${aff_count[$v]} && aff_answer=$v; done
+  for v in "${!num_count[@]}"; do (( num_count[$v] > num_max )) && num_max=${num_count[$v]} && num_answer=$v; done
+
+  $debug && log "Agreements found: day:$(downscale $day_max) aff:$(downscale $aff_max) num:$(downscale $num_max)"
+  unset list
+  (( $day_max < $scaled_min_agree )) && list="$list Day"
+  (( $aff_max < $scaled_min_agree )) && list="$list Affected"
+  (( $num_max < $scaled_min_agree )) && list="$list Num Days"
+  $debug && [[ $list ]] && log "Not enough agreements for:$list"
+
+  agreements=$day_max
+  if (( $day_max >= $scaled_min_agree && $aff_max >= $scaled_min_agree && $num_max >= $scaled_min_agree )) &&
+              [[ $day_answer && $aff_answer && $num_answer ]]; then
+    [ $aff_max -lt $agreements ] && agreements=$aff_max
+    [ $num_max -lt $agreements ] && agreements=$num_max
+    [ $agreements -ge $scaled_min_agree ] && delete_element answer_error_msg "Not enough agreements"
+    [ ${#answer_error_msg[@]} -eq 0 ] && answer_error=false
+    agreements=$(downscale $agreements)
+
+    local err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
+    local json="{\"day\":\"$day_answer\",\"is_affected\":$aff_answer,\"num_days\":$num_answer,\"agreements\":$agreements,\"min_agree\":$min_agree,\"run_count\":$run_count,\"error\":$answer_error,\"error_msg\":\"$err\"}"
+    local now=$(date +%s)
+    # Prepare answer_json
+    answer_day=$day_answer
+    json=$(gen_answer_json "$day_answer" "$aff_answer" "$num_answer" \
+        "${agreements:-0}" "$min_agree" "$weighted_answer" "${run_count:-0}" \
+        "$answer_error" "$err" "$((now - progstart))" "$now")
+
+    # Test validity of answer json
+    local out=$(jq -nc --argjson a "$json" '$a' 2> /dev/null)
+    local ret=$?
+    $debug && log "Agreement Check Answer JSON: $out"
+    if [ $ret != 0 ]; then
+      handle_error "Invalid JSON in agreement check ($json)"
+      print_output 1
+      # exit
+    fi
+
+    # Save answer_json
+    answer_json="$out"
+  else
+    agreements=$(downscale $agreements)
+  fi
+  $verbose && log "Agreements: $agreements of $min_agree ($run_count runs): $day_answer, $aff_answer, $num_answer"
+}
+
+if [ "${use_ai,,}" = "on" ]; then
+  # Get min_agree ratio as a baseline
+  if ! $min_agree_set; then
+    # Get original model count
+    min_agree_orig=$min_agree
+    model_count_orig=0
+    for engine in $engine_order; do
+      mycount=0
+      declare -n ref=$engine
+      if [ -n "${ref[model]}" ]; then
+        oifs=$IFS
+        IFS='|'
+        for word in ${ref[model]}; do
+          ((mycount++))
+        done
+        IFS=$oifs
+      fi
+      [ $mycount -eq 0 ] && mycount=1
+      unset -n ref
+      model_count_orig=$((model_count_orig + mycount))
+    done
+    min_agree_ratio=$((min_agree * 100 / $model_count_orig))
+  fi
+
+  # Parse command line for engines and models
+  engines=()
+  models=()
+  adjust_min_agree=false
+  while [ -n "$1" ]; do
+    if [[ " ${supported_engines[*]} " == *" $1 "* ]]; then
+      engines+=("$1")
+    else
+      [ ${#engines[@]} -eq 0 ] && handle_error -u "Engines must precede models on command line"
+      models+=("$1")
+    fi
+    shift
+  done
+  if [ ${#engines[@]} -gt 0 ]; then
+    adjust_min_agree=true
+    engine_order="${engines[@]}"
+  fi
+  if [ ${#engines[@]} -gt 1 ]; then
+    if [ ${#models[@]} -gt 0 ]; then
+       for i in $(seq 0 $((${#engines[@]} - 1))); do
+         if [ -n "${models[$i]}" ]; then
+           declare -n ref=${engines[i]}
+           ref[model]="${models[$i]}"
+           unset -n ref
+         fi
+       done
+    fi
+  elif [ ${#engines[@]} -eq 1 ]; then
+    if [ ${#models[@]} -eq 1 ]; then
+      adjust_min_agree=false
+      min_agree=1
+      model_count=1
+      declare -n ref=${engines[0]}
+      ref[model]="${models[0]}"
+      # [[ ! ${ref[model]} =~ "|" ]] && min_agree=1
+      unset -n ref
+    else
+      if [ ${#models[@]} -ne 0 ]; then
+        handle_error -un "Error: Engine/Model mismatch. The same number of engines and models must be passed."
+      fi
+    fi
+  fi
+
+  # Count the number of models defined from the config file for the engines
+  # Disable all engines before enabling the ones in engine_order
+  for engine in ${supported_engines[@]}; do
+    declare -n ref=$engine
+    ref[enabled]=false
+  done
+  model_count=0
+  for engine in $engine_order; do
+    declare -n ref=$engine
+    ref[enabled]=true
+    for model in ${ref[model]//|/ }; do
+      ((model_count++))
+    done
+  done
+
+  # Adjust min_agree based on passed engines and models
+  if $adjust_min_agree && ! $min_agree_set; then
+    model_count=0
+    for engine in $engine_order; do
+      declare -n ref=$engine
+      if [ -n "${ref[model]}" ]; then
+        mycount=0
+        oifs=$IFS
+        IFS='|'
+        for word in ${ref[model]}; do
+          ((mycount++))
+        done
+        IFS=$oifs
+      fi
+      [ $mycount -eq 0 ] && mycount=1
+      unset -n ref
+      model_count=$((model_count + mycount))
+    done
+    min_agree=$((model_count * min_agree_ratio / 100))
+    [ $min_agree_ratio != 100 ] && [ $model_count = $min_agree ] && min_agree=$((min_agree-1))
+    [ $min_agree = 0 ] && min_agree=1
+    [ $min_agree -eq 1 ] && [ $min_agree_orig -gt 1 ] && [ $model_count -gt 1 ] && min_agree=2
+  fi
+fi
+
+# Set reference day to the normal recycle day for this week (or of the passed week)
+epoch=$(date ${today_date:+-d $today_date} +%s)
+dow=$(date ${today_date:+-d $today_date} +%w)
+woy=$(date ${today_date:+-d $today_date} +%-U)
+reference_date=$(date -d "@$(( epoch + (5 - dow) * 86400 ))" +"%A, %B %-d, %Y")
+reference_ymd=$(date -d "@$(( epoch + (5 - dow) * 86400 ))" +"%Y-%m-%d")
+! $debug && $verbose && log "Reference date: $reference_date ($reference_ymd)"
+! $debug && $verbose && log "Normal recycle day: $normal_recycle_day"
+
+# Determine the URL for the county's alert text on the recycle URL
+xmllint=false
+command -v xmllint &> /dev/null && xmllint=true
+county_alert_url_out=$(mktemp)
+tmpfiles+=("$county_alert_url_out")
+county_alert_url_code=$(curl -sLo "$county_alert_url_out" -w "%{http_code}\n" "$recycle_url_main")
+if [[ "$county_alert_url_code" == 2* && "$county_alert_url_out" =~ https?:// ]]; then
+  if $xmllint; then
+    county_alert_url=$(xmllint --html --xpath 'string(//div[@id="alert"]/following-sibling::script)' \
+      "$county_alert_url_out" 2>/dev/null | \
+      sed -n 's/.*load("\([^"]*\)".*/\1/p')
+  else
+    county_alert_url=$(sed -n 's/.*$("#alert").load("\([^"]*\)".*/\1/p' "$county_alert_url_out")
+  fi
+  ! $debug && $verbose && log "County Alert URL: $county_alert_url"
+
+  # Determine the content of the county's alert text
+  county_alert_text_out=$(mktemp)
+  tmpfiles+=("$county_alert_text_out")
+  county_alert_text_code=$(curl -sLo "$county_alert_text_out" -w "%{http_code}\n" "$county_alert_url")
+  if [[ "$county_alert_text_code" == 2* && -n "$county_alert_text_out" ]]; then
+    if $xmllint; then
+      county_alert_text=$(xmllint --html --xpath 'string(//body)' "$county_alert_text_out" 2> /dev/null | \
+        sed -r 's/^\s*//;/^\s*$/d;s/[[:space:]]*$//')
+    else
+      county_alert_text=$(sed -r \
+        ':a;N;$!ba;s/\n/ /g;s/(&nbsp;|\r)/ /g;s/<!--.*-->//g;s/ +/ /g;s/<[^>]*>//g;s/^ +//;s/[[:space:]]*$//' \
+        "$county_alert_text_out")
+    fi
+    if $verbose_extra; then
+      ! $debug && log "County Notice:"
+      ! $debug && log "$(echo "    $county_alert_text" | fold -sw $((columns - 4)) | sed "2,\$s/^/$(printf '%*s' 4)/")"
+    elif $verbose; then
+      d=$(date +"$log_datefmt")
+      cols=$((${#d} + 1 + ${#log_tag} + 1 + ${#log_name} + 2 + 1))
+      width=$((columns - $cols - 9))  # Number of columns - width of "County Notice: " - padding
+      unset dots
+      county_notice="$(echo "County Notice: \"$(echo "$county_alert_text" | paste -sd ' ')" | fold -sw $width | head -n1)"
+      [ ${#county_alert_text} -gt $width ] && dots=…
+      ! $debug && log "$(printf "%s%s\"\n" "$county_notice" "$dots")"
+    fi
+  else
+    failures+=("Could not download county alert url")
+    ! $debug && log "County Notice: ERROR"
+  fi
+else
+  failures+=("Count not download county alert url" "Coult not download county alert text")
+  ! $debug && $verbose && log "County Alert URL: ERROR"
+fi
+
+
+# Prompt LLM Prompt info in verbose mode
+if [ "${use_ai,,}" = "on" ]; then
+  if $verbose_extra; then
+    ! $debug && log "LLM User Message:"
+    ! $debug && log "$(echo "    $llm_prompt" | fold -sw $((columns - 4)) | sed "2,\$s/^/$(printf '%*s' 4)/")"
+  elif $verbose; then
+    d=$(date +"$log_datefmt")
+    cols=$((${#d} + 1 + ${#log_tag} + 1 + ${#log_name} + 2 + 1))
+    width=$((columns - $cols - 9))  # Number of columns - width of "County Notice: " - padding
+    unset dots
+    usermsg_text="$(echo "LLM User Message: \"$(echo "$llm_prompt" | paste -sd ' ')" | fold -sw $width | head -n1)"
+    [ ${#llm_prompt} -gt $width ] && dots=…
+    ! $debug && log "$(printf "%s%s\"\n" "$usermsg_text" "$dots")"
+  fi
+
+  # Apply substitutions to llm_prompt now that they have been loaded
+  if [[ -n "$llm_prompt" ]]; then
+    if [[ -n "$county_alert_text" ]]; then
+      llm_prompt="${llm_prompt//\{\{ county_alert_text \}\}/$county_alert_text}"
+    else
+      llm_prompt="${llm_prompt//\{\{ county_alert_text \}\}/Not county alert information available.}"
+    fi
+    llm_prompt="${llm_prompt//\{\{ reference_date \}\}/$reference_date}"
+  fi
+
+  # Generate guess date
+  if $create_guess; then
+    found_dates=()
+    # If the words holiday or slide appear near a date in any sentence of the county
+    # alert text, grab the date
+    if [[ -n "$county_alert_text" ]]; then
+      while IFS= read -r sentence; do
+        if echo "${sentence,,}" | grep -iqE '\b(holiday|slide)\b' && \
+              echo "${sentence,,}" | grep -qE "\b($wday_regex, $mon_regex $day_regex|$date_regex)\b"; then
+          found_dates+=("$(echo "${sentence,,}" | grep -oE "\b($wday_regex, $mon_regex $day_regex|$date_regex)\b"|head -n1)")
+        fi
+      done < <(echo "$county_alert_text" | paste -sd ' ' | sed 's/[.!?]\s*/\n/g')
+    fi
+    # If a date was found, see if it happens this week, if so, make guess normal day + 1
+    guess_day=$normal_recycle_day
+    guess_aff=false
+    guess_num=0
+    for found_date in "${found_dates[@]}"; do
+      found_epoch=$(date -d "$found_date" "+%s" 2> /dev/null)
+      found_woy=$(date -d@${found_epoch:-1} +%-U 2> /dev/null)
+      found_dow=${days[$normal_recycle_day]}
+
+      # If the found day's week of the year matches the week of the year, use the guess
+      if [ "${found_woy:-100}" = "${woy:-200}" ]; then
+        guess_dow=$((${days[$normal_recycle_day]}+1))
+        [ $guess_dow = 7 ] && guess_dow=0
+        guess_day=${day_list[$guess_dow]}
+        guess_aff=true
+        guess_num=1
+      fi
+    done
+  else
+    unset guess_day guess_num guess_aff
+  fi
+  $verbose && log "Guess day will be used: $guess_day with $guess_weight weight"
+fi
+
+# Initial fake answer settings
+if [[ $answer ]]; then
+  manual[enabled]=true
+  manual[model]="answer1|answer2"
+  engine_order="manual $engine_order"
+  model_count=$((model_count + 2))
+
+  # If -m was not specified, set min_agree to 2 to just do fake data
+  ! $min_agree_set && min_agree=2
+  [ $min_agree = 2 ] && manual[weight]=1
+fi
+
+# If debug mode, print variables
+if $debug; then
+  log "Settings: "
+  for var in config_file home_assistant_base_url hass_api_key use_ai recycle_url_main county_alert_url recycle_default_day normal_recycle_day today_date reference_date reference_ymd min_agree min_agree_ratio model_count llm_prompt engine_order ; do
+    [ $var = llm_prompt ] && log "$(printf ' - %s = "%s"\n' "$var" "$(echo "${!var}" | fold -sw $((columns - ${#var} - 3))|sed "2,\$s/^/$(printf '%*s' $((${#var} - 3)))/")")"
+    ! [ $var = llm_prompt ] && log "$(printf ' - %s = "%s"\n' "$var" "${!var}")"
+  done
+  log " - guess_day = \"${guess_day:-No guess}\""
+  list=$engine_order
+  $debug_extra && list="${manual[enabled]:+manual }${supported_engines[@]}"
+  for engine in $list; do
+    for setting in ${engine_settings[@]}; do
+      declare -n ref=$engine
+      log "$(printf ' - %s = "%s"\n' "$engine[$setting]" "${ref[$setting]}")"
+      unset -n ref
+    done
+  done
+  $debug_exit && exit
+fi
+
+# Function to run the LLM engine
+run_engine() {
+  [ "$1" = manual ] && continue
+  local engine=${1:-localai}
+  [[ ! " ${supported_engines[*]} " == *" $engine "* ]] && return
+  ! $run_all && [ $(upscale ${agreements:-0}) -ge $(upscale $min_agree) ] && { $verbose&&log "[$engine] Answer already set agreed upon";true; } && return
+  declare -n ref=$engine
+
+  ! ${ref[enabled]} && { $verbose&&echo "$engine disabled">$log_file;true; } && return
+  [[ ! "${ref[url]}" ]] && { $verbose&&echo "$engine url not set">$log_file;true; } && return
+  [[ $engine =~ ^(localai|ollama|chatgpt|claude|gemini|openrouter)$ && ! "${ref[model]}" ]] && return
+  [[ $engine =~ ^(chatgpt|claude|gemini|mistral|openrouter)$ && ! "${ref[api_key]}" ]] && return
+  [[ $engine =~ ^(mistral)$ && ! "${ref[agent_id]}" && ! "${ref[model]}" ]] && return
+  [ -n "${ref[model]}" ] && ref[url]="${ref[url]//%%MODEL%%/${ref[model]}}"
+
+  local api_header_switch api_header add_header_switch add_header message_content is_affected delay_days day
+  if [ -n "${ref[api_key]}" ]; then
+    api_header_switch="-H "
+    case "$engine" in
+      claude)
+        api_header="x-api-key: ${ref[api_key]}"
+        add_header_switch="-H "
+        add_header="anthropic-version: ${ref[anthropic_version]}"
+        ;;
+      gemini)
+        api_header="x-goog-api-key: ${ref[api_key]}"
+        ;;
+      *) api_header="Authorization: Bearer ${ref[api_key]}" ;;
+    esac
+  fi
+
+  # Actually run against model
+  oifs=$IFS
+  IFS='|'
+  [ -n "${ref[agent_id]}" ] && unset ref[model]
+  models="${ref[model]}"
+  $verbose && log "Starting engine [$engine] with models: ${models:+${models//|/ }}${ref[agent_id]:+using agent_id}"
+  local error_msg error_state data starttime endtime curl_output tmpanswer
+  local error_answer='{ "is_affected":false,"delay_days":0,"day":"'$normal_recycle_day'"}'
+  local model_string
+  for m in ${models:-using agent_id}; do
+    unset data starttime endtime curl_output tmpanswer model_string
+    model_string=${m/using agent_id/agent_id}
+    model=$model_string
+    gen_stats_file running $engine $model
+
+    tag="${engine}_$model_string"
+
+    responders+=("$tag")
+    response_engine["$tag"]=$engine
+    response_model["$tag"]=$model_string
+    response_err["$tag"]=false
+    response_errmsg["$tag"]=""
+
+    error_msg="" error_state=false
+    IFS=$oifs
+    [ -n "${ref[agent_id]}" ] && unset model
+    $verbose && log "Using $engine LLM${model:+ with $model}${ref[agent_id]:+ with agent id}"
+    case "$engine" in
+      chatgpt)
+        message_content='{
+          "input": $llm_prompt
+        }'
+        ;;
+      claude|github|openrouter)
+        message_content='{
+          "messages": [
+            {
+              "role": "user",
+              "content": $llm_prompt
+            }
+          ]
+        }'
+        ;;
+      gemini)
+        message_content='{
+          "contents": [
+            {
+              "parts": [
+                {
+                  "text": $llm_prompt
+                }
+              ]
+            }
+          ]
+        }'
+        # Determine if model supports thinking (and is gemini-3)
+        if [[ $model =~ ^gemini-[3-9] ]]; then
+          t="${ref[url]%:*Content}"
+          thinking=$(curl -s "$t?key=${ref[api_key]}" | jq -r '.thinking' 2>/dev/null)
+          [ "$thinking" != true ] && thinking=false
+
+          $thinking && [ -n "${ref[thinking_level]}" ] && \
+          message_content=$(jq -ns --argjson m \
+            "$(jq -n --arg llm_prompt "$llm_prompt" "$message_content")" \
+            --argjson a '{
+              "generationConfig": {
+                "thinkingConfig": {
+                  "thinkingLevel": "'${ref[thinking_level]:-low}'"
+                }
+              }
+            }' '$m * $a')
+        fi
+        ;;
+      localai)
+        message_content='{
+          "messages": [
+            {
+              "role": "user",
+              "reasoning": "'${ref[reasoning_level]:-low}'",
+              "content": $llm_prompt
+            }
+          ]
+        }'
+        ;;
+      mistral)
+        message_content='{
+          "inputs": [
+            {
+              "role": "user",
+              "content": $llm_prompt
+            }
+          ]
+        }'
+        if [ -n "${ref[agent_id]}" ]; then
+          message_content=$(jq -ns --argjson m \
+            "$(jq -n --arg llm_prompt "$llm_prompt" "$message_content")" \
+            --argjson a '{"agent_id": "'${ref[agent_id]}'"}' '$m * $a')
+        fi
+        ;;
+      ollama)
+        message_content='{
+          "stream": false,
+          "prompt": $llm_prompt
+        }'
+        ;;
+    esac
+    [ -z "$message_content" ] && handle_error "Could not generate message_content for LLM"
+    message_content=$(jq -n --arg llm_prompt "$llm_prompt" "$message_content")
+
+    data=$(jq -n \
+      --arg max_tokens "${ref[max_tokens]}" \
+      --arg prompt "${ref[prompt]}" \
+      --arg model "$model" \
+      'if $model != "" then . + {model: $model} else . end
+      | if $max_tokens != "" then . + {max_tokens: ($max_tokens|tonumber)} else . end
+      | if $prompt != "" then . + {prompt: $prompt} else . end
+      ')
+    [[ "$data" == "null" ]] && data="{}"
+    data=$(jq -sn --argjson a "$data" --argjson b "$message_content" '$a * $b')
+    response_start["$tag"]=$(date +%s)
+    $debug && set -x
+    curl_output=$(curl -s "${ref[url]}" \
+      $api_header_switch${api_header:+"$api_header"} $add_header_switch${add_header:+"$add_header"} \
+      -H "Content-Type: application/json" -d "$data")
+    $debug && set +x
+    response_end["$tag"]=$(date +%s)
+    if [ -z "$curl_output" ]; then
+      response_day["$tag"]=""
+      response_aff["$tag"]=${is_affected:-false}
+      response_days["$tag"]=${delay_days:--1}
+      response_err["$tag"]=true
+      response_errmsg["$tag"]="Empty API output"
+      [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) error: ${response_errmsg[$tag]}"
+      continue
+    else
+      $debug && log "$engine ($model_string) output: $curl_output"
+      match_output=$(jq -r "${ref[match]}" <<< "$curl_output" 2> /dev/null)
+      ret=$?
+      match_output="${match_output#*</think>}"
+      if [ $ret != 0 ] || [ -z "$match_output" ] || [ "$match_output" = null ]; then
+        response_day["$tag"]=""
+        response_aff["$tag"]=""
+        response_days["$tag"]=""
+        response_err["$tag"]=true
+        response_errmsg["$tag"]="Unexpected JSON in curl output"
+        [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) error: $curl_output"
+        continue
+      else
+        $debug && log "$engine ($model_string) post-jq-engine-match output: $match_output"
+      fi
+    fi
+    tmpanswer=$match_output
+    tmpanswer=$(echo "$tmpanswer" | sed -n '/{/,$p' | \
+      sed -r 's/\[([0-9]),\s*[0-9]\]/\1/g;/^```/d;s/[][]//g' | awk 'BEGIN{found=0}found==0{p=p $0"\n"}/<\|(assistant|message)\|>/{found=1;next}found==1{print}END{if(found==0)printf"%s",p}')
+    $debug && log "$engine ($model_string) post-sed/awk-tweak: $tmpanswer"
+    tmpanswer=$(jq -Mr '"is_affected=\(.is_affected) delay_days=\(.delay_days)"' <<< "$tmpanswer" 2> /dev/null)
+    $debug && log "$engine ($model_string) post-jq output: $tmpanswer"
+    ((run_count++))
+    unset is_affected delay_days day
+    if [ -z "$tmpanswer" ]; then
+        response_day["$tag"]=""
+        response_aff["$tag"]=""
+        response_days["$tag"]=""
+        response_err["$tag"]=true
+        response_errmsg["$tag"]="Bad json output from curl"
+        [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) affected/days extraction error: $curl_output"
+        continue
+    fi
+    if [[ $tmpanswer =~ ^is_affected=(true|false)" "delay_days=[0-6]$ ]]; then
+      eval "$tmpanswer"
+      [[ $is_affected == true && $delay_days == 0 ]] && delay_days=1
+      day=$(date -d @$(( $(date -d $reference_ymd +%s) + $delay_days * 86400 )) +%A)
+      # Fix is_affected if wrong, but everything else matches
+      [ $day = $normal_recycle_day ] && [ $delay_days = 0 ] && [ $is_affected = true ] && is_affected=false
+    else
+      response_day["$tag"]=""
+      response_aff["$tag"]=""
+      response_days["$tag"]=""
+      response_err["$tag"]=true
+      response_errmsg["$tag"]="Invalid json output from curl"
+      [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) final answer parsing error: $curl_output"
+      continue
+    fi
+
+    if [[ $day ]]; then
+      $verbose && log "$engine ($model_string) answer: 'day:$day|aff:$is_affected|days:$delay_days|error:$error_state'"
+      response_day["$tag"]="$day"
+      response_aff["$tag"]=${is_affected:-false}
+      response_days["$tag"]=${delay_days:--1}
+      response_err["$tag"]=false
+      response_errmsg["$tag"]=""
+      check_agreement
+      ! $run_all && [ $(upscale $agreements) -ge $(upscale $min_agree) ] && break
+      continue
+    fi
+  done
+  IFS=$oifs
+  unset -n ref
+}
+
+# print output and exit program
+print_output() {
+  local engine
+  local responses_json="[]"
+  gen_stats_file generating none none
+
+  if [ "${use_ai,,}" != "on" ]; then
+    log -t DEBUG "Generating output when AI is not used"
+    # answer is_affected num_days agreements min_agree weighted_answer run_count error error_message...
+    answer_json=$(gen_answer_json "$day_answer" false 0 0 0 false 0 false "" \
+      "$((now - progstart))" "$now")
+  fi
+
+  # Prepare answer to answer information
+  if [ -z "$answer_day" ]; then
+    answer_day=$(jq -nr --argjson a "$answer_json" '$a | .day' 2> /dev/null)
+    [ $? != 0 ] && log -t DEBUG "jq error getting day from answer_json"
+  fi
+  if ! [[ "${answer_day,,}" =~ ^$wday_regex$ ]]; then
+    answer_error=true
+    answer_error_msg+=("Invalid answer day (${answer_day:-no answer}), using default day")
+    answer_day=$normal_recycle_day
+  fi
+
+  # Add error and errormsg to output json
+  local err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
+  [ ${#answer_error_msg[@]} -eq 0 ] && answer_error=false
+  answer_json=$(jq -nc --argjson a "$answer_json" --arg e "$answer_error" --arg m "$err" '$a | .error = ($e=="true") | .error_msg = $m' 2> /dev/null)
+  [ $? != 0 ] && log -t DEBUG "jq error adding error and error_msg answer_json"
+
+  if [[ -z "$answer_json" ]]; then
+    log -t DEBUG "Generating error answer using '$day_answer'"
+    failures+=("Could not generate JSON from answer")
+    answer_json=$(gen_answer_json "$day_answer" false 0 0 0 false 0 false "" \
+      "$((now - progstart))" "$now")
+  fi
+
+  # Build json for each of the responses
+  if $output_json; then
+    responses_json="[]"
+    for responder in ${responders[@]}; do
+      unset err
+      [ ${response_err[$responder]:-true} = true ] && err=${response_errmsg[$responder]:-No data available for $responder}
+      json='  {
+        "engine": "'"${response_engine[$responder]:-${responder%-*}}"'",
+        "model": "'"${response_model[$responder]:-"${responder#*-}"}"'",
+        "day": "'"${response_day[$responder]}"'",
+        "is_affected": '"${response_aff[$responder]:-false}"',
+        "num_days": '"${response_days[$responder]:--1}"',
+        "answer_weight": '"${response_weight[$responder]:-1}"',
+        "process_start": '"${response_start[$responder]:-0}"',
+        "process_end": '"${response_end[$responder]:-0}"',
+        "process_seconds": '"$((${response_end[$responder]:-0} - ${response_start[$responder]:-0}))"',
+        "error": '"${response_err[$responder]:-true}"',
+        "error_msg": "'"$err"'"
+      }'
+      responses_json=$(jq -nr --argjson r "$responses_json" --argjson j "$json" '$r + [$j]')
+      [ $? != 0 ] && log -t DEBUG "jq error building responses_json for $responder: $json"
+    done
+
+    # Add process_time and last_updated to output
+    progend=$(date +%s)
+    answer_json=$(jq -nc --argjson a "$answer_json" \
+      --arg t $((progend - progstart)) --arg e "$progend" \
+      '$a + { "process_time": $t | tonumber } + { "last_updated": $e | tonumber }')
+    [ $? != 0 ] && log -t DEBUG "jq error adding process_time and last_updated to answer_json"
+
+    # Print output
+    jq -nr --arg d "$answer_day" --argjson a "$answer_json" --argjson r "$responses_json" \
+      '{ "day": $d, "answer": $a, "responses": $r}' > "$tmp_file"
+    [ $? != 0 ] && log -t DEBUG "jq error building output from answer_json and responses_json"
+  else
+    ${answer_error:-true} && handle_error -E "$err"
+    if $verbose; then
+      eval printf "'%-16s: %s\n'" $(jq -Mnr --argjson a "$answer_json" '$a |
+        "\"Day\" \"\(.day // "unknown")\" " +
+        "\"Is Affected\" \"\(.is_affected)\" " +
+        "\"Delay Days\" \"\(.num_days)\" " +
+        "\"Agreements\" \"\(.agreements)\" " +
+        "\"Min Agree\" \"\(.min_agree)\" " +
+        "\"Weighted Answer\" \"\(.weighted_answer)\" " +
+        "\"Run Count\" \"\(.run_count)\" " +
+        "\"Error\" \"\(.error)\" " +
+        "\"Error Msg\" \"\(if .error_msg == "" or .error_msg == null then "-" else .error_msg end)\" " +
+        "\"Process Time\" \"\(.process_time)\" "
+      ') > "$tmp_file"
+    else
+      echo $answer_day > "$tmp_file"
+    fi
+  fi
+
+  # If tmpfile and output file are not the same thing, move from tmp to output
+  if [ "$tmp_file" != "$output_file" ]; then
+    $debug && log "Moving $tmp_file to $output_file"
+    mv -f "$tmp_file" "$output_file" > /dev/null 2>&1
+    [ $? != 0 ] && log "Could not write to $output_file"
+  fi
+  gen_stats_file not_running - -
+  exit $1
+}
+
+if [ "${use_ai,,}" = "on" ]; then
+  $verbose && log "Running engines in this order: $engine_order"
+  $verbose && log "Checking $model_count (need $min_agree to agree)"
+fi
+
+# Set up fake answer information for testing
+if ${manual[enabled]:-false}; then
+  # Calculate the number of days difference between given answer and normal day
+  if ((${days[$answer]} < ${days[$normal_recycle_day]})); then
+    num_days=$((7+${days[$answer]}-${days[$normal_recycle_day]}))
+  else
+    num_days=$((${days[$answer]}-${days[$normal_recycle_day]}))
+  fi
+  [ $num_days != 0 ] && aff=true
+
+  $verbose && log "Starting engine [manual] with models: ${manual[model]//|/ }"
+
+  failures+=("Using manual data")
+
+  gen_stats_file running manual answer1
+  responders+=("manual_answer1")
+  response_engine["manual_answer1"]=manual
+  response_model["manual_answer1"]=answer1
+  response_start["manual_answer1"]=$(date +%s)
+  response_end["manual_answer1"]=$(date +%s)
+  response_day["manual_answer1"]=$answer
+  response_aff["manual_answer1"]=${aff:-false}
+  response_days["manual_answer1"]=$num_days
+  response_err["manual_answer1"]=false
+  response_errmsg["manual_answer1"]=""
+  ((run_count++))
+  check_agreement
+
+  gen_stats_file running manual answer2
+  responders+=("manual_answer2")
+  response_engine["manual_answer2"]=manual
+  response_model["manual_answer2"]=answer2
+  response_start["manual_answer2"]=$(date +%s)
+  response_end["manual_answer2"]=$(date +%s)
+  response_day["manual_answer2"]=$answer
+  response_aff["manual_answer2"]=${aff:-false}
+  response_days["manual_answer2"]=$num_days
+  response_err["manual_answer2"]=false
+  response_errmsg["manual_answer2"]=""
+  ((run_count++))
+  check_agreement
+  unset days aff
+fi
+
+# Execute functions for LLMS
+if [ "${use_ai,,}" = "on" ]; then
+  for engine in $engine_order; do
+    [ $engine = manual ] && continue
+    run_engine $engine
+  done
+fi
+
+print_output
+

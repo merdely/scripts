@@ -1,0 +1,30 @@
+#!/bin/sh
+
+existing=$(/srv/scripts/bin/vcheck ffprobe)
+available=$(/srv/scripts/bin/vcheck ffprobe_latest)
+
+case $(uname -m) in
+  x86_64)
+    arch=amd64;;
+  aarch64)
+    arch=arm64;;
+  armv7l)
+    arch=armhf;;
+esac
+
+if [ -z "$existing" ] || [ -z "$available" ]; then
+  echo "Error: Could not determine ffprobe versions"
+  exit 1
+elif [ $existing = $available ]; then
+  echo "Warning: ffprobe $available already installed"
+  exit 0
+else
+  echo "Upgrading ffprobe from $existing to $available"
+  tmpfile=$(mktemp)
+  tmpdir=$(mktemp -d)
+  curl -sLo $tmpfile https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-$arch-static.tar.xz
+  tar -C $tmpdir -xf $tmpfile
+  sudo cp $tmpdir/ffmpeg-$available-$arch-static/ffprobe /usr/local/bin/ffprobe-$available
+  sudo ln -sf ffprobe-$available /usr/local/bin/ffprobe
+  rm -Rf $tmpfile $tmpdir
+fi

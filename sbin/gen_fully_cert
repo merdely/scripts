@@ -1,0 +1,39 @@
+#!/bin/sh
+
+# Alias which to 'command -v' if which does not exist
+! which which > /dev/null 2>&1 && alias which='command -v'
+
+[ -z "$3" -o "$1" = "-h" ] && echo "usage: $0 keyfile certfile safe_domain" && exit 0
+which zip > /dev/null 2>&1 || { echo "'zip' command missing" && exit 1; }
+
+keyfile=$1
+certfile=$2
+safe_domain=$3
+safe_hostname=${safe_domain%%.*}
+
+ssldir=/etc/ssl
+[ -f /etc/os-release ] && . /etc/os-release
+[ "$ID" != debian -a "$ID_LIKE" != debian -a "$ID" != arch -a "$ID_LIKE" != arch ] && ssldir=/etc/pki/tls
+
+[ ! -r $keyfile ] && echo "Error: Cannot access key $keyfile" && exit 1
+[ ! -r $certfile ] && echo "Error: Cannot access cert $certfile" && exit 1
+! openssl rsa -noout -in $keyfile > /dev/null 2>&1 && echo "Error: Invalid key $keyfile" && exit 1
+! openssl x509 -noout -in $certfile > /dev/null 2>&1 && echo "Error: Invalid cert $certfile" && exit 1
+
+unset ssl_legacy
+openssl version | grep -q "^OpenSSL 3" && ssl_legacy="-legacy"
+
+tmpdir=$(mktemp -d)
+{
+  old_umask=$(umask)
+  umask 077
+  cd $tmpdir
+  openssl pkcs12 -export $ssl_legacy -out $tmpdir/fully-remote-admin-ca.p12 -inkey $keyfile \
+    -in $certfile -passout pass:fully
+  cp $tmpdir/fully-remote-admin-ca.p12 $ssldir/private/${safe_hostname}_fully-remote-admin-ca.p12
+  chmod 600 $ssldir/private/${safe_hostname}_fully-remote-admin-ca.p12
+  zip -q $ssldir/private/$safe_domain.p12.zip fully-remote-admin-ca.p12
+  umask $old_umask
+}
+rm -Rf $tmpdir
+

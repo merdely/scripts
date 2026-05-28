@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h] [-a] [-q] [-c RCFILE] [ACTION]"
+  echo "     -h     : This help text"
+  echo "     -a     : Refresh allowlists (default: blocklists)"
+  echo "     -f     : Force refresh"
+  echo "     -q     : Quiet output"
+  echo
+  echo "  ACTION:"
+  echo "     status  : Print AdGuardHome status"
+  echo "     info    : Print DNS Info"
+  echo "     stats   : Print AdGuardHome stats"
+  echo "     clear   : Clear AdGuardHome cache (default action)"
+  echo "     refresh : Refresh Filtering Blocklists/Allowlists (Blocklists by default)"
+  echo "     update  : Self-update AdGuardHome"
+  exit $1
+}
+
+rcfile="$HOME/.config/opnsenserc"
+allowlists=false
+list=blocklists
+force=false
+quiet=false
+unset devnull
+while getopts ":hc:afq" opt; do
+  case $opt in
+    c) rcfile=$OPTARG ;;
+    a)
+      allowlists=true
+      list=allowlists
+      ;;
+    f) force=true ;;
+    q)
+      quiet=true
+      devnull="-o /dev/null"
+      ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND -1))
+
+jqcmd=cat
+command -v jq &> /dev/null && jqcmd='jq -r'
+
+libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
+PATH="$libpath" . _config 2> /dev/null || { echo "Error: Cannot load _config library" >&2; exit 1; }
+
+if [ -r $rcfile ]; then
+  adguard_server=$(get_config_value "$rcfile" adguard server)
+  adguard_username=$(get_config_value "$rcfile" adguard username)
+  adguard_password=$(get_config_value "$rcfile" adguard password)
+  [ -z "$adguard_server" ] && echo "Error: Could not read AdGuard Server from $rcfile" && exit 1
+  [ -z "$adguard_username" ] && echo "Error: Could not read AdGuard Username from $rcfile" && exit 1
+  [ -z "$adguard_password" ] && echo "Error: Could not read AdGuard Password from $rcfile" && exit 1
+else
+  echo "Error: Invalid configuration file ($rcfile)"
+  exit 1
+fi
+
+if [ "$1" = refresh ]; then
+  ! $quiet && printf "Updating $list: "
+  curl -sLf $devnull -X POST -d "{ \"allowlist\": $allowlists, \"force\": $force }" \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Basic $(printf "$adguard_username:$adguard_password"|base64)" \
+    $adguard_server/control/filtering/refresh
+  [ $? != 0 ] && echo && echo "Error: Refreshing Filtering $list" && exit 1
+elif [ "$1" = info ]; then
+  curl -sLf $devnull -X GET \
+    -H "Authorization: Basic $(printf "$adguard_username:$adguard_password"|base64)" \
+    $adguard_server/control/dns_info | $jqcmd
+elif [ "$1" = status ]; then
+  curl -sLf $devnull -X GET \
+    -H "Authorization: Basic $(printf "$adguard_username:$adguard_password"|base64)" \
+    $adguard_server/control/status | $jqcmd
+elif [ "$1" = stats ]; then
+  curl -sLf $devnull -X GET \
+    -H "Authorization: Basic $(printf "$adguard_username:$adguard_password"|base64)" \
+    $adguard_server/control/stats | $jqcmd
+elif [ "$1" = update ]; then
+  ! $quiet && printf "Performing self-update: "
+  curl -sLf $devnull -X POST -d '{ }' \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Basic $(printf "$adguard_username:$adguard_password"|base64)" \
+    $adguard_server/control/update
+  [ $? != 0 ] && echo && echo "Error: Self-updating AdGuardHome" && exit 1
+  echo
+else
+  ! $quiet && printf "Clearing cache: "
+  curl -sLf -o /dev/null -X POST \
+    -H "Authorization: Basic $(printf "$adguard_username:$adguard_password"|base64)" \
+    $adguard_server/control/cache_clear &> /dev/null
+  [ $? != 0 ] && echo && echo "Error: Clearing the cache failed" && exit 1
+  sleep .5
+  curl -sLf $devnull -X POST \
+    -H "Authorization: Basic $(printf "$adguard_username:$adguard_password"|base64)" \
+    $adguard_server/control/cache_clear
+  echo
+fi

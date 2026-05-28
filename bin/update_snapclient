@@ -1,0 +1,38 @@
+#!/bin/sh
+
+existing=$(/srv/scripts/bin/vcheck snapcast)
+available=$(/srv/scripts/bin/vcheck snapcast_latest)
+latest_debian=$(curl -s http://ftp.debian.org/debian/dists/stable/Release | awk '/^Codename/{print $2}')
+force=0
+[ "$1" = "-f" ] && force=1
+
+case $(uname -m) in
+  x86_64)
+    arch=amd64;;
+  aarch64)
+    arch=arm64;;
+  armv7l)
+    arch=armhf;;
+esac
+
+if [ $force = 0 ] && [ -z "$existing" -o -z "$available" ]; then
+  echo "Error: Could not determine snapcast versions"
+  exit 1
+elif [ $force = 0 ] && [ $existing = $available ]; then
+  echo "Warning: snapcast $available already installed"
+  exit 0
+else
+  echo "Upgrading snapcast from $existing to $available"
+  tmpfile=$(mktemp)
+  tmpdir=$(mktemp -d)
+  curl -sLo $tmpfile https://github.com/snapcast/snapcast/releases/download/$available/snapclient_${available#v}-1_${arch}_$latest_debian.deb
+  (
+    cd $tmpdir
+    ar -x $tmpfile
+  )
+  [ -x /usr/local/bin/rw ] && sudo /usr/local/bin/rw
+  tar -C / -xf $tmpdir/data.tar.xz
+  sync
+  [ -x /usr/local/bin/ro ] && sudo /usr/local/bin/ro
+  rm -Rf $tmpfile $tmpdir
+fi

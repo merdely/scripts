@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+
+progname=${0##*/}
+progname=${progname%.sh}
+
+# A script to perform incremental backups using rsync
+readonly config_file=/etc/timemachine/config
+
+cleanup() {
+  echo "Script interrupted. Exiting..."
+  exit 1
+}
+trap cleanup SIGINT
+
+usage() {
+  echo "usage: $progname [-h] [-t] [-v] [-X] CLIENTNAME"
+  echo "            -h                : Print this help text"
+  echo "            -t                : Test mode (print rsync commands instead of running them)"
+  echo "            -v                : Be verbose (rsync's -v and -i)"
+  echo "            -X                : Preserve extended attributes (rsync's -X)"
+  echo "            CLIENTNAME        : Client to back up (must be defined in $config_file in clients array)"
+  echo "Config file example:"
+  echo "  date_format=\"+%Y-%m-%d_%H-%M-%S\""
+  echo "  # default is a standard Linux client"
+  echo "  # mac is a MacOS client"
+  echo "  # local is the system running this script"
+  echo "  clients[unixserver1]=default"
+  echo "  clients[unixserver2]=default"
+  echo "  clients[macbookpro]=mac"
+  echo "  clients[backupserver]=local"
+  echo "  backup_bases[%]=/default/backup/base/location"
+  echo "  backup_bases[unixserver2]=/backup/base/location/for/unixserver2"
+  exit $1
+}
+
+testmode=false
+varg=""
+xarg=""
+while getopts ":htvx" opt; do
+  case $opt in
+    t) testmode=true ;;
+    v) varg="-vi" ;;
+    X) xarg="-X" ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND -1))
+
+declare -A clients ssh_keys backup_bases
+[ -r $config_file ] && source $config_file
+[ ${#clients[@]} = 0 ] && echo "Error: You must define clients in $config_file" && echo && usage 1
+[ -z "${ssh_keys[%]}" ] && echo "Error: You must define at least ssh_keys[%] in $config_file" && echo && usage 1
+[ -z "${backup_bases[%]}" ] && echo "Error: You must define at least backup_bases[%] in $config_file" && echo && usage 1
+
+readonly datetime="$(date "${date_format:-+%Y-%m-%d_%H-%M-%S}")"
+
+backup_base=${backup_bases[%]}
+[[ -v backup_bases[$1] ]] && backup_base=${backup_bases[$1]}
+
+ssh_key=${ssh_keys[%]}
+[[ -v ssh_keys[$1] ]] && ssh_key=${ssh_keys[$1]}
+
+case "${clients[$1]}" in
+  default)
+    backup_dest=$backup_base/$1
+    backup_source=$1
+    list_cmd="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key $1 "
+    remote=true
+    ssh_cmd="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key -l root"
+    ssh_string=(-e "$ssh_cmd")
+    ssh_user="$1:"
+    ;;
+  mac)
+    backup_dest=$backup_base/$1
+    backup_source=$1
+    list_cmd="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key $1 "
+    remote=true
+    ssh_cmd="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key -l root"
+    ssh_string=(-e "$ssh_cmd")
+    ssh_user="$1:"
+    xarg=""
+    ;;
+  local)
+    backup_dest=$backup_base/$1
+    backup_source=$1
+    list_cmd="cat /etc/timemachine/"
+    remote=false
+    ssh_cmd=''
+    ssh_string=()
+    ssh_user=""
+    ;;
+  *)
+    echo "Error: '$1' is not a valid server"
+    exit 1
+    ;;
+esac
+
+backup_list=$(mktemp)
+${list_cmd}backup_list | grep -v ^# > $backup_list
+
+exclude_list=$(mktemp)
+${list_cmd}exclude_list | grep -v ^# > $exclude_list
+
+echo "backup_source=$backup_source"
+echo "remote=$remote"
+echo "backup_list=$backup_list ($(cat $backup_list | wc -l))"
+echo "exclude_list=$exclude_list ($(cat $exclude_list | wc -l))"
+
+[ ! -d "$backup_dest/$datetime" ] && mkdir -p "$backup_dest/$datetime"
+
+sources=""
+for src in $(cat $backup_list); do
+  sources="$sources root@$backup_source:$src"
+done
+
+echo Backup started at $(date "+%F %T")
+started=$(date +%s)
+
+for src in $(cat $backup_list); do
+  link_dest=""
+  if [ -e "$backup_dest/latest" ]; then
+    if [ $src = / ]; then
+      link_dest="--link-dest=$backup_dest/latest$src"
+    else
+      dir=$backup_dest/latest$src
+      link_dest="--link-dest=${dir%/*}"
+    fi
+  fi
+
+  if [ $src = / ]; then
+    dest=$backup_dest/$datetime$src
+  else
+    dest=$backup_dest/$datetime$src
+    dest=${dest%/*}/
+  fi
+  rsync_opts=(-ax $xarg $varg --delete $link_dest --exclude-from=$exclude_list "${ssh_string[@]}" "$ssh_user$src" "$dest")
+  if $testmode || [ "$varg" != "" ]; then
+    env SSH_AUTH_SOCK=/dev/null echo rsync ${rsync_opts[@]}
+  fi
+  if ! $testmode; then
+    mkdir -p $dest
+    env SSH_AUTH_SOCK=/dev/null rsync "${rsync_opts[@]}"
+  fi
+done
+ended=$(date +%s)
+echo Backup completed at $(date "+%F %T")
+total_time=$((ended - started))
+if [ $total_time -lt 60 ]; then
+  echo "Backup took $total_time seconds"
+elif [ $total_time -lt 3600 ]; then
+  echo "Backup took $((total_time/60)) minutes $((total_time%60)) seconds"
+else
+  echo "Backup took $((total_time/3600)) hours $(((total_time%3600)/60)) minutes $(((total_time%3600)%60)) seconds"
+fi
+
+if [ -n "$(find "$dest" -maxdepth 0 -type d -empty)" ]; then
+  echo "Backup resulted in an empty directory ($dest); Not linking to new backup"
+  rmdir -v "$dest"
+else
+  rm -rf "$backup_dest/latest"
+  ln -s "$datetime" "$backup_dest/latest"
+fi
+
+rm -f $backup_list $exclude_list
+

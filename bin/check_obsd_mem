@@ -1,0 +1,79 @@
+#!/bin/sh
+
+usage() {
+  echo "usage: %0 [-h] -w WARN -c CRIT" >&2 echo "    -h                : this help text" > /dev/stderr
+  echo "    -w WARN           : warning percentage (do not include %)" >&2
+  echo "    -c CRIT           : critical percentage (do not include %)" >&2
+  exit 1
+}
+
+while getopts ":hw:c:" opt; do
+  case ${opt} in
+    h|\?)
+      usage
+      ;;
+    c)
+      CRIT=$OPTARG
+      ;;
+    w)
+      WARN=$OPTARG
+      ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+if [ -z "$WARN" ] || [ -z "$CRIT" ]; then
+  usage
+fi
+
+case $WARN in
+  [0-9]|[0-9][0-9]|[0-9][0-9][0-9])
+    [ $WARN -gt 100 ] && usage
+    ;;
+  *)
+    usage
+    ;;
+esac
+
+case $CRIT in
+  [0-9]|[0-9][0-9]|[0-9][0-9][0-9])
+    [ $CRIT -gt 100 ] && usage
+    ;;
+  *)
+    usage
+    ;;
+esac
+
+[ $WARN -gt $CRIT ] && echo "Warning: WARN > CRIT" >&2
+
+top -b | \
+    awk -vWARN=$WARN -vCRIT=$CRIT '
+    BEGIN {
+      s[0] = "OK";
+      s[1] = "WARNING";
+      s[2] = "CRITICAL";
+      s[3] = "UNKNOWN";
+      state = 0;
+      perf = "";
+      out = "";
+      outh = "";
+    }
+    $1=="Memory:" {
+      split($3,a,"/");
+      u=substr(a[2],1,length(a[2])-1);
+      unit=substr(a[2],length(a[2]));
+      f=substr($6,1,length($6)-1);
+      t=u+f;
+      perc=u/t*100;
+      perf = sprintf("mem=%d;%d;%d",u,t*WARN/100,t*CRIT/100)
+      if (perc >= CRIT && state == 0) {
+        state = 2;
+      };
+      if (perc >= WARN && state == 0) {
+        state = 1;
+      };
+      out = out sprintf("%d%% used (%d%s out of %d%s); ", perc, u, unit, t, unit)
+      printf "MEM %s - %s | %s\n", s[state], out, perf;
+      exit state;
+    };
+    '

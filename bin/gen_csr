@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+unset cn force san verbose
+bits=4096
+while getopts ":b:c:fi:s:v" opt; do
+  case $opt in
+    b) [[ $OPTARG =~ ^[0-9]+$ ]] && bits=$OPTARG;;
+    c) cn=$OPTARG;;
+    f) force=1;;
+    i) ip=$OPTARG;;
+    s) san=$OPTARG;;
+    v) verbose=1;;
+    *) echo "usage: $0 [-f] -c CN [-i IP1,IP2,...,IPn] [-s NAME1,NAME2,...,NAMEn] [-b BITS]" && exit;;
+  esac
+done
+shift $((OPTIND - 1))
+[ -z "$cn" ] && echo "usage: $0 [-f] -c CN [-i IP1,IP2,...,IPn] [-s NAME1,NAME2,...,NAMEn] [-b BITS]" && exit
+
+# Look for an openssl.cnf file in /etc/pki/tls or /etc/ssl (should be good for Red Hat systems)
+openssl_cnf=/etc/pki/tls/openssl.cnf
+[ ! -r $openssl_cnf ] && openssl_cnf=/etc/ssl/openssl.cnf
+[ ! -r $openssl_cnf ] && echo "Error: Could not find openssl.cnf in /etc/pki/tls or /etc/ssl" && exit 1
+
+# Determine shortname for certificate
+shortname=${cn%%.*}
+
+# Add CN to san_line
+san_line=DNS:$cn
+
+# Loop through additional hostnames and IPs from the $san and $ip variables from the commandline (can be empty)
+old_ifs=$IFS
+IFS=,
+for name in $san; do
+  [ $name = $cn ] && continue
+  san_line=$san_line,DNS:$name
+done
+for ipa in $ip; do
+  san_line=$san_line,IP:$ipa
+done
+IFS=$old_ifs
+
+[ "$verbose" = 1 ] && printf "cn=%s\nsan=%s\nip=%s\nsan_line=%s\n" "$cn" "$san" "$ip" "$san_line" && exit
+
+# Do not overwrite $shortname.csr unless -f specified
+[ -r $shortname.csr -a "$force" != 1 ] && echo "Error: $shortname.csr exists and -f not specified" && exit 1
+
+# If shortname.key does not exist, creat it with $bits bits
+[ ! -r $shortname.key ] && openssl genrsa -out $shortname.key $bits
+
+# Generate $shortname.csr
+openssl req -new -key $shortname.key -out $shortname.csr \
+  -config <(sed "s/[ #]*req_extensions.*$/req_extensions = san\n\n[san]\nsubjectAltName=$san_line\n/" $openssl_cnf)
+

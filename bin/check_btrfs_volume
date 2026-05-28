@@ -1,0 +1,69 @@
+#!/bin/sh
+
+progname=${0##*/}
+progname=${progname%.sh}
+usage() {
+  echo "usage: $progname [-h] -V BTRFS_VOLUME -c CRIT -w WARN"
+  echo "       -h              : this help text"
+  echo "       -V BTRFS_VOLUME : BTRFS volume to check"
+  echo "       -c CRIT         : critical if available disk space is at or below CRIT %"
+  echo "       -w WARN         : warning if available disk space is at or below WARN %"
+  exit 1
+}
+
+debug=false
+verbose=false
+unset volume
+test=false
+while getopts ":hV:c:w:" opt; do
+  case $opt in
+    c)
+      printf "$OPTARG" | grep -Eq "^[0-9]+(.[0-9]+)?$" || { echo "Error: Value for CRIT must be a number"; exit 1; }
+      [ $OPTARG -ge 0 -a $OPTARG -le 100 ] || { echo "Error: Value for CRIT must be between 0 and 100"; exit 1; }
+      crit=$OPTARG
+      ;;
+    w)
+      printf "$OPTARG" | grep -Eq "^[0-9]+(.[0-9]+)?$" || { echo "Error: Value for WARN must be a number"; exit 1; }
+      [ $OPTARG -ge 0 -a $OPTARG -le 100 ] || { echo "Error: Value for WARN must be between 0 and 100"; exit 1; }
+      warn=$OPTARG
+      ;;
+    V)
+      mount | awk -vp="$OPTARG" 'BEGIN{x=1}$3==p&&$5=="btrfs"{x=0}END{exit x}' || { echo "Error: Value for BTRFS_VOLUME must be a mounted BTRFS volume"; exit 1; }
+      volume=$OPTARG
+      ;;
+    h|\?) usage
+      ;;
+  esac
+done
+shift $((OPTIND -1))
+
+[ -z "$crit" -o -z "$warn" -o -z "$volume" ] && usage
+
+$debug && echo debug: crit=$crit warn=$warn volume=$volume
+
+eval $(df -kP $volume | awk -vp=$volume '$6==p{printf "dev=%s;size=%s;used=%s;avail=%s;usep=%s;mount=%s\n",$1,$2,$3,$4,$5,$6}')
+
+sizemb=$((size/1024))
+usedmb=$((used/1024))
+availmb=$((avail/1024))
+availp=$((100-$(echo $usep | sed 's/%//g')))
+
+perfdata=$(printf "%s=%s%s;%s;%s;%s;%s " $volume $usedmb "MB" $(((sizemb*100-sizemb*100*warn/100)/100)) $(((sizemb*100-sizemb*100*crit/100)/100)) 0 $sizemb)
+
+if ! echo "$availp" | grep -Eq "^[0-9]+$"; then
+  echo "UNKNOWN - Invalid command output ($availp)"
+  exit 3
+fi
+
+if [ $availp -le $crit ]; then
+  echo "DISK CRITICAL - free space: $volume $availmb MB | $perfdata"
+  exit 2
+fi
+
+if [ $availp -le $warn ]; then
+  echo "DISK WARNING - free space: $volume $availmb MB | $perfdata"
+  exit 1
+fi
+
+echo "DISK OK - free space: $volume $availmb MB | $perfdata"
+exit 0

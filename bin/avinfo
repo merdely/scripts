@@ -1,0 +1,42 @@
+#!/bin/sh
+
+progname=${0##*/}
+progname=${progname%.sh}
+if [ -z "$1" ]; then
+  echo "usage: $progname mediafile"
+  exit 1
+fi
+
+if [ ! -e "$1" ]; then
+  echo "Error: "$1" does not exist"
+  exit 1
+fi
+
+ffprobe_cmd=$(which ffprobe 2> /dev/null)
+if [ $? != 0 ]; then
+  if [ -x /usr/local/bin/ffprobe ]; then
+    ffprobe_cmd=/usr/local/bin/ffprobe
+  else
+    echo "Error: ffprobe command not found"
+    exit 1
+  fi
+fi
+
+for file in "$@"; do
+  ext=${file##*.}
+  [ -d "$file" -o "$ext" = "srt" -o "$ext" = "txt" -o "$ext" = "nfo" -o "$ext" = "plist" -o "$ext" = "iMovieProj" ] && continue
+
+  V=$($ffprobe_cmd -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$file" 2> /dev/null)
+  if [ $? != 0 ]; then
+    echo "Error: Could not process $file"
+    continue
+  fi
+  A=$($ffprobe_cmd -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$file" 2> /dev/null)
+  if [ $? != 0 ]; then
+    echo "Error: Could not process $file"
+    continue
+  fi
+
+  echo "$file|$V|$A"
+done
+

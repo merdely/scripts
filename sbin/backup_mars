@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+weekday=$(date +%a)
+fulldate=$(date +%F)
+
+curl -s -L -n -X GET https://mars.erdely.in/api/core/backup/download/this | \
+  /usr/bin/age -R /root/.ssh/mike_ed25519.pub -o /srv/backup/mars_config_backup.$weekday.xml.age
+if [[ $(/usr/bin/stat -c \%s /srv/backup/mars_config_backup.$weekday.xml.age) -lt 1000 ]]; then
+  echo "Mars backup has an inconsistent size ($(/usr/bin/stat -c \%s /srv/backup/mars_config_backup.$weekday.xml.age) bytes)" | /usr/bin/mail -s "Mars Backup Failure" root
+  rm -f /srv/backup/mars_config_backup.$weekday.xml.age
+else
+  /usr/bin/cp /srv/backup/mars_config_backup.$weekday.xml.age /ext/Backups/mars/mars_config_backup.$fulldate.xml.age
+  /usr/bin/rm /ext/Backups/mars/mars_config_backup.latest.xml.age
+  /usr/bin/ln /ext/Backups/mars/mars_config_backup.$fulldate.xml.age /ext/Backups/mars/mars_config_backup.latest.xml.age
+fi
