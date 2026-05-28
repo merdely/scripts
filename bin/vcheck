@@ -393,7 +393,7 @@ sudo_exec() { # utility_function
 
   # Check to see if this is called with -d
   for arg in "$@"; do
-    [[ "$arg" == "-d" ]] && { debug=$(( debug + 1 )) ; dflags+=(-d) ; continue ; }
+    [[ "$arg" == "-d" ]] && { (( debug++ )) ; dflags+=(-d) ; continue ; }
     args+=("$arg")
   done
   set -- "${args[@]}"
@@ -404,6 +404,7 @@ sudo_exec() { # utility_function
   [[ " ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
   log -d "Executing $1 as $(id -un)"
   # Execute check function
+  export debug
   "$1" "${dflags[@]}"
 }
 
