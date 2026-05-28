@@ -803,7 +803,7 @@ docker_tags() { # helper_function
   esac
 
   local cmdout authfile hash skopeoargs=()
-  if ${useskopeo:-false} && command -v skopeo ; then
+  if ${useskopeo:-false} && command -v skopeo &> /dev/null; then
     if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
       authfile=$(maketemp)
       hash=$(printf "${username[-1]}:${token[-1]}" | base64 | tr -d '\n')
