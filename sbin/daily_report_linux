@@ -120,13 +120,16 @@ if [ -z "$1" -o "$1" = "git" ]; then
 fi
 
 if [ -z "$1" -o "$1" = "scripts" ]; then
+  unset q_flag
+  $quiet && q_flag=-q
   if [ -d /srv/scripts/.git ]; then
     ! $quiet && echo "Updating /srv/scripts from git:"
-    git -C /srv/scripts pull -q
+    git -C /srv/scripts pull $q_flag
   elif [ -d /opt/scripts/.git ]; then
     ! $quiet && echo "Updating /opt/scripts from git:"
-    git -C /opt/scripts pull -q
+    git -C /opt/scripts pull $q_flag
   fi
+  unset q_flag
 fi
 
 if [ -z "$1" ]; then
