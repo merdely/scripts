@@ -3701,6 +3701,7 @@ main() { # utility_function
           echo "  output_file: file"
           echo "  output_mode: text/json/mqtt"
           echo "  include_invalid: true/false"
+          echo "  compose_file: /home/u/project.yaml"
           echo
           echo "  [$PROGNAME:version_check_function_name]"
           echo "  output_file: file"
@@ -3711,6 +3712,7 @@ main() { # utility_function
           echo "  cache_lifetime: minutes"
           echo "  retry_delay: seconds"
           echo "  max_retries: number"
+          echo "  compose_file: /home/u/software.yaml"
           echo
           echo "  [mqtt]"
           echo "  server: mqtt.example.com"
@@ -3804,7 +3806,7 @@ main() { # utility_function
     [[ -n "${rcmax_retries[*]}" && ${rcmax_retries[-1]} =~ ^[0-9]+$ ]] && max_retries=${rcmax_retries[-1]}
 
     ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME" compose_file)
-    [[ -n "${rccompose_file[*]}" ]] && compose_file=${rccompose_file[-1]}
+    $(( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
 
     ! $docker_seconds_set && mapfile -t rcdocker_seconds < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
     [[ -n "${rcdocker_seconds[*]}" && ${rcdocker_seconds[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcdocker_seconds[-1]}
@@ -3839,9 +3841,6 @@ main() { # utility_function
     [[ ${#rcprepend_name[@]} -gt 0 && ${rcprepend_name[-1]} =~ ^[0-9]+$ ]] && prepend_name=$rcprepend_name
 
   fi # if [[ -s "$rcfile" ]]; then
-
-  # Set COMPOSE_FILE if necessary
-  [[ -n "$compose_file" ]] && export COMPOSE_FILE=$compose_file
 
   # Set up software list from command line arguments, substitute _ for -
   mapfile -t software < <(printf '%s\n' "${@//-/_}" | sort -u)
@@ -3888,6 +3887,7 @@ main() { # utility_function
   saved_output_mode=$output_mode
   saved_include_invalid=$include_invalid
   saved_docker_seconds=$docker_seconds
+  saved_compose_file=$compose_file
 
   # TODO: Turn into function?
   # Process software list
@@ -3899,6 +3899,7 @@ main() { # utility_function
     output_mode=$saved_output_mode
     include_invalid=$saved_include_invalid
     docker_seconds=$saved_docker_seconds
+    compose_file=$saved_compose_file
     sw_list=()
 
     # If list=docker, load docker checks
@@ -3955,6 +3956,9 @@ main() { # utility_function
       # include_invalid
       ! $include_invalid_set && mapfile -t rcinclude_invalid < <(get_config_value "$rcfile" "$PROGNAME":"$list" include_invalid)
       (( ${#rcinclude_invalid[@]} > 0 )) && include_invalid=${rcinclude_invalid[-1]}
+
+      ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME":"$list" compose_file)
+      $(( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
     fi
 
     # If -L docker was given and docker_seconds is set, only look for checks
@@ -4014,6 +4018,7 @@ main() { # utility_function
       [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[$list SETTINGS] output_mode=$output_mode"
       [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[$list SETTINGS] include_invalid=$include_invalid"
       [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[$list SETTINGS] docker_seconds=$docker_seconds"
+      [[ "$compose_file" != "$saved_compose_file" ]] && log -d "[$list SETTINGS] compose_file=$compose_file"
       log -d "[$list SETTINGS] list=${sw_list[*]}"
       echo
       (( debug > 3 )) && exit
@@ -4040,7 +4045,13 @@ main() { # utility_function
         # prepend_name
         ! $prepend_set && mapfile -t rcprepend_name < <(get_config_value "$rcfile" "$PROGNAME":"$sw" prepend_name)
         (( ${#rcprepend_name[@]} > 0 )) && prepend_name=${rcprepend_name[-1]}
+
+        ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME":"$sw" compose_file)
+        $(( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
       fi
+
+      # Set COMPOSE_FILE if necessary
+      [[ -n "$compose_file" ]] && export COMPOSE_FILE=$compose_file
 
       found=false
       if ! function_exists "$sw"; then
@@ -4091,6 +4102,7 @@ main() { # utility_function
         [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[${list:+$list:}$sw SETTINGS] output_mode=$output_mode"
         [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[${list:+$list:}$sw SETTINGS] include_invalid=$include_invalid"
         [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[${list:+$list:}$sw SETTINGS] docker_seconds=$docker_seconds"
+        [[ "$compose_file" != "$saved_compose_file" ]] && log -d "[${list:+$list:}$sw SETTINGS] compose_file=$compose_file"
         [[ "$lifetime" != "$cache_lifetime" ]] && log -d "[${list:+$list:}$sw SETTINGS] lifetime=$lifetime"
         [[ "$delay" != "$retry_delay" ]]       && log -d "[${list:+$list:}$sw SETTINGS] delay=$delay"
         [[ "$retries" != "$max_retries" ]]     && log -d "[${list:+$list:}$sw SETTINGS] retries=$retries"
