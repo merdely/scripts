@@ -3959,7 +3959,7 @@ main() { # utility_function
       (( ${#rcinclude_invalid[@]} > 0 )) && include_invalid=${rcinclude_invalid[-1]}
 
       ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME":"$list" compose_file)
-      $(( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
+      (( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
     fi
 
     # If -L docker was given and docker_seconds is set, only look for checks
@@ -4048,7 +4048,7 @@ main() { # utility_function
         (( ${#rcprepend_name[@]} > 0 )) && prepend_name=${rcprepend_name[-1]}
 
         ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME":"$sw" compose_file)
-        $(( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
+        (( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
       fi
 
       # Set COMPOSE_FILE if necessary
