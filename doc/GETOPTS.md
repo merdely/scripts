@@ -2,7 +2,7 @@
 
 ## Simple example:
 
-```
+```bash
 while getopts ":ab:" opt; do
   case $opt in
     a) a=true ;;
