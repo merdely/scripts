@@ -4182,7 +4182,7 @@ main() { # utility_function
             rp=$(realpath "$0")
             debug_args=()
             for (( i = 0 ; i < debug ; i++ )); do debug_args+=("-d"); done
-            log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $sw ${debug_args[*]}'"
+            log -d "[sudo] running 'sudo -n -D / -u $sudo_user $rp -X $sw ${debug_args[*]}'"
             version=$(sudo -n -u "$sudo_user" "$rp" -X "$sw" "${debug_args[@]}")
             ret=$?
             update_time=$(date +%s)
