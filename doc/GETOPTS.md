@@ -17,7 +17,7 @@ shift $(( OPTIND - 1 ))
 
 ## Example of built in getopts
 
-```
+```bash
 progname=${0##*/}
 progname=${progname%.sh}
 usage() {
@@ -64,7 +64,7 @@ shift $((OPTIND - 1))
 ### NOTES:
 - You can overload -h with this:
 
-```
+```bash
    h)
       [ -z "$2" ] || [ ${2:0:1} = - ] && usage
       hswitch=true ;;
@@ -74,7 +74,7 @@ shift $((OPTIND - 1))
 
 ## Example of manually made get opts that supports long options
 
-```
+```bash
 progname=${0##*/}
 progname=${progname%.sh}
 usage() {

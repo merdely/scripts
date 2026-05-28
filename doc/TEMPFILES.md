@@ -2,7 +2,7 @@
 
 ## Store everything in a directory and delete directory when exiting
 
-```
+```bash
 TEMPDIR=$(mktemp -d)
 trap 'rm -Rf -- "$TEMPDIR"'
 trap 'exit 1' INT TERM
@@ -35,7 +35,7 @@ Downsides:
 - When used in functions called as subshells (foo=$(myfunc)), TEMPFILES
   does not get updated
 
-```
+```bash
 TMPFILES=()
 trap 'rm -Rf -- "${TMPFILES[@]}"' EXIT
 trap 'exit 1' INT TERM
