@@ -1214,7 +1214,7 @@ printer_ink_check() { # remote_host
       }' 2> /dev/null || log -e "Could not generate ink command error json")
 
   log -d -d "Running: ping -c 5 $PRINTER"
-  if ! ping -c 5 "$PRINTER"; then
+  if ! ping -c 5 "$PRINTER" &> /dev/null; then
     jq -n --arg n "${FUNCNAME[0]}" --arg ip "$PRINTER" \
       --arg t "$(date +%s)" --arg e "Cannot connect to $PRINTER" '{
         "name": $n,
@@ -4237,8 +4237,11 @@ main() { # utility_function
       # Output text immediately and go to next software
       if (( quiet == 0 )) && [[ "$output_mode" == "text" || "$output_file" != "/dev/stdout" ]]; then
         if [[ "$sw" == "printer_ink_check" ]]; then
-          jq -rn --arg n "$sw" --argjson j "$version" \
-            '$j | "\($n): \(.printer) - cyan=\(.cyan) magenta=\(.magenta) yellow=\(.yellow) black=\(.black) photoblack=\(.photoblack)"'
+          # If cannot print using jq, use echo + some tr's
+          if ! jq -rn --arg n "$sw" --argjson j "$version" \
+            '$j | "\($n): \(.printer) - cyan=\(.cyan) magenta=\(.magenta) yellow=\(.yellow) black=\(.black) photoblack=\(.photoblack 2> /dev/null)"'; then
+            echo "$out" | tr -d '\n' | tr -s ' '
+          fi
         else
           echo "$sw: $version"
         fi
@@ -4251,12 +4254,10 @@ main() { # utility_function
         printf -v mqtt_output '{ "$version": "%s" }' "$version"
         [[ "$sw" == "printer_ink_check" ]] && mqtt_output=$version
 
-        # TODO Need to see if this is needed (or how best to do this)
         if ! $prepend_set && [[ "$sw" == *"_latest" || " ${remote_list[*]} " == *" $sw "* ]]; then
           prepend_name=false
         fi
 
-        # TODO Need to see if this is needed (or how best to do this)
         if ! $prepend_set && [[ " ${app_list[*]} " == *" $sw "* ]]; then
           prepend_name=true
         fi
