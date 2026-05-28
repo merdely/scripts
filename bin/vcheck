@@ -619,6 +619,7 @@ docker_compose_exec() { # helper_function
 
 docker_compose_cp() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  log "MWE: $SUDO_USER: Running docker_compose_exec --copy $*"
   docker_compose_exec --copy "$@"
 }
 
