@@ -616,7 +616,7 @@ docker_compose_exec() { # helper_function
 
   if ! $copy_mode; then
     log -d -d "Executing: docker compose -f $COMPOSE_FILE exec -u nobody $containername $*"
-    docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" "$@" 2> /dev/null
+    docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" "$@"
     return "$?"
   else
     (( $# != 2 )) && echo "usage: ${FUNCNAME[1]} CONTAINER:SRC_PATH DEST_PATH" >&2 && return 1
