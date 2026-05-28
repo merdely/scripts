@@ -404,7 +404,7 @@ sudo_exec() { # utility_function
   [[ " ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
   log -d "Executing $1 as $(id -un)"
   # Execute check function
-  "$1"
+  "$1" "${dflags[@]}"
 }
 
 # Function to fold the usage lines
@@ -594,8 +594,6 @@ docker_compose_exec() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   [[ -z "$COMPOSE_FILE" || ! -r "$COMPOSE_FILE" ]] && { log -e "Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
-  local arg
-  for arg in "$@"; do [[ "$arg" == "-d" ]] && (( debug++ )); done
   local copy_mode=false i=0 containername
   [[ "$1" == "--copy" ]] && copy_mode=true && shift
   (( $# < 1 )) && return 1
