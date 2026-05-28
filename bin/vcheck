@@ -3807,7 +3807,7 @@ main() { # utility_function
     [[ ${#rcmax_retries[@]} -gt 0 && ${rcmax_retries[-1]} =~ ^[0-9]+$ ]] && max_retries=${rcmax_retries[-1]}
 
     ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME" compose_file)
-    $(( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
+    (( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
 
     ! $docker_seconds_set && mapfile -t rcdocker_seconds < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
     [[ ${rcdocker_seconds[@]} -gt 0 && ${rcdocker_seconds[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcdocker_seconds[-1]}
