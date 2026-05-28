@@ -505,10 +505,12 @@ alpine_repo_package() { # helper_function
   log -d "DEBUG (${FUNCNAME[0]}): URL = $url"
 
   out=$(maketemp)
-  curl -sLo "$out" "$url" | \
-    xmllint --html --xpath '//strong[@aria-label="Package version"]/text()' - 2>/dev/null
+  curl -sLo "$out" "$url"
   log -d -d "Curl output: $(cat "$out")"
-  [[ -s "$out" ]] && sort -V < "$out" \
+  [[ ! -s "$out" ]] && return 1
+  out=$(xmllint --html --xpath '//strong[@aria-label="Package version"]/text()' "$out" 2>/dev/null)
+  log -d -d "xmllint output: $out"
+  [[ -n "$out" ]] && sort -V <<< "$out" \
     | tail -n1
 }
 
@@ -557,7 +559,7 @@ codeberg_project() { # helper_function
   mapfile -t authstring < <(gen_authstring "$section")
 
   out=$(maketemp)
-  curl "${authstring[@]}" --no-progress-meter -Lo "$out" "$uri"
+  curl "${authstring[@]}" --no-progress-meter -o "$out" "$uri"
   log -d -d -d "Curl output: $(cat "$out")"
   if [[ -s "$out" ]]; then
     awk -F'["/]' '{print $7;exit}' "$out"
