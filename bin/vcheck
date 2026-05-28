@@ -3797,19 +3797,19 @@ main() { # utility_function
     (( ${#rccache_dir[@]} > 0 )) && cache_dir=${rccache_dir[-1]}
 
     ! $cache_lifetime_set && mapfile -t rccache_lifetime < <(get_config_value "$rcfile" "$PROGNAME" cache_lifetime)
-    [[ -n "${rccache_lifetime[*]}" && ${rccache_lifetime[-1]} =~ ^[0-9]+$ ]] && cache_lifetime=${rccache_lifetime[-1]}
+    [[ ${#rccache_lifetime[@]} -gt 0 && ${rccache_lifetime[-1]} =~ ^[0-9]+$ ]] && cache_lifetime=${rccache_lifetime[-1]}
 
     ! $retry_delay_set && mapfile -t rcretry_delay < <(get_config_value "$rcfile" "$PROGNAME" retry_delay)
-    [[ -n "${rcretry_delay[*]}" && ${rcretry_delay[-1]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcretry_delay[-1]}
+    [[ ${#rcretry_delay[@]} -gt 0 && ${rcretry_delay[-1]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcretry_delay[-1]}
 
     mapfile -t rcmax_retries < <(get_config_value "$rcfile" "$PROGNAME" max_retries)
-    [[ -n "${rcmax_retries[*]}" && ${rcmax_retries[-1]} =~ ^[0-9]+$ ]] && max_retries=${rcmax_retries[-1]}
+    [[ ${#rcmax_retries[@]} -gt 0 && ${rcmax_retries[-1]} =~ ^[0-9]+$ ]] && max_retries=${rcmax_retries[-1]}
 
     ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME" compose_file)
     $(( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
 
     ! $docker_seconds_set && mapfile -t rcdocker_seconds < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
-    [[ -n "${rcdocker_seconds[*]}" && ${rcdocker_seconds[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcdocker_seconds[-1]}
+    [[ ${rcdocker_seconds[@]} -gt 0 && ${rcdocker_seconds[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcdocker_seconds[-1]}
 
     ! $printer_set && mapfile -t rcprinter < <(get_config_value "$rcfile" "$PROGNAME" printer)
     (( ${#rcprinter[@]} > 0 )) && PRINTER=${rcprinter[-1]}
