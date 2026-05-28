@@ -70,7 +70,7 @@ shift $((OPTIND - 1))
       hswitch=true ;;
 ```
 
-- When used inside a function, set "local OPTIND=1"
+- When used inside a function, include `local OPTIND=1`
 
 ## Example of manually made get opts that supports long options
 
