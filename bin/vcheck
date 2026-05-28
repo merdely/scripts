@@ -484,7 +484,7 @@ alpine_docker_package() { # helper_function
   [[ -n "$out" ]] && awk -v p="$package" '$0 ~ "^" p {sub("^" p "-?","",$1);print $1;exit}' 2>/dev/null <<< "$out"
 }
 
-alpine_package_latest() { # helper_function
+alpine_repo_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog xmllint "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
@@ -946,11 +946,11 @@ docker_tags() { # helper_function
   tail -n1 <<< "$out"
 }
 
-flatpak_latest() { # helper_function
+flatpak_appstream() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  [[ "$1" == "-h" ]] && { log "usage: flatpak_latest application_id" ; return 0 ; }
+  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} application_id" ; return 0 ; }
 
   local out
   out=$(curl -s "https://flathub.org/api/v2/appstream/$1")
@@ -1275,7 +1275,7 @@ archiso_systemd_boot_pacman() {
   pacman_package archiso-systemd-boot
 }
 
-archiso_systemd_boot_aur_latest() {
+archiso_systemd_boot_aur_latest() { # no_auto
   aur_package archiso-systemd-boot
 }
 
@@ -1445,7 +1445,7 @@ dbeaver_ce_bin_pacman() {
   pacman_package dbeaver-ce-bin
 }
 
-dbeaver_ce_bin_aur_latest() {
+dbeaver_ce_bin_aur_latest() { # no_auto
   aur_package dbeaver-ce-bin
 }
 
@@ -1454,7 +1454,7 @@ dbeaver_flatpak() {
 }
 
 dbeaver_flatpak_latest() { # no_auto
-  flatpak_latest io.dbeaver.DBeaverCommunity
+  flatpak_appstream io.dbeaver.DBeaverCommunity
 }
 
 decode_config() {
@@ -1525,7 +1525,7 @@ errands_flatpak() {
 }
 
 errands_flatpak_latest() { # no_auto
-  flatpak_latest io.github.mrvladus.List
+  flatpak_appstream io.github.mrvladus.List
 }
 
 IMAGE_SEARCH+=("etherpad_docker|etherpad")
@@ -1533,7 +1533,7 @@ etherpad_docker() {
   docker_inspect
 }
 
-etherpad_docker_latest() {
+etherpad_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+' etherpad/etherpad
 }
 
@@ -1551,7 +1551,7 @@ fcgiwrap_docker() {
 }
 
 fcgiwrap_alpine_latest() {
-  alpine_package_latest fcgiwrap
+  alpine_repo_package fcgiwrap
 }
 
 fcgiwrap_latest() { # no_auto
@@ -1605,7 +1605,7 @@ firefox_flatpak() {
 }
 
 firefox_flatpak_latest() { # no_auto
-  flatpak_latest org.mozilla.firefox
+  flatpak_appstream org.mozilla.firefox
 }
 
 IMAGE_SEARCH+=("flaresolverr_docker|flaresolverr/flaresolverr")
@@ -1628,7 +1628,7 @@ flatseal_flatpak() {
 }
 
 flatseal_flatpak_latest() { # no_auto
-  flatpak_latest com.github.tchx84.Flatseal
+  flatpak_appstream com.github.tchx84.Flatseal
 }
 
 flip_2_dnd_pro() {
@@ -1669,7 +1669,7 @@ forgejo_runner_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' code.forgejo.org/forgejo/runner
 }
 
-forgejo_runner_latest() {
+forgejo_runner_latest() { # no_auto
   codeberg_project -f forgejo/runner
 }
 
@@ -1733,7 +1733,7 @@ gpuviewer_flatpak() {
 }
 
 gpuviewer_flatpak_latest() { # no_auto
-  flatpak_latest io.github.arunsivaramanneo.GPUViewer
+  flatpak_appstream io.github.arunsivaramanneo.GPUViewer
 }
 
 IMAGE_SEARCH+=("grafana_docker|grafana/grafana")
@@ -1889,7 +1889,7 @@ jitsi_excalidraw_docker() {
   docker_inspect
 }
 
-jitsi_excalidraw_docker_latest() {
+jitsi_excalidraw_docker_latest() { # no_auto
   docker_tags -r '^(latest|[0-9]{4}\.[0-9]+\.[0-9]+)$' jitsi/excalidraw-backend
 }
 
@@ -2005,7 +2005,7 @@ librewolf_bin_aur_latest() { # no_auto
 }
 
 librewolf_flatpak_latest() { # no_auto
-  flatpak_latest io.gitlab.librewolf-community
+  flatpak_appstream io.gitlab.librewolf-community
 }
 
 librewolf_homebrew_latest() {
@@ -2119,7 +2119,7 @@ logseq_flatpak() {
 }
 
 logseq_flatpak_latest() { # no_auto
-  flatpak_latest com.logseq.Logseq
+  flatpak_appstream com.logseq.Logseq
 }
 
 IMAGE_SEARCH+=("mariadb_docker|mariadb")
@@ -2190,7 +2190,7 @@ mongodb_compass_flatpak() {
 }
 
 mongodb_compass_flatpak_latest() { # no_auto
-  flatpak_latest com.mongodb.Compass
+  flatpak_appstream com.mongodb.Compass
 }
 
 mosquitto() {
@@ -2210,7 +2210,7 @@ mpv_flatpak() {
 }
 
 mpv_flatpak_latest() { # no_auto
-  flatpak_latest io.mpv.Mpv
+  flatpak_appstream io.mpv.Mpv
 }
 
 mqtt5_explorer_bin_pacman() {
@@ -2226,7 +2226,7 @@ mqtt5_explorer_flatpak() {
 }
 
 mqtt5_explorer_flatpak_latest() { # no_auto
-  flatpak_latest io.github.Omniaevo.mqtt5-explorer
+  flatpak_appstream io.github.Omniaevo.mqtt5-explorer
 }
 
 IMAGE_SEARCH+=("mysql_docker|mysql/mysql-server")
@@ -2302,7 +2302,7 @@ nginx_docker() {
 }
 
 nginx_alpine_latest() {
-  alpine_package_latest nginx
+  alpine_repo_package nginx
 }
 
 nginx_latest() { # no_auto
@@ -2391,7 +2391,7 @@ opencloud_docker() {
   docker_compose_exec opencloud version | awk '/^Version:/{sub(/^Version: /,"");print;exit}'
 }
 
-opencloud_docker_latest() {
+opencloud_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+$' opencloudeu/opencloud-rolling
 }
 
@@ -2452,7 +2452,7 @@ oscar_pacman() {
   pacman_package oscar
 }
 
-oscar_aur_latest() {
+oscar_aur_latest() { # no_auto
   aur_package oscar
 }
 
@@ -2461,7 +2461,7 @@ oscar_flatpak() {
 }
 
 oscar_flatpak_latest() { # no_auto
-  flatpak_latest com.sleepfiles.OSCAR
+  flatpak_appstream com.sleepfiles.OSCAR
 }
 
 IMAGE_SEARCH+=("owncloud_docker|owncloud")
@@ -2470,7 +2470,7 @@ owncloud_docker() {
     awk -F "'" '/\$OC_VersionString[[:space:]]*=/{print $2;exit}'
 }
 
-owncloud_docker_latest() {
+owncloud_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+$' owncloud/server
 }
 
@@ -2499,11 +2499,11 @@ php_fpm_docker() {
 
 php_fpm_alpine_latest() {
   if [[ -z "$minver" ]]; then
-    alpine_package_latest 'php*-common'
+    alpine_repo_package 'php*-common'
   else
     local M=${minver%%.*}
     local m=${minver##*.}
-    alpine_package_latest "php$M$m-common"
+    alpine_repo_package "php$M$m-common"
   fi
 }
 
@@ -2525,7 +2525,7 @@ pinta_pacman() {
   pacman_package pinta
 }
 
-pinta_aur_latest() {
+pinta_aur_latest() { # no_auto
   aur_package pinta
 }
 
@@ -2534,7 +2534,7 @@ pinta_flatpak() {
 }
 
 pinta_flatpak_latest() { # no_auto
-  flatpak_latest com.github.PintaProject.Pinta
+  flatpak_appstream com.github.PintaProject.Pinta
 }
 
 pipeline_gtk_pacman() {
@@ -2550,7 +2550,7 @@ pipeline_flatpak() {
 }
 
 pipeline_flatpak_latest() { # no_auto
-  flatpak_latest de.schmidhuberj.tubefeeder
+  flatpak_appstream de.schmidhuberj.tubefeeder
 }
 
 piper_git_pacman() {
@@ -2573,7 +2573,7 @@ piper_flatpak() {
 }
 
 piper_flatpak_latest() { # no_auto
-  flatpak_latest org.freedesktop.Piper
+  flatpak_appstream org.freedesktop.Piper
 }
 
 IMAGE_SEARCH+=("plex_docker|plexinc/pms-docker")
@@ -2669,7 +2669,7 @@ privatebin() {
     awk -F '[><]' '/<p class="col-md-1 col-xs-4 text-center">[^<]+<\/p>/{print $3;exit}' <<< "$out"
 }
 
-privatebin_latest() {
+privatebin_latest() { # no_auto
   github_project PrivateBin/PrivateBin
 }
 
@@ -2688,7 +2688,7 @@ protonup_qt_flatpak() {
 }
 
 protonup_qt_flatpak_latest() { # no_auto
-  flatpak_latest net.davidotek.pupgui2
+  flatpak_appstream net.davidotek.pupgui2
 }
 
 IMAGE_SEARCH+=("prowlarr_docker|linuxserver/prowlarr")
@@ -2704,7 +2704,7 @@ prowlarr_latest() { # no_auto
   github_project linuxserver/docker-prowlarr
 }
 
-putty_cac_latest() {
+putty_cac_latest() { # no_auto
   github_project NoMoreFood/putty-cac
 }
 
@@ -2950,7 +2950,7 @@ shlink_docker() {
   docker_inspect
 }
 
-shlink_docker_latest() {
+shlink_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+$' shlinkio/shlink
 }
 
@@ -2963,7 +2963,7 @@ shlink_web_client_docker() {
   docker_inspect
 }
 
-shlink_web_client_docker_latest() {
+shlink_web_client_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+$' shlinkio/shlink
 }
 
@@ -3141,7 +3141,7 @@ syncthing_tray_flatpak() {
 }
 
 syncthing_tray_flatpak_latest() { # no_auto
-  flatpak_latest io.github.martchus.syncthingtray
+  flatpak_appstream io.github.martchus.syncthingtray
 }
 
 syncthingtray_qt6_pacman() {
@@ -3275,7 +3275,7 @@ ungoogled_chromium_flatpak() {
 }
 
 ungoogled_chromium_flatpak_latest() { # no_auto
-  flatpak_latest io.github.ungoogled_software.ungoogled_chromium
+  flatpak_appstream io.github.ungoogled_software.ungoogled_chromium
 }
 
 IMAGE_SEARCH+=("unifi_docker|linuxserver/unifi-network-application")
