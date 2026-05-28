@@ -696,7 +696,7 @@ docker_inspect() { # helper_function
 
     log -d "Container version: $version"
     [[ -n "$version" ]] && echo "$version" && return 0
-    log -q "Warning: Could not determine version for ${container##*\|} from org.opencontainers.image.version or version labels"
+    log -d "Warning: Could not determine version for ${container##*\|} from org.opencontainers.image.version or version labels"
     return 1
   fi
 }
@@ -1899,13 +1899,7 @@ jitsi_excalidraw_latest() { # no_auto
 
 IMAGE_SEARCH+=("jitsi_meet_docker|(jitsi/web|jitsi-meet-web)")
 jitsi_meet_docker() {
-  local v
-  v=$(docker_inspect)
-  if [[ -n "$v" ]]; then
-    "stable/jitsi-meet_$v"
-  else
-    docker_inspect -i | sed -r 's/stable-/stable\/jitsi-meet_/'
-  fi
+  docker_inspect -i | sed -r 's/stable-/stable\/jitsi-meet_/'
 }
 
 jitsi_meet_docker_latest() {
