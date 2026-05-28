@@ -1,7 +1,8 @@
-#############################
+# Getopts examples
 
+## Simple example:
 
-## Simple Claude example:
+```
 while getopts ":ab:" opt; do
   case $opt in
     a) a=true ;;
@@ -12,11 +13,11 @@ while getopts ":ab:" opt; do
   esac
 done
 shift $(( OPTIND - 1 ))
+```
 
+## Example of built in getopts
 
-
-# Example of built in getopts
-
+```
 progname=${0##*/}
 progname=${progname%.sh}
 usage() {
@@ -58,17 +59,22 @@ while getopts ":hsa:b:" opt; do
   esac
 done
 shift $((OPTIND - 1))
+```
 
-## NOTE: You can overload -h with this:
-#   h)
-#      [ -z "$2" ] || [ ${2:0:1} = - ] && usage
-#      hswitch=true ;;
+### NOTES:
+- You can overload -h with this:
 
-## NOTE: When used inside a function, set "local OPTIND"
+```
+   h)
+      [ -z "$2" ] || [ ${2:0:1} = - ] && usage
+      hswitch=true ;;
+```
 
-##############################################################
-# Example of manually made get opts that supports long options
+- When used inside a function, set "local OPTIND=1"
 
+## Example of manually made get opts that supports long options
+
+```
 progname=${0##*/}
 progname=${progname%.sh}
 usage() {
@@ -126,5 +132,4 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 # In the rest of the script, instead of using $1,..., use ${args[1]},...
-
-# vim:set ft=sh:
+```
