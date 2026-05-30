@@ -174,9 +174,6 @@ usage() {
   echo "  -A           : Run all configured engines/models, even after agreement requirements met"
   echo "  -j           : Output using JSON (default: simple plaintext answer)"
   echo "  -J           : Output simple response (i.e. 'Friday' / default option)"
-  echo "  -g           : Make a guess at the date based on county message (default option)"
-  echo "  -G           : Do not make a guess at the date based on county message"
-  echo "  -w WEIGHT    : Weight for guess day (default: 1)"
   echo "  -L [ENGINE]  : List models (optionally, for ENGINE)"
   echo "  -t TESTDATE  : Use a test date instead of today (must be YYYY-mm-dd)"
   echo "  -a ANSWER    : Hardcode an answer for testing"
@@ -200,7 +197,7 @@ usage() {
 for a in $*; do [ $a = --help -o $a = -h ] && usage; done
 
 # Set options string
-options=":hc:o:l:s:m:DdvAjJgGw:L:t:a:Z"
+options=":hc:o:l:s:m:DdvAjJL:t:a:Z"
 
 # Check for config file on command line
 OPTIND=1
@@ -240,7 +237,7 @@ for var in home_assistant_base_url recycle_url_main recycle_default_day ; do
 done
 
 # Get general program settings from config_file
-for var in output_file log_file stats_file hass_api_key engine_order llm_prompt min_agree min_agree_scale debug debug_extra debug_exit verbose verbose_extra run_all create_guess guess_weight output_json date_fmt log_level log_name log_datefmt log_prefix log_write_tag log_write_name log_write_date log_write_prefix ; do
+for var in output_file log_file stats_file hass_api_key engine_order llm_prompt min_agree min_agree_scale debug debug_extra debug_exit verbose verbose_extra run_all output_json date_fmt log_level log_name log_datefmt log_prefix log_write_tag log_write_name log_write_date log_write_prefix ; do
   tmpval=$(awk "/^recycle_day_$var ?:/{sub(/^[^:]+ *: */,\"\");gsub(/^\"|\"$/,\"\");print;exit}" "$config_file")
   [ $var = llm_prompt ] && llm_prompt=$(printf "%b" "$tmpval")
   [[ $tmpval ]] && [[ ! "${!var}" ]] && declare "$var=$(setvar "$tmpval")"
@@ -301,8 +298,6 @@ debug_exit="${debug_exit:-false}"
 verbose="${verbose:-false}"
 verbose_extra="${verbose_extra:-false}"
 run_all="${run_all:-false}"
-create_guess="${create_guess:-true}"
-guess_weight="${guess_weight:-1}"
 output_json="${output_json:-false}"
 date_fmt="${date_fmt:-%Y-%m-%d %H:%M:%S.000}"
 log_level="${log_level:-INFO}"
@@ -389,9 +384,6 @@ while getopts "$options" opt; do
     A) run_all=true ;;
     j) output_json=true ;;
     J) output_json=false ;;
-    g) create_guess=true ;;
-    G) create_guess=false ;;
-    w) case $OPTARG in -*) handle_error -u -- "-$opt requires an argument" ;; *) guess_weight=$OPTARG ;; esac ;;
     L) case $OPTARG in
          -*) handle_error -wE -- "-$opt takes an unused argument" ; unset list_engine; print_model_list=true ; ((OPTIND--)) ;;
           *) print_model_list=true ; list_engine=$OPTARG ;;
@@ -426,13 +418,6 @@ for var in min_agree_scale ; do
   ! [[ ${!var} =~ ^10*$ ]] && handle_error "$var must be powers of 10: 1,10,100,... (given: ${!var})"
 done
 
-# Validate float variables
-for var in guess_weight \
-           $(for v in ${supported_engines[@]};do echo $v[weight]; done); do
-  [[ ${!var} ]] || continue
-  ! [[ ${!var} =~ ^[0-9]+(\.[0-9]+)?$ ]] && handle_error "$var must be an float: 0.3,1.4,... (given: ${!var})"
-done
-
 # Validate integer variables
 for var in min_agree \
            $(for v in ${supported_engines[@]};do echo $v[max_tokens]; done); do
@@ -442,7 +427,7 @@ done
 
 # Validate boolean variables
 for var in debug debug_extra debug_exit verbose verbose_extra run_all \
-           create_guess output_json log_write_tag log_write_name log_write_date \
+           output_json log_write_tag log_write_name log_write_date \
            log_write_prefix create_model_list \
            $(for v in ${supported_engines[@]};do echo $v[enabled]; done); do
   [[ ${!var} ]] || continue
@@ -532,8 +517,6 @@ gen_stats_file() {
         "total_models": '"${model_count:-0}"',
         "run_count": '"${run_count:-0}"',
         "completed": "'"${responders[@]}"'",
-        "guess_day": "'"$guess_day"'",
-        "guess_weight": '"${guess_weight:-1}"',
         "min_agree": '"${min_agree:-0}"',
         "agreements": '"${agreements:-0}"',
         "agreed_answer": "'"$answer_date"'",
@@ -779,7 +762,6 @@ if $debug; then
     [ $var = llm_prompt ] && log "$(printf ' - %s = "%s"\n' "$var" "$(echo "${!var}" | fold -sw $((columns - ${#var} - 3))|sed "2,\$s/^/$(printf '%*s' $((${#var} - 3)))/")")"
     ! [ $var = llm_prompt ] && log "$(printf ' - %s = "%s"\n' "$var" "${!var}")"
   done
-  log " - guess_day = \"${guess_day:-No guess}\""
   list=$engine_order
   $debug_extra && list="${manual[enabled]:+manual }${supported_engines[@]}"
   for engine in $list; do
