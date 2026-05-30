@@ -758,9 +758,8 @@ reference_date=$(date -d "$reference_ymd" +"%A, %B %-d, %Y")
 ! $debug && $verbose && log "Reference date: $reference_date ($reference_ymd)"
 ! $debug && $verbose && log "Normal recycle day: $normal_recycle_day"
 
-# CHANGEME TODO do not hardcode gen prompt script
 # Generate prompt
-llm_prompt=$(~/src/scripts/bin/llm_gen_prompt)
+llm_prompt=$(llm_gen_prompt)
 
 # Initial fake answer settings
 if [[ $answer ]]; then
