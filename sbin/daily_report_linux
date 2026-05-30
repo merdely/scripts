@@ -121,14 +121,14 @@ if [[ -z "$1" || "$1" == "git" ]]; then
 fi
 
 if [[ -z "$1" || "$1" = "scripts" ]]; then
-  unset q_flag
-  $quiet && q_flag=-q
   if [[ -d /srv/scripts/.git ]]; then
     ! $quiet && echo "Updating /srv/scripts from git:"
-    git -C /srv/scripts pull $q_flag
+    git -C /srv/scripts pull -q
+    ! $quiet && git -C /srv/scripts diff --name-only ORIG_HEAD HEAD | sed '/^$/d;s/^/   - /'
   elif [[ -d /opt/scripts/.git ]]; then
     ! $quiet && echo "Updating /opt/scripts from git:"
-    git -C /opt/scripts pull $q_flag
+    git -C /opt/scripts pull -q
+    ! $quiet && git -C /opt/scripts diff --name-only ORIG_HEAD HEAD | sed '/^$/d;s/^/   - /'
   fi
   unset q_flag
 fi
