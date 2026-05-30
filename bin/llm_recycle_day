@@ -457,6 +457,14 @@ for var in home_assistant_base_url recycle_url_main \
   ! [[ ${!var} =~ ^https?:// ]] && handle_error "$var is not a valid URL (given: ${!var})"
 done
 
+# Set reference day to the normal recycle day for this week (or of the passed week)
+epoch=$(date ${today_date:+-d $today_date} +%s)
+dow=$(date ${today_date:+-d $today_date} +%w)
+woy=$(date ${today_date:+-d $today_date} +%-U)
+
+# Calculate the ymd of $normal_recycle_day
+normal_recycle_date=$(date -d "@$(( epoch + (${days[$normal_recycle_day]} - dow) * 86400 ))" +"%Y-%m-%d")
+
 # If printing debug info, don't print in log format
 $debug && log_write_tag=false log_write_name=false log_write_date=false log_write_prefix=true log_prefix="DEBUG:"
 
@@ -490,9 +498,13 @@ gen_answer_json() {
   fi
 
   (( ${#failures[@]} > 0 )) && err=true
+  local shift_day=false
+  [[ "$1" != "$normal_recycle_date" ]] && shift_day=true
 
   echo '{
     "day": "'"$1"'",
+    "normal_day": "'"$normal_recycle_date"'",
+    "shift_day": '"$shift_day"',
     "agreements": '"$2"',
     "min_agree": '"$3"',
     "weighted_answer": '"$4"',
@@ -745,21 +757,8 @@ if [ "${use_ai,,}" = "on" ]; then
   fi
 fi
 
-# Set reference day to the normal recycle day for this week (or of the passed week)
-epoch=$(date ${today_date:+-d $today_date} +%s)
-dow=$(date ${today_date:+-d $today_date} +%w)
-woy=$(date ${today_date:+-d $today_date} +%-U)
-reference_ymd=$(date -d "@$(( epoch + (5 - dow) * 86400 ))" +"%Y-%m-%d")
-if [[ -n "$answer" ]]; then
-  reference_ymd=$(date -d "$1 + $(( $(date -d "$answer" +%w) - $(date -d "$today_date" +%w) )) days" +%Y-%m-%d)
-fi
-reference_date=$(date -d "$reference_ymd" +"%A, %B %-d, %Y")
-
-! $debug && $verbose && log "Reference date: $reference_date ($reference_ymd)"
-! $debug && $verbose && log "Normal recycle day: $normal_recycle_day"
-
 # Generate prompt
-llm_prompt=$(llm_gen_prompt)
+llm_prompt=$(llm_gen_prompt --today "$today_date")
 
 # Initial fake answer settings
 if [[ $answer ]]; then
@@ -776,7 +775,7 @@ fi
 # If debug mode, print variables
 if $debug; then
   log "Settings: "
-  for var in config_file home_assistant_base_url hass_api_key use_ai recycle_url_main county_alert_url recycle_default_day normal_recycle_day today_date reference_date reference_ymd min_agree min_agree_ratio model_count llm_prompt engine_order ; do
+  for var in config_file home_assistant_base_url hass_api_key use_ai recycle_url_main county_alert_url recycle_default_day normal_recycle_day normal_recycle_date today_date min_agree min_agree_ratio model_count llm_prompt engine_order ; do
     [ $var = llm_prompt ] && log "$(printf ' - %s = "%s"\n' "$var" "$(echo "${!var}" | fold -sw $((columns - ${#var} - 3))|sed "2,\$s/^/$(printf '%*s' $((${#var} - 3)))/")")"
     ! [ $var = llm_prompt ] && log "$(printf ' - %s = "%s"\n' "$var" "${!var}")"
   done
@@ -808,7 +807,7 @@ run_engine() {
   [[ $engine =~ ^(mistral)$ && ! "${ref[agent_id]}" && ! "${ref[model]}" ]] && return
   [ -n "${ref[model]}" ] && ref[url]="${ref[url]//%%MODEL%%/${ref[model]}}"
 
-  local api_header_switch api_header add_header_switch add_header message_content is_affected delay_days day
+  local api_header_switch api_header add_header_switch add_header message_content day
   if [ -n "${ref[api_key]}" ]; then
     api_header_switch="-H "
     case "$engine" in
@@ -831,7 +830,7 @@ run_engine() {
   models="${ref[model]}"
   $verbose && log "Starting engine [$engine] with models: ${models:+${models//|/ }}${ref[agent_id]:+using agent_id}"
   local error_msg error_state data starttime endtime curl_output tmpanswer
-  local error_answer='{ "day":"'$normal_recycle_day'"}'
+  local error_answer='{ "day":"'$normal_recycle_date'"}'
   local model_string
   for m in ${models:-using agent_id}; do
     unset data starttime endtime curl_output tmpanswer model_string
@@ -975,7 +974,6 @@ run_engine() {
     # tmpanswer=$(echo "$tmpanswer" | sed -n '/{/,$p' | \
     #   sed -r 's/\[([0-9]),\s*[0-9]\]/\1/g;/^```/d;s/[][]//g' | awk 'BEGIN{found=0}found==0{p=p $0"\n"}/<\|(assistant|message)\|>/{found=1;next}found==1{print}END{if(found==0)printf"%s",p}')
     # $debug && log "$engine ($model_string) post-sed/awk-tweak: $tmpanswer"
-    # tmpanswer=$(jq -Mr '"is_affected=\(.is_affected) delay_days=\(.delay_days)"' <<< "$tmpanswer" 2> /dev/null)
     $debug && log "$engine ($model_string) post-grep output: $day"
     ((run_count++))
     if [ -z "$day" ]; then
@@ -1006,7 +1004,6 @@ print_output() {
 
   if [ "${use_ai,,}" != "on" ]; then
     log -t DEBUG "Generating output when AI is not used"
-    # answer is_affected num_days agreements min_agree weighted_answer run_count error error_message...
     answer_json=$(gen_answer_json "$day_answer" false 0 0 0 false 0 false "" \
       "$((now - progstart))" "$now")
   fi
@@ -1020,8 +1017,7 @@ print_output() {
   if [[ ! "${answer_day,,}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     answer_error=true
     answer_error_msg+=("Invalid answer day (${answer_day:-no answer}), using default day")
-    answer_day=$normal_recycle_day
-    day_answer=$(date -d "$1 + $(( $(date -d "$normal_recycle_day" +%w) - $(date +%w) )) days" +%Y-%m-%d)
+    answer_day=$normal_recycle_date
   fi
 
   # Add error and errormsg to output json
@@ -1107,16 +1103,11 @@ fi
 # Set up fake answer information for testing
 if ${manual[enabled]:-false}; then
   # Calculate the number of days difference between given answer and normal day
-  if ((${days[$answer]} < ${days[$normal_recycle_day]})); then
-    num_days=$((7+${days[$answer]}-${days[$normal_recycle_day]}))
-  else
-    num_days=$((${days[$answer]}-${days[$normal_recycle_day]}))
-  fi
-  [ $num_days != 0 ] && aff=true
-
   $verbose && log "Starting engine [manual] with models: ${manual[model]//|/ }"
 
   failures+=("Using manual data")
+
+  answer_recycle_date=$(date -d "@$(( epoch + (${days[$answer]} - dow) * 86400 ))" +"%Y-%m-%d")
 
   gen_stats_file running manual answer1
   responders+=("manual_answer1")
@@ -1124,7 +1115,7 @@ if ${manual[enabled]:-false}; then
   response_model["manual_answer1"]=answer1
   response_start["manual_answer1"]=$(date +%s)
   response_end["manual_answer1"]=$(date +%s)
-  response_day["manual_answer1"]=$reference_ymd
+  response_day["manual_answer1"]=$answer_recycle_date
   response_err["manual_answer1"]=false
   response_errmsg["manual_answer1"]=""
   ((run_count++))
@@ -1136,7 +1127,7 @@ if ${manual[enabled]:-false}; then
   response_model["manual_answer2"]=answer2
   response_start["manual_answer2"]=$(date +%s)
   response_end["manual_answer2"]=$(date +%s)
-  response_day["manual_answer2"]=$reference_ymd
+  response_day["manual_answer2"]=$answer_recycle_date
   response_err["manual_answer2"]=false
   response_errmsg["manual_answer2"]=""
   ((run_count++))
