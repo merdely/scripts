@@ -2,6 +2,8 @@
 
 [[ "$(id -u)" != 0 ]] && { echo "Error: This program requires root" >&2 ; exit 1 ; }
 
+[ -r /etc/os-release ] && source /etc/os-release
+
 kernchecked=false
 if [ -e /usr/bin/needs-restarting ]; then
   kernchecked=true
