@@ -76,8 +76,6 @@ handle_error() {
     err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
     answer_json=$(gen_answer_json \
       "${day_answer:-$normal_recycle_day}" \
-      "${aff_answer:-false}" \
-      "${num_answer:-0}" \
       "${agreements:-0}" \
       "$min_agree" \
       "${weighted_answer:-false}" \
@@ -294,6 +292,7 @@ fi
 normal_recycle_day=$(curl -skSL -H "Authorization: Bearer $hass_api_key" $home_assistant_base_url/api/states/input_select.recycle_day | jq -r '.state' 2>/dev/null)
 [[ ! $normal_recycle_day ]] && normal_recycle_day=$recycle_default_day
 day_answer=$normal_recycle_day
+day_answer=$(date -d "$1 + $(( $(date -d "$normal_recycle_day" +%w) - $(date +%w) )) days" +%Y-%m-%d)
 
 # Settings that can be overwritten by command line arguments
 engine_order="${engine_order:-${supported_engines[@]}}"
@@ -345,14 +344,6 @@ openrouter[url]="${openrouter_url:-https://openrouter.ai/api/v1/chat/completions
 openrouter[model]="${openrouter_model:-openai/gpt-5.2}"
 openrouter[match]="${openrouter_match:-.output[0].content[0].text}"
 manual[weight]=2
-[ -z "$llm_prompt" ] && llm_prompt='Consult a federal holiday calendar for 2026.
-If my recycling pickup day on {{ reference_date }} is during the same week as any federal holiday and the recycling pickup day is on or after the federal holiday during that week, my recycling pickup day will change and will be delayed by 1 day.  Will my recycling day be affected and by how many days?
-Return your answer in the following format (do not add any extra text or explanation):
-{
-  "date": "[INSERT_DATE]",
-  "is_affected": [true/false],
-  "delay_days": [number of days delayed, or 0 if not affected]
-}'
 
 # Define extra settings (for example: claude's anthropic_version)
 for engine in ${supported_engines[@]}; do
@@ -486,11 +477,11 @@ fi
 
 # Use to generate consistent answer_json data
 gen_answer_json() {
-  [ $# -lt 9 ] && return 1
-  local err=$8
-  local now=${11}
+  [ $# -lt 7 ] && return 1
+  local err=$6
+  local now=${9}
   [[ -z "$now" ]] && now=$(date +%s)
-  local proctime=${10}
+  local proctime=${8}
   [[ -z "$proctime" ]] && proctime=$(( now - progstart ))
   local failure_list="${failures[@]}"
   if (( ${#failures[@]} > 1 )); then
@@ -502,14 +493,12 @@ gen_answer_json() {
 
   echo '{
     "day": "'"$1"'",
-    "is_affected": '"$2"',
-    "num_days": '"$3"',
-    "agreements": '"$4"',
-    "min_agree": '"$5"',
-    "weighted_answer": '"$6"',
-    "run_count": '"$7"',
+    "agreements": '"$2"',
+    "min_agree": '"$3"',
+    "weighted_answer": '"$4"',
+    "run_count": '"$5"',
     "error": '"$err"',
-    "error_msg": "'"${9:-$failure_list}"'",
+    "error_msg": "'"${7:-$failure_list}"'",
     "failure_count": '"${#failures[@]}"',
     "failures": "'"$failure_list"'",
     "process_time": '"$proctime"',
@@ -592,64 +581,44 @@ downscale() {
 # Function to check if the minimum number of LLMs agree on their answer
 check_agreement() {
   local responder response_error engine v tmpday engine list
-  local day_max=0 aff_max=0 num_max=0 day_add=0 aff_add=0 num_add=0
+  local day_max=0 day_add=0
   local answer="" weighted_answer=false
   local scaled_min_agree=$(upscale $min_agree)
-  declare -A day_count aff_count num_count
+  declare -A day_count
   gen_stats_file checking none none
 
-  [[ $guess_day ]] && $debug && log "Applying guess weight: $guess_weight"
   for responder in ${responders[@]}; do
+    tmpday=${response_day[$responder]}
+
     engine="${response_engine[$responder]:-${responder%-*}}"
     declare -n ref=$engine
 
-    day_add=0 aff_add=0 num_add=0
-    if [[ $guess_day ]]; then
-      tmpday=${response_day[$responder]}
-      tmpaff=${response_aff[$responder]}
-      tmpnum=${response_days[$responder]}
-      [ ${tmpday:-none} = ${guess_day:-notset} ] && [ -n "$guess_weight" ] && day_add=$(upscale $guess_weight)
-      [ ${tmpaff:-none} = ${guess_aff:-notset} ] && [ -n "$guess_weight" ] && aff_add=$(upscale $guess_weight)
-      [ ${tmpnum:-none} = ${guess_num:-notset} ] && [ -n "$guess_weight" ] && num_add=$(upscale $guess_weight)
-      [[ $num_add -gt 0 || ${ref[weight]} != 1 ]] && weighted_answer=true
-      response_weight[$responder]=$(downscale $(($(upscale ${ref[weight]:-1}) + ${num_add:-0} )))
-    fi
-    [[ ${tmpday,,} =~ ^$wday_regex$ ]] && \
+    day_add=0
+    [[ ${tmpday,,} =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && \
       day_count[$tmpday]=$(( ${day_count[$tmpday]:-0} + $(upscale ${ref[weight]:-1}) + ${day_add:-0} ))
-    [[ ${tmpaff,,} =~ ^(true|1|false|0)$ ]] && \
-      aff_count[$tmpaff]=$(( ${aff_count[$tmpaff]:-0} + $(upscale ${ref[weight]:-1}) + ${aff_add:-0} ))
-    [[ $tmpnum =~ ^[0-9]$ ]] && \
-      num_count[$tmpnum]=$(( ${num_count[$tmpnum]:-0} + $(upscale ${ref[weight]:-1}) + ${num_add:-0} ))
   done
 
   for v in "${!day_count[@]}"; do (( day_count[$v] > day_max )) && day_max=${day_count[$v]} && day_answer=$v; done
-  for v in "${!aff_count[@]}"; do (( aff_count[$v] > aff_max )) && aff_max=${aff_count[$v]} && aff_answer=$v; done
-  for v in "${!num_count[@]}"; do (( num_count[$v] > num_max )) && num_max=${num_count[$v]} && num_answer=$v; done
 
-  $debug && log "Agreements found: day:$(downscale $day_max) aff:$(downscale $aff_max) num:$(downscale $num_max)"
+  $debug && log "Agreements found: day:$(downscale $day_max)"
   unset list
   (( $day_max < $scaled_min_agree )) && list="$list Day"
-  (( $aff_max < $scaled_min_agree )) && list="$list Affected"
-  (( $num_max < $scaled_min_agree )) && list="$list Num Days"
-  $debug && [[ $list ]] && log "Not enough agreements for:$list"
+  $debug && [[ -n "$list" ]] && log "Not enough agreements for:$list"
 
   agreements=$day_max
-  if (( $day_max >= $scaled_min_agree && $aff_max >= $scaled_min_agree && $num_max >= $scaled_min_agree )) &&
-              [[ $day_answer && $aff_answer && $num_answer ]]; then
-    [ $aff_max -lt $agreements ] && agreements=$aff_max
-    [ $num_max -lt $agreements ] && agreements=$num_max
+  if (( $day_max >= $scaled_min_agree )) && [[ -n "$day_answer" ]]; then
     [ $agreements -ge $scaled_min_agree ] && delete_element answer_error_msg "Not enough agreements"
     [ ${#answer_error_msg[@]} -eq 0 ] && answer_error=false
     agreements=$(downscale $agreements)
 
     local err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
-    local json="{\"day\":\"$day_answer\",\"is_affected\":$aff_answer,\"num_days\":$num_answer,\"agreements\":$agreements,\"min_agree\":$min_agree,\"run_count\":$run_count,\"error\":$answer_error,\"error_msg\":\"$err\"}"
+    local json="{\"day\":\"$day_answer\",\"agreements\":$agreements,\"min_agree\":$min_agree,\"run_count\":$run_count,\"error\":$answer_error,\"error_msg\":\"$err\"}"
     local now=$(date +%s)
     # Prepare answer_json
     answer_day=$day_answer
-    json=$(gen_answer_json "$day_answer" "$aff_answer" "$num_answer" \
-        "${agreements:-0}" "$min_agree" "$weighted_answer" "${run_count:-0}" \
-        "$answer_error" "$err" "$((now - progstart))" "$now")
+    json=$(gen_answer_json "$day_answer" "${agreements:-0}" "$min_agree" \
+      "$weighted_answer" "${run_count:-0}" \
+      "$answer_error" "$err" "$((now - progstart))" "$now")
 
     # Test validity of answer json
     local out=$(jq -nc --argjson a "$json" '$a' 2> /dev/null)
@@ -666,7 +635,7 @@ check_agreement() {
   else
     agreements=$(downscale $agreements)
   fi
-  $verbose && log "Agreements: $agreements of $min_agree ($run_count runs): $day_answer, $aff_answer, $num_answer"
+  $verbose && log "Agreements: $agreements of $min_agree ($run_count runs): $day_answer"
 }
 
 if [ "${use_ai,,}" = "on" ]; then
@@ -780,123 +749,18 @@ fi
 epoch=$(date ${today_date:+-d $today_date} +%s)
 dow=$(date ${today_date:+-d $today_date} +%w)
 woy=$(date ${today_date:+-d $today_date} +%-U)
-reference_date=$(date -d "@$(( epoch + (5 - dow) * 86400 ))" +"%A, %B %-d, %Y")
 reference_ymd=$(date -d "@$(( epoch + (5 - dow) * 86400 ))" +"%Y-%m-%d")
+if [[ -n "$answer" ]]; then
+  reference_ymd=$(date -d "$1 + $(( $(date -d "$answer" +%w) - $(date -d "$today_date" +%w) )) days" +%Y-%m-%d)
+fi
+reference_date=$(date -d "$reference_ymd" +"%A, %B %-d, %Y")
+
 ! $debug && $verbose && log "Reference date: $reference_date ($reference_ymd)"
 ! $debug && $verbose && log "Normal recycle day: $normal_recycle_day"
 
-# Determine the URL for the county's alert text on the recycle URL
-xmllint=false
-command -v xmllint &> /dev/null && xmllint=true
-county_alert_url_out=$(mktemp)
-tmpfiles+=("$county_alert_url_out")
-county_alert_url_code=$(curl -sLo "$county_alert_url_out" -w "%{http_code}\n" "$recycle_url_main")
-if [[ "$county_alert_url_code" == 2* && "$county_alert_url_out" =~ https?:// ]]; then
-  if $xmllint; then
-    county_alert_url=$(xmllint --html --xpath 'string(//div[@id="alert"]/following-sibling::script)' \
-      "$county_alert_url_out" 2>/dev/null | \
-      sed -n 's/.*load("\([^"]*\)".*/\1/p')
-  else
-    county_alert_url=$(sed -n 's/.*$("#alert").load("\([^"]*\)".*/\1/p' "$county_alert_url_out")
-  fi
-  ! $debug && $verbose && log "County Alert URL: $county_alert_url"
-
-  # Determine the content of the county's alert text
-  county_alert_text_out=$(mktemp)
-  tmpfiles+=("$county_alert_text_out")
-  county_alert_text_code=$(curl -sLo "$county_alert_text_out" -w "%{http_code}\n" "$county_alert_url")
-  if [[ "$county_alert_text_code" == 2* && -n "$county_alert_text_out" ]]; then
-    if $xmllint; then
-      county_alert_text=$(xmllint --html --xpath 'string(//body)' "$county_alert_text_out" 2> /dev/null | \
-        sed -r 's/^\s*//;/^\s*$/d;s/[[:space:]]*$//')
-    else
-      county_alert_text=$(sed -r \
-        ':a;N;$!ba;s/\n/ /g;s/(&nbsp;|\r)/ /g;s/<!--.*-->//g;s/ +/ /g;s/<[^>]*>//g;s/^ +//;s/[[:space:]]*$//' \
-        "$county_alert_text_out")
-    fi
-    if $verbose_extra; then
-      ! $debug && log "County Notice:"
-      ! $debug && log "$(echo "    $county_alert_text" | fold -sw $((columns - 4)) | sed "2,\$s/^/$(printf '%*s' 4)/")"
-    elif $verbose; then
-      d=$(date +"$log_datefmt")
-      cols=$((${#d} + 1 + ${#log_tag} + 1 + ${#log_name} + 2 + 1))
-      width=$((columns - $cols - 9))  # Number of columns - width of "County Notice: " - padding
-      unset dots
-      county_notice="$(echo "County Notice: \"$(echo "$county_alert_text" | paste -sd ' ')" | fold -sw $width | head -n1)"
-      [ ${#county_alert_text} -gt $width ] && dots=…
-      ! $debug && log "$(printf "%s%s\"\n" "$county_notice" "$dots")"
-    fi
-  else
-    failures+=("Could not download county alert url")
-    ! $debug && log "County Notice: ERROR"
-  fi
-else
-  failures+=("Count not download county alert url" "Coult not download county alert text")
-  ! $debug && $verbose && log "County Alert URL: ERROR"
-fi
-
-
-# Prompt LLM Prompt info in verbose mode
-if [ "${use_ai,,}" = "on" ]; then
-  if $verbose_extra; then
-    ! $debug && log "LLM User Message:"
-    ! $debug && log "$(echo "    $llm_prompt" | fold -sw $((columns - 4)) | sed "2,\$s/^/$(printf '%*s' 4)/")"
-  elif $verbose; then
-    d=$(date +"$log_datefmt")
-    cols=$((${#d} + 1 + ${#log_tag} + 1 + ${#log_name} + 2 + 1))
-    width=$((columns - $cols - 9))  # Number of columns - width of "County Notice: " - padding
-    unset dots
-    usermsg_text="$(echo "LLM User Message: \"$(echo "$llm_prompt" | paste -sd ' ')" | fold -sw $width | head -n1)"
-    [ ${#llm_prompt} -gt $width ] && dots=…
-    ! $debug && log "$(printf "%s%s\"\n" "$usermsg_text" "$dots")"
-  fi
-
-  # Apply substitutions to llm_prompt now that they have been loaded
-  if [[ -n "$llm_prompt" ]]; then
-    if [[ -n "$county_alert_text" ]]; then
-      llm_prompt="${llm_prompt//\{\{ county_alert_text \}\}/$county_alert_text}"
-    else
-      llm_prompt="${llm_prompt//\{\{ county_alert_text \}\}/Not county alert information available.}"
-    fi
-    llm_prompt="${llm_prompt//\{\{ reference_date \}\}/$reference_date}"
-  fi
-
-  # Generate guess date
-  if $create_guess; then
-    found_dates=()
-    # If the words holiday or slide appear near a date in any sentence of the county
-    # alert text, grab the date
-    if [[ -n "$county_alert_text" ]]; then
-      while IFS= read -r sentence; do
-        if echo "${sentence,,}" | grep -iqE '\b(holiday|slide)\b' && \
-              echo "${sentence,,}" | grep -qE "\b($wday_regex, $mon_regex $day_regex|$date_regex)\b"; then
-          found_dates+=("$(echo "${sentence,,}" | grep -oE "\b($wday_regex, $mon_regex $day_regex|$date_regex)\b"|head -n1)")
-        fi
-      done < <(echo "$county_alert_text" | paste -sd ' ' | sed 's/[.!?]\s*/\n/g')
-    fi
-    # If a date was found, see if it happens this week, if so, make guess normal day + 1
-    guess_day=$normal_recycle_day
-    guess_aff=false
-    guess_num=0
-    for found_date in "${found_dates[@]}"; do
-      found_epoch=$(date -d "$found_date" "+%s" 2> /dev/null)
-      found_woy=$(date -d@${found_epoch:-1} +%-U 2> /dev/null)
-      found_dow=${days[$normal_recycle_day]}
-
-      # If the found day's week of the year matches the week of the year, use the guess
-      if [ "${found_woy:-100}" = "${woy:-200}" ]; then
-        guess_dow=$((${days[$normal_recycle_day]}+1))
-        [ $guess_dow = 7 ] && guess_dow=0
-        guess_day=${day_list[$guess_dow]}
-        guess_aff=true
-        guess_num=1
-      fi
-    done
-  else
-    unset guess_day guess_num guess_aff
-  fi
-  $verbose && log "Guess day will be used: $guess_day with $guess_weight weight"
-fi
+# CHANGEME TODO do not hardcode gen prompt script
+# Generate prompt
+llm_prompt=$(~/src/scripts/bin/llm_gen_prompt)
 
 # Initial fake answer settings
 if [[ $answer ]]; then
@@ -968,7 +832,7 @@ run_engine() {
   models="${ref[model]}"
   $verbose && log "Starting engine [$engine] with models: ${models:+${models//|/ }}${ref[agent_id]:+using agent_id}"
   local error_msg error_state data starttime endtime curl_output tmpanswer
-  local error_answer='{ "is_affected":false,"delay_days":0,"day":"'$normal_recycle_day'"}'
+  local error_answer='{ "day":"'$normal_recycle_day'"}'
   local model_string
   for m in ${models:-using agent_id}; do
     unset data starttime endtime curl_output tmpanswer model_string
@@ -1089,8 +953,6 @@ run_engine() {
     response_end["$tag"]=$(date +%s)
     if [ -z "$curl_output" ]; then
       response_day["$tag"]=""
-      response_aff["$tag"]=${is_affected:-false}
-      response_days["$tag"]=${delay_days:--1}
       response_err["$tag"]=true
       response_errmsg["$tag"]="Empty API output"
       [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) error: ${response_errmsg[$tag]}"
@@ -1102,8 +964,6 @@ run_engine() {
       match_output="${match_output#*</think>}"
       if [ $ret != 0 ] || [ -z "$match_output" ] || [ "$match_output" = null ]; then
         response_day["$tag"]=""
-        response_aff["$tag"]=""
-        response_days["$tag"]=""
         response_err["$tag"]=true
         response_errmsg["$tag"]="Unexpected JSON in curl output"
         [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) error: $curl_output"
@@ -1112,44 +972,22 @@ run_engine() {
         $debug && log "$engine ($model_string) post-jq-engine-match output: $match_output"
       fi
     fi
-    tmpanswer=$match_output
-    tmpanswer=$(echo "$tmpanswer" | sed -n '/{/,$p' | \
-      sed -r 's/\[([0-9]),\s*[0-9]\]/\1/g;/^```/d;s/[][]//g' | awk 'BEGIN{found=0}found==0{p=p $0"\n"}/<\|(assistant|message)\|>/{found=1;next}found==1{print}END{if(found==0)printf"%s",p}')
-    $debug && log "$engine ($model_string) post-sed/awk-tweak: $tmpanswer"
-    tmpanswer=$(jq -Mr '"is_affected=\(.is_affected) delay_days=\(.delay_days)"' <<< "$tmpanswer" 2> /dev/null)
-    $debug && log "$engine ($model_string) post-jq output: $tmpanswer"
+    day=$(echo "$match_output" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | tail -n1)
+    # tmpanswer=$(echo "$tmpanswer" | sed -n '/{/,$p' | \
+    #   sed -r 's/\[([0-9]),\s*[0-9]\]/\1/g;/^```/d;s/[][]//g' | awk 'BEGIN{found=0}found==0{p=p $0"\n"}/<\|(assistant|message)\|>/{found=1;next}found==1{print}END{if(found==0)printf"%s",p}')
+    # $debug && log "$engine ($model_string) post-sed/awk-tweak: $tmpanswer"
+    # tmpanswer=$(jq -Mr '"is_affected=\(.is_affected) delay_days=\(.delay_days)"' <<< "$tmpanswer" 2> /dev/null)
+    $debug && log "$engine ($model_string) post-grep output: $day"
     ((run_count++))
-    unset is_affected delay_days day
-    if [ -z "$tmpanswer" ]; then
-        response_day["$tag"]=""
-        response_aff["$tag"]=""
-        response_days["$tag"]=""
-        response_err["$tag"]=true
-        response_errmsg["$tag"]="Bad json output from curl"
-        [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) affected/days extraction error: $curl_output"
-        continue
-    fi
-    if [[ $tmpanswer =~ ^is_affected=(true|false)" "delay_days=[0-6]$ ]]; then
-      eval "$tmpanswer"
-      [[ $is_affected == true && $delay_days == 0 ]] && delay_days=1
-      day=$(date -d @$(( $(date -d $reference_ymd +%s) + $delay_days * 86400 )) +%A)
-      # Fix is_affected if wrong, but everything else matches
-      [ $day = $normal_recycle_day ] && [ $delay_days = 0 ] && [ $is_affected = true ] && is_affected=false
-    else
+    if [ -z "$day" ]; then
       response_day["$tag"]=""
-      response_aff["$tag"]=""
-      response_days["$tag"]=""
       response_err["$tag"]=true
-      response_errmsg["$tag"]="Invalid json output from curl"
-      [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) final answer parsing error: $curl_output"
+      response_errmsg["$tag"]="Bad json output from curl"
+      [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) affected/days extraction error: $curl_output"
       continue
-    fi
-
-    if [[ $day ]]; then
-      $verbose && log "$engine ($model_string) answer: 'day:$day|aff:$is_affected|days:$delay_days|error:$error_state'"
+    else
+      $verbose && log "$engine ($model_string) answer: 'day:$day|error:$error_state'"
       response_day["$tag"]="$day"
-      response_aff["$tag"]=${is_affected:-false}
-      response_days["$tag"]=${delay_days:--1}
       response_err["$tag"]=false
       response_errmsg["$tag"]=""
       check_agreement
@@ -1175,19 +1013,23 @@ print_output() {
   fi
 
   # Prepare answer to answer information
-  if [ -z "$answer_day" ]; then
-    answer_day=$(jq -nr --argjson a "$answer_json" '$a | .day' 2> /dev/null)
-    [ $? != 0 ] && log -t DEBUG "jq error getting day from answer_json"
+  if [[ -z "$answer_day" ]]; then
+    if ! answer_day=$(jq -nr --argjson a "$answer_json" '$a | .day' 2> /dev/null); then
+      log -t DEBUG "jq error getting day from answer_json"
+    fi
   fi
-  if ! [[ "${answer_day,,}" =~ ^$wday_regex$ ]]; then
+  if [[ ! "${answer_day,,}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     answer_error=true
     answer_error_msg+=("Invalid answer day (${answer_day:-no answer}), using default day")
     answer_day=$normal_recycle_day
+    day_answer=$(date -d "$1 + $(( $(date -d "$normal_recycle_day" +%w) - $(date +%w) )) days" +%Y-%m-%d)
   fi
 
   # Add error and errormsg to output json
-  local err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
+  local err
+  err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
   [ ${#answer_error_msg[@]} -eq 0 ] && answer_error=false
+    echo $answer_json >&2
   answer_json=$(jq -nc --argjson a "$answer_json" --arg e "$answer_error" --arg m "$err" '$a | .error = ($e=="true") | .error_msg = $m' 2> /dev/null)
   [ $? != 0 ] && log -t DEBUG "jq error adding error and error_msg answer_json"
 
@@ -1208,8 +1050,6 @@ print_output() {
         "engine": "'"${response_engine[$responder]:-${responder%-*}}"'",
         "model": "'"${response_model[$responder]:-"${responder#*-}"}"'",
         "day": "'"${response_day[$responder]}"'",
-        "is_affected": '"${response_aff[$responder]:-false}"',
-        "num_days": '"${response_days[$responder]:--1}"',
         "answer_weight": '"${response_weight[$responder]:-1}"',
         "process_start": '"${response_start[$responder]:-0}"',
         "process_end": '"${response_end[$responder]:-0}"',
@@ -1237,8 +1077,6 @@ print_output() {
     if $verbose; then
       eval printf "'%-16s: %s\n'" $(jq -Mnr --argjson a "$answer_json" '$a |
         "\"Day\" \"\(.day // "unknown")\" " +
-        "\"Is Affected\" \"\(.is_affected)\" " +
-        "\"Delay Days\" \"\(.num_days)\" " +
         "\"Agreements\" \"\(.agreements)\" " +
         "\"Min Agree\" \"\(.min_agree)\" " +
         "\"Weighted Answer\" \"\(.weighted_answer)\" " +
@@ -1287,9 +1125,7 @@ if ${manual[enabled]:-false}; then
   response_model["manual_answer1"]=answer1
   response_start["manual_answer1"]=$(date +%s)
   response_end["manual_answer1"]=$(date +%s)
-  response_day["manual_answer1"]=$answer
-  response_aff["manual_answer1"]=${aff:-false}
-  response_days["manual_answer1"]=$num_days
+  response_day["manual_answer1"]=$reference_ymd
   response_err["manual_answer1"]=false
   response_errmsg["manual_answer1"]=""
   ((run_count++))
@@ -1301,14 +1137,11 @@ if ${manual[enabled]:-false}; then
   response_model["manual_answer2"]=answer2
   response_start["manual_answer2"]=$(date +%s)
   response_end["manual_answer2"]=$(date +%s)
-  response_day["manual_answer2"]=$answer
-  response_aff["manual_answer2"]=${aff:-false}
-  response_days["manual_answer2"]=$num_days
+  response_day["manual_answer2"]=$reference_ymd
   response_err["manual_answer2"]=false
   response_errmsg["manual_answer2"]=""
   ((run_count++))
   check_agreement
-  unset days aff
 fi
 
 # Execute functions for LLMS

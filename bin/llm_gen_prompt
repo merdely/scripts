@@ -1,0 +1,671 @@
+#!/usr/bin/env python3
+"""
+Parse Montgomery County MD holiday trash/recycling schedule and emit
+a configured LLM prompt.
+
+Claude.ai helped with creating this script
+
+Usage:
+    holiday_check.py [options]
+
+Options:
+    --day DAY               Day of week (e.g. Friday)
+    --today DATE            Today's date in YYYY-MM-DD (default: actual today)
+    --holiday-url URL       URL or file for holiday schedule HTML
+    --county-url URL        URL or file for county update info
+    --config PATH           YAML config file (default: ~/.config/holiday_check.yaml)
+    --debug                 Dump page text to stderr on parse failure
+
+Config file (~/.config/holiday_check.yaml):
+    day: thursday
+    holiday_url: https://www.montgomerycountymd.gov/...
+    county_url: https://www.montgomerycountymd.gov/...
+    county_update_json_filter: ".alerts[].text"
+    prompt: >
+      Today is {{today}}. My normal recycle day is {{recycle_day}}.
+      {{holiday_table}}
+      {{county_update}}
+      What date will my recycle pick up be this week?
+      Only output a date in yyyy-mm-dd format and nothing else.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
+import requests
+import yaml
+from bs4 import BeautifulSoup, Tag
+
+
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "holiday_check.yaml"
+
+DAYS = [
+    "monday", "tuesday", "wednesday", "thursday",
+    "friday", "saturday", "sunday",
+]
+DAY_TO_INT = {day: i for i, day in enumerate(DAYS)}
+
+# Exit codes
+EXIT_OK                  = 0
+EXIT_USAGE               = 1
+EXIT_CONFIG              = 2
+EXIT_HOLIDAY_FETCH       = 3
+EXIT_HOLIDAY_PARSE       = 4
+EXIT_COUNTY_FETCH        = 5   # non-fatal: prompt still emitted
+EXIT_COUNTY_FILTER       = 6   # non-fatal: prompt still emitted, raw text used
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Config:
+    day:                      Optional[str] = None
+    holiday_url:              Optional[str] = None
+    county_url:               Optional[str] = None
+    county_update_json_filter: Optional[str] = None
+    prompt:                   Optional[str] = None
+
+
+@dataclass
+class HolidayInfo:
+    name: str
+    holiday_date: date
+
+
+@dataclass
+class ScheduleEntry:
+    holiday: str
+    holiday_date: str
+    pickup_date: str
+
+
+class ConfigError(Exception):
+    pass
+
+class ParseError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
+
+def load_config(path: Path) -> Config:
+    if not path.exists():
+        raise ConfigError(f"Config file not found: {path}")
+
+    try:
+        with path.open() as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ConfigError(f"Error parsing config file: {e}")
+
+    if not isinstance(data, dict):
+        raise ConfigError("Config file must be a YAML mapping")
+
+    config = Config()
+
+    if "day" in data:
+        day = data["day"].strip().lower()
+        if day not in DAY_TO_INT:
+            raise ConfigError(
+                f"Config 'day' must be a full day name (e.g. 'thursday'), got: '{day}'"
+            )
+        config.day = day
+
+    config.holiday_url               = data.get("holiday_url")
+    config.county_url                = data.get("county_url")
+    config.county_update_json_filter = data.get("county_update_json_filter")
+    config.prompt                    = data.get("prompt")
+
+    return config
+
+
+# ---------------------------------------------------------------------------
+# Fetching
+# ---------------------------------------------------------------------------
+
+def fetch_html(source: str) -> str:
+    if source.startswith(("http://", "https://")):
+        response = requests.get(
+            source,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.text
+    return Path(source).read_text(encoding="utf-8", errors="replace")
+
+
+def fetch_url(source: str) -> str:
+    """Fetch arbitrary content from a URL or file, return as text."""
+    if source.startswith(("http://", "https://")):
+        response = requests.get(
+            source,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.text
+    return Path(source).read_text(encoding="utf-8", errors="replace")
+
+
+def strip_html_if_needed(text: str) -> str:
+    """If text looks like HTML, strip tags and collapse whitespace."""
+    if re.search(r"<[a-zA-Z][^>]*>", text):
+        soup = BeautifulSoup(text, "lxml")
+        return " ".join(soup.get_text(" ", strip=True).split())
+    return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Date helpers
+# ---------------------------------------------------------------------------
+
+def parse_date(text: str, default_year: Optional[int] = None) -> Optional[date]:
+    text = re.sub(r"\(.*?\)", "", text).strip()
+
+    for fmt in ("%A, %B %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+
+    if default_year is not None:
+        for fmt in ("%A, %B %d", "%B %d"):
+            try:
+                return datetime.strptime(
+                    f"{text}, {default_year}", f"{fmt}, %Y"
+                ).date()
+            except ValueError:
+                pass
+
+    return None
+
+
+def format_date(d: date) -> str:
+    return d.strftime("%Y-%m-%d")
+
+
+def next_occurrence_of_day(day: str, from_date: date) -> date:
+    """Return the next date (>= from_date) that falls on the given weekday."""
+    target = DAY_TO_INT[day]
+    current = from_date.weekday()  # Mon=0
+    delta = (target - current) % 7
+    return from_date + timedelta(days=delta)
+
+
+# ---------------------------------------------------------------------------
+# Holiday heading / cell helpers
+# ---------------------------------------------------------------------------
+
+def cell_text(tag: Tag) -> str:
+    return " ".join(tag.get_text(" ", strip=True).split())
+
+
+def parse_holiday_heading(text: str) -> Optional[HolidayInfo]:
+    if not re.search(r"\b20\d{2}\b", text):
+        return None
+
+    text = re.sub(r"\(.*?\)", "", text).strip().rstrip(",").strip()
+    parts = [p.strip() for p in text.split(",")]
+
+    day_index = next(
+        (i for i, p in enumerate(parts) if p.lower() in DAY_TO_INT),
+        None,
+    )
+    if day_index is None or day_index == 0:
+        return None
+
+    holiday_name = ", ".join(parts[:day_index])
+    date_text    = ", ".join(parts[day_index:])
+    holiday_date = parse_date(date_text)
+
+    if not holiday_date:
+        return None
+
+    return HolidayInfo(name=holiday_name, holiday_date=holiday_date)
+
+
+# ---------------------------------------------------------------------------
+# Pickup resolver
+# ---------------------------------------------------------------------------
+
+def resolve_pickup_date(
+    pickup_text: str,
+    target_day: str,
+    holiday: HolidayInfo,
+) -> Optional[str]:
+    pickup_text = pickup_text.strip()
+
+    if "normal" in pickup_text.lower():
+        return None
+
+    parsed = parse_date(pickup_text, default_year=holiday.holiday_date.year)
+    if not parsed:
+        return None
+
+    holiday_weekday_sun0 = (holiday.holiday_date.weekday() + 1) % 7
+    week_sunday   = holiday.holiday_date - timedelta(days=holiday_weekday_sun0)
+    target_offset = (DAY_TO_INT[target_day] + 1) % 7
+    regular_date  = week_sunday + timedelta(days=target_offset)
+
+    if parsed == regular_date:
+        return None
+
+    return format_date(parsed)
+
+
+# ---------------------------------------------------------------------------
+# Schedule parser
+# ---------------------------------------------------------------------------
+
+def parse_schedule(html_text: str, target_day: str) -> list[ScheduleEntry]:
+    soup = BeautifulSoup(html_text, "lxml")
+
+    headings = soup.find_all(["h2", "h3", "h4"])
+    if not headings:
+        raise ParseError("No headings found in page — layout may have changed")
+
+    if not soup.find_all("table"):
+        raise ParseError("No tables found in page — layout may have changed")
+
+    holiday_headings = [h for h in headings if parse_holiday_heading(cell_text(h))]
+    if not holiday_headings:
+        raise ParseError(
+            f"Found {len(headings)} heading(s) but none matched the expected "
+            "holiday heading format — layout may have changed"
+        )
+
+    results: list[ScheduleEntry] = []
+
+    for heading in holiday_headings:
+        holiday = parse_holiday_heading(cell_text(heading))
+
+        table = None
+        for sibling in heading.next_siblings:
+            if not isinstance(sibling, Tag):
+                continue
+            if sibling.name == "table":
+                table = sibling
+                break
+            if sibling.name in ("h2", "h3", "h4"):
+                break
+
+        if table is None:
+            continue
+
+        for row in table.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 2:
+                continue
+
+            row_day = cell_text(cells[0]).lower()
+            if row_day == target_day or row_day.startswith(target_day):
+                pickup = resolve_pickup_date(
+                    cell_text(cells[1]),
+                    target_day,
+                    holiday,
+                )
+                if pickup is None:
+                    continue
+                results.append(ScheduleEntry(
+                    holiday=holiday.name,
+                    holiday_date=format_date(holiday.holiday_date),
+                    pickup_date=pickup,
+                ))
+
+    return results
+
+
+def get_week_bounds(d: date) -> tuple[date, date]:
+    """Return the Sunday and Saturday bounding the Sun-Sat week containing d."""
+    days_since_sunday = (d.weekday() + 1) % 7
+    sunday = d - timedelta(days=days_since_sunday)
+    saturday = sunday + timedelta(days=6)
+    return sunday, saturday
+
+
+def filter_relevant_entries(
+    entries: list[ScheduleEntry],
+    today: date,
+) -> list[ScheduleEntry]:
+    """
+    Keep only entries whose pickup date falls within the same Sun-Sat week
+    as today. If a holiday earlier in the week slides our pickup to later
+    this week, that's the only entry we care about.
+    """
+    week_start, week_end = get_week_bounds(today)
+    result = []
+    for e in entries:
+        try:
+            pickup = datetime.strptime(e.pickup_date, "%Y-%m-%d").date()
+            if week_start <= pickup <= week_end:
+                result.append(e)
+        except ValueError:
+            pass  # if unparseable, skip it
+    return result
+
+
+# ---------------------------------------------------------------------------
+# County update fetch + filter
+# ---------------------------------------------------------------------------
+
+def fetch_county_update(
+    source: str,
+    json_filter: Optional[str],
+) -> tuple[str, int]:
+    try:
+        raw = fetch_url(source)
+    except requests.ConnectionError:
+        print(
+            f"Warning: could not connect to county update URL: {source}",
+            file=sys.stderr,
+        )
+        return ("", EXIT_COUNTY_FETCH)
+    except requests.HTTPError as e:
+        print(
+            f"Warning: HTTP {e.response.status_code} fetching county update URL: {source}",
+            file=sys.stderr,
+        )
+        return ("", EXIT_COUNTY_FETCH)
+    except requests.Timeout:
+        print(
+            f"Warning: timed out fetching county update URL: {source}",
+            file=sys.stderr,
+        )
+        return ("", EXIT_COUNTY_FETCH)
+    except FileNotFoundError:
+        print(
+            f"Warning: county update file not found: {source}",
+            file=sys.stderr,
+        )
+        return ("", EXIT_COUNTY_FETCH)
+    except Exception as e:
+        print(
+            f"Warning: unexpected error fetching county update URL: {e}",
+            file=sys.stderr,
+        )
+        return ("", EXIT_COUNTY_FETCH)
+
+    if not json_filter:
+        return (strip_html_if_needed(raw), EXIT_OK)
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        print(
+            "Warning: county_update_json_filter defined but response is not JSON; "
+            "using raw content",
+            file=sys.stderr,
+        )
+        return (strip_html_if_needed(raw), EXIT_COUNTY_FILTER)
+
+    try:
+        result = subprocess.run(
+            ["jq", "-r", json_filter],
+            input=json.dumps(parsed),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip())
+        filtered = result.stdout.strip()
+        return (strip_html_if_needed(filtered), EXIT_OK)
+
+    except FileNotFoundError:
+        print(
+            "Warning: 'jq' not found; county_update_json_filter ignored",
+            file=sys.stderr,
+        )
+        return (strip_html_if_needed(raw), EXIT_COUNTY_FILTER)
+
+    except Exception as e:
+        print(
+            f"Warning: county_update_json_filter failed ({e}); using raw content",
+            file=sys.stderr,
+        )
+        return (strip_html_if_needed(raw), EXIT_COUNTY_FILTER)
+
+
+# ---------------------------------------------------------------------------
+# Prompt rendering
+# ---------------------------------------------------------------------------
+
+def render_holiday_table(entries: list[ScheduleEntry]) -> str:
+    if not entries:
+        return (
+            "Holiday schedule affecting this week:\n"
+            "No holidays affect your pickup schedule this week."
+        )
+
+    col1   = max(len(e.holiday) for e in entries)
+    header = f"{'Holiday':<{col1}}  {'Holiday Date'}  {'Pickup Date'}"
+    sep    = "-" * len(header)
+    rows   = "\n".join(
+        f"{e.holiday:<{col1}}  {e.holiday_date}  {e.pickup_date}"
+        for e in entries
+    )
+    return (
+        "Holiday schedule affecting this week "
+        "(each row means the normal pickup that week is moved TO the Pickup Date shown):\n"
+        f"{header}\n{sep}\n{rows}"
+    )
+
+
+def render_county_update(text: str) -> str:
+    if not text:
+        return ""
+    return (
+        "Review this message from the county's website and determine if my "
+        "recycle pick up day is affected:\n"
+        f"{text}"
+    )
+
+
+def render_prompt(
+    template: str,
+    today: date,
+    recycle_day: date,
+    holiday_entries: list[ScheduleEntry],
+    county_text: str,
+) -> str:
+    holiday_table = render_holiday_table(holiday_entries)
+    county_update = render_county_update(county_text)
+
+    # Wrap non-empty blocks with blank lines so they stand apart from
+    # surrounding text regardless of how the template is written
+    if holiday_table:
+        holiday_table = f"\n{holiday_table}\n"
+    if county_update:
+        county_update = f"\n{county_update}\n"
+
+    result = template
+    result = result.replace("{{today}}",         format_date(today))
+    result = result.replace("{{recycle_day}}",   format_date(recycle_day))
+    result = result.replace("{{holiday_table}}", holiday_table)
+    result = result.replace("{{county_update}}", county_update)
+
+    # Collapse runs of 3+ newlines down to 2
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Emit an LLM prompt for trash/recycling pickup day.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--day",
+        help="Day of week, full name, case-insensitive (e.g. Friday)",
+    )
+    parser.add_argument(
+        "--today",
+        metavar="YYYY-MM-DD",
+        help="Override today's date (for testing)",
+    )
+    parser.add_argument(
+        "--holiday-url",
+        metavar="URL",
+        help="URL or file path for holiday schedule HTML",
+    )
+    parser.add_argument(
+        "--county-url",
+        metavar="URL",
+        help="URL or file path for county update info",
+    )
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("HOLIDAY_CHECK_CONFIG", str(DEFAULT_CONFIG_PATH)),
+        metavar="PATH",
+        help="YAML config file (default: ~/.holiday_check.yaml)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="On parse failure, dump page text to stderr",
+    )
+    return parser
+
+
+def main() -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    # --- Load config (always attempted; missing file is only fatal if we need it) ---
+    config = Config()
+    config_path = Path(args.config)
+    if config_path.exists():
+        try:
+            config = load_config(config_path)
+        except ConfigError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return EXIT_CONFIG
+    elif args.config != str(DEFAULT_CONFIG_PATH):
+        # Explicitly specified config that doesn't exist → hard error
+        print(f"Error: config file not found: {args.config}", file=sys.stderr)
+        return EXIT_CONFIG
+
+    # --- Resolve settings: CLI overrides config ---
+    day = (args.day.strip().lower() if args.day else None) or config.day
+    if day is None:
+        print(
+            "Error: no day specified. Use --day or set 'day' in config.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    if day not in DAY_TO_INT:
+        print(
+            f"Error: '{day}' is not a valid day of the week.\n"
+            f"Expected one of: {', '.join(DAYS)}",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    holiday_url = args.holiday_url or config.holiday_url
+    if holiday_url is None:
+        print(
+            "Error: no holiday URL specified. Use --holiday-url or set "
+            "'holiday_url' in config.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    county_url  = args.county_url or config.county_url
+    json_filter = config.county_update_json_filter
+
+    prompt_template = config.prompt or (
+        "Today is {{today}}. My normal recycle day is {{recycle_day}}. "
+        "{{holiday_table}} {{county_update}} "
+        "What date will my recycle pick up be this week? "
+        "Only output a date in yyyy-mm-dd format and nothing else."
+    )
+
+    # --- Resolve today and recycle_day ---
+    if args.today:
+        try:
+            today = datetime.strptime(args.today, "%Y-%m-%d").date()
+        except ValueError:
+            print(
+                f"Error: --today must be in YYYY-MM-DD format, got '{args.today}'",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+    else:
+        today = date.today()
+
+    recycle_day = next_occurrence_of_day(day, today)
+
+    exit_code = EXIT_OK
+
+    # --- Fetch and parse holiday schedule ---
+    try:
+        html_text = fetch_html(holiday_url)
+    except FileNotFoundError:
+        print(f"Error: holiday file not found: {holiday_url}", file=sys.stderr)
+        exit_code |= EXIT_HOLIDAY_FETCH
+    except requests.HTTPError as e:
+        print(f"Error: HTTP {e.response.status_code} fetching holiday URL: {holiday_url}", file=sys.stderr)
+        exit_code |= EXIT_HOLIDAY_FETCH
+    except requests.ConnectionError:
+        print(f"Error: could not connect to holiday URL: {holiday_url}", file=sys.stderr)
+        exit_code |= EXIT_HOLIDAY_FETCH
+    except requests.Timeout:
+        print(f"Error: timed out fetching holiday URL: {holiday_url}", file=sys.stderr)
+        exit_code |= EXIT_HOLIDAY_FETCH
+    except Exception as e:
+        print(f"Error: unexpected error fetching holiday URL: {e}", file=sys.stderr)
+        exit_code |= EXIT_HOLIDAY_FETCH
+
+    holiday_entries = []
+    if not (exit_code & EXIT_HOLIDAY_FETCH):
+        try:
+            holiday_entries = parse_schedule(html_text, day)
+            holiday_entries = filter_relevant_entries(holiday_entries, today)
+        except ParseError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            if args.debug:
+                print("\n--- page text ---", file=sys.stderr)
+                print(BeautifulSoup(html_text, "lxml").get_text(), file=sys.stderr)
+            exit_code |= EXIT_HOLIDAY_PARSE
+
+    # --- Fetch county update (non-fatal) ---
+    county_text = ""
+    if county_url:
+        county_text, county_hint = fetch_county_update(county_url, json_filter)
+        exit_code |= county_hint
+
+    # --- Render and print prompt ---
+    prompt = render_prompt(
+        template=prompt_template,
+        today=today,
+        recycle_day=recycle_day,
+        holiday_entries=holiday_entries,
+        county_text=county_text,
+    )
+    print(prompt)
+
+    return exit_code
+
+if __name__ == "__main__":
+    raise SystemExit(main())
