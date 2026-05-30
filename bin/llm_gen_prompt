@@ -208,6 +208,18 @@ def next_occurrence_of_day(day: str, from_date: date) -> date:
     return from_date + timedelta(days=delta)
 
 
+def get_recycle_day_this_week(day: str, today: date) -> date:
+    """
+    Return the date of the given weekday within the same Sun-Sat week as today.
+    This means it may be in the past (e.g. if today is Saturday and day is Friday,
+    return yesterday).
+    """
+    days_since_sunday = (today.weekday() + 1) % 7
+    week_sunday = today - timedelta(days=days_since_sunday)
+    target_offset = (DAY_TO_INT[day] + 1) % 7
+    return week_sunday + timedelta(days=target_offset)
+
+
 # ---------------------------------------------------------------------------
 # Holiday heading / cell helpers
 # ---------------------------------------------------------------------------
@@ -614,7 +626,8 @@ def main() -> int:
     else:
         today = date.today()
 
-    recycle_day = next_occurrence_of_day(day, today)
+    # recycle_day = next_occurrence_of_day(day, today)
+    recycle_day = get_recycle_day_this_week(day, today)
 
     exit_code = EXIT_OK
 
