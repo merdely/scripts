@@ -20,10 +20,10 @@ failures=()
 num_answer=0
 agreements=0
 run_count=0
-unset answer_json answer_day
+unset answer_json answer_date
 declare -A ${supported_engines[@]} manual days url model match max_tokens thinking_level \
-  extra response_engine response_model response_start response_end response_day \
-  response_aff response_days response_err response_errmsg response_weight
+  extra response_engine response_model response_start response_end response_date \
+  response_aff response_err response_errmsg response_weight
 responders=()
 day_list=(Sunday Monday Tuesday Wednesday Thursday Friday Saturday)
 for i in "${!day_list[@]}"; do days["${day_list[$i]}"]=$i; done
@@ -75,7 +75,7 @@ handle_error() {
     answer_error_msg+=("Error: $*")
     err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
     answer_json=$(gen_answer_json \
-      "${day_answer:-$normal_recycle_day}" \
+      "${date_answer:-$normal_recycle_date}" \
       "${agreements:-0}" \
       "$min_agree" \
       "${weighted_answer:-false}" \
@@ -288,12 +288,6 @@ if [ "${use_ai,,}" = "on" ]; then
   done
 fi
 
-# Get normal recycle day from Home Assistant
-normal_recycle_day=$(curl -skSL -H "Authorization: Bearer $hass_api_key" $home_assistant_base_url/api/states/input_select.recycle_day | jq -r '.state' 2>/dev/null)
-[[ ! $normal_recycle_day ]] && normal_recycle_day=$recycle_default_day
-day_answer=$normal_recycle_day
-day_answer=$(date -d "$1 + $(( $(date -d "$normal_recycle_day" +%w) - $(date +%w) )) days" +%Y-%m-%d)
-
 # Settings that can be overwritten by command line arguments
 engine_order="${engine_order:-${supported_engines[@]}}"
 home_assistant_base_url="${home_assistant_base_url:-http://localhost:8123}"
@@ -344,6 +338,12 @@ openrouter[url]="${openrouter_url:-https://openrouter.ai/api/v1/chat/completions
 openrouter[model]="${openrouter_model:-openai/gpt-5.2}"
 openrouter[match]="${openrouter_match:-.output[0].content[0].text}"
 manual[weight]=2
+
+# Get normal recycle day from Home Assistant
+normal_recycle_day=$(curl -skSL -H "Authorization: Bearer $hass_api_key" $home_assistant_base_url/api/states/input_select.recycle_day | jq -r '.state' 2>/dev/null)
+[[ ! $normal_recycle_day ]] && normal_recycle_day=$recycle_default_day
+date_answer=$normal_recycle_day
+date_answer=$(date -d "$1 + $(( $(date -d "$normal_recycle_day" +%w) - $(date +%w) )) days" +%Y-%m-%d)
 
 # Define extra settings (for example: claude's anthropic_version)
 for engine in ${supported_engines[@]}; do
@@ -502,8 +502,8 @@ gen_answer_json() {
   [[ "$1" != "$normal_recycle_date" ]] && shift_day=true
 
   echo '{
-    "day": "'"$1"'",
-    "normal_day": "'"$normal_recycle_date"'",
+    "date": "'"$1"'",
+    "normal_date": "'"$normal_recycle_date"'",
     "shift_day": '"$shift_day"',
     "agreements": '"$2"',
     "min_agree": '"$3"',
@@ -536,7 +536,7 @@ gen_stats_file() {
         "guess_weight": '"${guess_weight:-1}"',
         "min_agree": '"${min_agree:-0}"',
         "agreements": '"${agreements:-0}"',
-        "agreed_answer": "'"$answer_day"'",
+        "agreed_answer": "'"$answer_date"'",
         "error": '"$error"',
         "error_msg": "'"$err"'",
         "last_updated": "'"$(date +%s)"'"
@@ -592,43 +592,43 @@ downscale() {
 
 # Function to check if the minimum number of LLMs agree on their answer
 check_agreement() {
-  local responder response_error engine v tmpday engine list
-  local day_max=0 day_add=0
+  local responder response_error engine v tmpdate engine list
+  local date_max=0 date_add=0
   local answer="" weighted_answer=false
   local scaled_min_agree=$(upscale $min_agree)
-  declare -A day_count
+  declare -A date_count
   gen_stats_file checking none none
 
   for responder in ${responders[@]}; do
-    tmpday=${response_day[$responder]}
+    tmpdate=${response_date[$responder]}
 
     engine="${response_engine[$responder]:-${responder%-*}}"
     declare -n ref=$engine
 
-    day_add=0
-    [[ ${tmpday,,} =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && \
-      day_count[$tmpday]=$(( ${day_count[$tmpday]:-0} + $(upscale ${ref[weight]:-1}) + ${day_add:-0} ))
+    date_add=0
+    [[ ${tmpdate,,} =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && \
+      date_count[$tmpdate]=$(( ${date_count[$tmpdate]:-0} + $(upscale ${ref[weight]:-1}) + ${date_add:-0} ))
   done
 
-  for v in "${!day_count[@]}"; do (( day_count[$v] > day_max )) && day_max=${day_count[$v]} && day_answer=$v; done
+  for v in "${!date_count[@]}"; do (( date_count[$v] > date_max )) && date_max=${date_count[$v]} && date_answer=$v; done
 
-  $debug && log "Agreements found: day:$(downscale $day_max)"
+  $debug && log "Agreements found: date:$(downscale $date_max)"
   unset list
-  (( $day_max < $scaled_min_agree )) && list="$list Day"
+  (( $date_max < $scaled_min_agree )) && list="$list Date"
   $debug && [[ -n "$list" ]] && log "Not enough agreements for:$list"
 
-  agreements=$day_max
-  if (( $day_max >= $scaled_min_agree )) && [[ -n "$day_answer" ]]; then
+  agreements=$date_max
+  if (( $date_max >= $scaled_min_agree )) && [[ -n "$date_answer" ]]; then
     [ $agreements -ge $scaled_min_agree ] && delete_element answer_error_msg "Not enough agreements"
     [ ${#answer_error_msg[@]} -eq 0 ] && answer_error=false
     agreements=$(downscale $agreements)
 
     local err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
-    local json="{\"day\":\"$day_answer\",\"agreements\":$agreements,\"min_agree\":$min_agree,\"run_count\":$run_count,\"error\":$answer_error,\"error_msg\":\"$err\"}"
+    local json="{\"date\":\"$date_answer\",\"normal_date\":\"$normal_recycle_date\",\"shift_day\":false,\"agreements\":$agreements,\"min_agree\":$min_agree,\"run_count\":$run_count,\"error\":$answer_error,\"error_msg\":\"$err\"}"
     local now=$(date +%s)
     # Prepare answer_json
-    answer_day=$day_answer
-    json=$(gen_answer_json "$day_answer" "${agreements:-0}" "$min_agree" \
+    answer_date=$date_answer
+    json=$(gen_answer_json "$date_answer" "${agreements:-0}" "$min_agree" \
       "$weighted_answer" "${run_count:-0}" \
       "$answer_error" "$err" "$((now - progstart))" "$now")
 
@@ -647,7 +647,7 @@ check_agreement() {
   else
     agreements=$(downscale $agreements)
   fi
-  $verbose && log "Agreements: $agreements of $min_agree ($run_count runs): $day_answer"
+  $verbose && log "Agreements: $agreements of $min_agree ($run_count runs): $date_answer"
 }
 
 if [ "${use_ai,,}" = "on" ]; then
@@ -807,7 +807,7 @@ run_engine() {
   [[ $engine =~ ^(mistral)$ && ! "${ref[agent_id]}" && ! "${ref[model]}" ]] && return
   [ -n "${ref[model]}" ] && ref[url]="${ref[url]//%%MODEL%%/${ref[model]}}"
 
-  local api_header_switch api_header add_header_switch add_header message_content day
+  local api_header_switch api_header add_header_switch add_header message_content date
   if [ -n "${ref[api_key]}" ]; then
     api_header_switch="-H "
     case "$engine" in
@@ -830,7 +830,7 @@ run_engine() {
   models="${ref[model]}"
   $verbose && log "Starting engine [$engine] with models: ${models:+${models//|/ }}${ref[agent_id]:+using agent_id}"
   local error_msg error_state data starttime endtime curl_output tmpanswer
-  local error_answer='{ "day":"'$normal_recycle_date'"}'
+  local error_answer='{ "date":"'$normal_recycle_date'"}'
   local model_string
   for m in ${models:-using agent_id}; do
     unset data starttime endtime curl_output tmpanswer model_string
@@ -950,7 +950,7 @@ run_engine() {
     $debug && set +x
     response_end["$tag"]=$(date +%s)
     if [ -z "$curl_output" ]; then
-      response_day["$tag"]=""
+      response_date["$tag"]=""
       response_err["$tag"]=true
       response_errmsg["$tag"]="Empty API output"
       [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) error: ${response_errmsg[$tag]}"
@@ -961,7 +961,7 @@ run_engine() {
       ret=$?
       match_output="${match_output#*</think>}"
       if [ $ret != 0 ] || [ -z "$match_output" ] || [ "$match_output" = null ]; then
-        response_day["$tag"]=""
+        response_date["$tag"]=""
         response_err["$tag"]=true
         response_errmsg["$tag"]="Unexpected JSON in curl output"
         [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) error: $curl_output"
@@ -970,21 +970,21 @@ run_engine() {
         $debug && log "$engine ($model_string) post-jq-engine-match output: $match_output"
       fi
     fi
-    day=$(echo "$match_output" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | tail -n1)
+    date=$(echo "$match_output" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | tail -n1)
     # tmpanswer=$(echo "$tmpanswer" | sed -n '/{/,$p' | \
     #   sed -r 's/\[([0-9]),\s*[0-9]\]/\1/g;/^```/d;s/[][]//g' | awk 'BEGIN{found=0}found==0{p=p $0"\n"}/<\|(assistant|message)\|>/{found=1;next}found==1{print}END{if(found==0)printf"%s",p}')
     # $debug && log "$engine ($model_string) post-sed/awk-tweak: $tmpanswer"
-    $debug && log "$engine ($model_string) post-grep output: $day"
+    $debug && log "$engine ($model_string) post-grep output: $date"
     ((run_count++))
-    if [ -z "$day" ]; then
-      response_day["$tag"]=""
+    if [ -z "$date" ]; then
+      response_date["$tag"]=""
       response_err["$tag"]=true
       response_errmsg["$tag"]="Bad json output from curl"
-      [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) affected/days extraction error: $curl_output"
+      [[ $verbose == true || $debug == true ]] && log -p DEBUG "$engine ($model_string) date extraction error: $curl_output"
       continue
     else
-      $verbose && log "$engine ($model_string) answer: 'day:$day|error:$error_state'"
-      response_day["$tag"]="$day"
+      $verbose && log "$engine ($model_string) answer: 'date:$date|error:$error_state'"
+      response_date["$tag"]="$date"
       response_err["$tag"]=false
       response_errmsg["$tag"]=""
       check_agreement
@@ -1004,20 +1004,20 @@ print_output() {
 
   if [ "${use_ai,,}" != "on" ]; then
     log -t DEBUG "Generating output when AI is not used"
-    answer_json=$(gen_answer_json "$day_answer" false 0 0 0 false 0 false "" \
+    answer_json=$(gen_answer_json "$date_answer" false 0 0 0 false 0 false "" \
       "$((now - progstart))" "$now")
   fi
 
   # Prepare answer to answer information
-  if [[ -z "$answer_day" ]]; then
-    if ! answer_day=$(jq -nr --argjson a "$answer_json" '$a | .day' 2> /dev/null); then
-      log -t DEBUG "jq error getting day from answer_json"
+  if [[ -z "$answer_date" ]]; then
+    if ! answer_date=$(jq -nr --argjson a "$answer_json" '$a | .date' 2> /dev/null); then
+      log -t DEBUG "jq error getting date from answer_json"
     fi
   fi
-  if [[ ! "${answer_day,,}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  if [[ ! "${answer_date,,}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     answer_error=true
-    answer_error_msg+=("Invalid answer day (${answer_day:-no answer}), using default day")
-    answer_day=$normal_recycle_date
+    answer_error_msg+=("Invalid answer date (${answer_date:-no answer}), using default date")
+    answer_date=$normal_recycle_date
   fi
 
   # Add error and errormsg to output json
@@ -1029,9 +1029,9 @@ print_output() {
   [ $? != 0 ] && log -t DEBUG "jq error adding error and error_msg answer_json"
 
   if [[ -z "$answer_json" ]]; then
-    log -t DEBUG "Generating error answer using '$day_answer'"
+    log -t DEBUG "Generating error answer using '$date_answer'"
     failures+=("Could not generate JSON from answer")
-    answer_json=$(gen_answer_json "$day_answer" false 0 0 0 false 0 false "" \
+    answer_json=$(gen_answer_json "$date_answer" false 0 0 0 false 0 false "" \
       "$((now - progstart))" "$now")
   fi
 
@@ -1044,7 +1044,7 @@ print_output() {
       json='  {
         "engine": "'"${response_engine[$responder]:-${responder%-*}}"'",
         "model": "'"${response_model[$responder]:-"${responder#*-}"}"'",
-        "day": "'"${response_day[$responder]}"'",
+        "date": "'"${response_date[$responder]}"'",
         "answer_weight": '"${response_weight[$responder]:-1}"',
         "process_start": '"${response_start[$responder]:-0}"',
         "process_end": '"${response_end[$responder]:-0}"',
@@ -1064,14 +1064,14 @@ print_output() {
     [ $? != 0 ] && log -t DEBUG "jq error adding process_time and last_updated to answer_json"
 
     # Print output
-    jq -nr --arg d "$answer_day" --argjson a "$answer_json" --argjson r "$responses_json" \
-      '{ "day": $d, "answer": $a, "responses": $r}' > "$tmp_file"
+    jq -nr --arg d "$answer_date" --argjson a "$answer_json" --argjson r "$responses_json" \
+      '{ "date": $d, "answer": $a, "responses": $r}' > "$tmp_file"
     [ $? != 0 ] && log -t DEBUG "jq error building output from answer_json and responses_json"
   else
     ${answer_error:-true} && handle_error -E "$err"
     if $verbose; then
       eval printf "'%-16s: %s\n'" $(jq -Mnr --argjson a "$answer_json" '$a |
-        "\"Day\" \"\(.day // "unknown")\" " +
+        "\"Date\" \"\(.date // "unknown")\" " +
         "\"Agreements\" \"\(.agreements)\" " +
         "\"Min Agree\" \"\(.min_agree)\" " +
         "\"Weighted Answer\" \"\(.weighted_answer)\" " +
@@ -1081,7 +1081,7 @@ print_output() {
         "\"Process Time\" \"\(.process_time)\" "
       ') > "$tmp_file"
     else
-      echo $answer_day > "$tmp_file"
+      echo $answer_date > "$tmp_file"
     fi
   fi
 
@@ -1115,7 +1115,7 @@ if ${manual[enabled]:-false}; then
   response_model["manual_answer1"]=answer1
   response_start["manual_answer1"]=$(date +%s)
   response_end["manual_answer1"]=$(date +%s)
-  response_day["manual_answer1"]=$answer_recycle_date
+  response_date["manual_answer1"]=$answer_recycle_date
   response_err["manual_answer1"]=false
   response_errmsg["manual_answer1"]=""
   ((run_count++))
@@ -1127,7 +1127,7 @@ if ${manual[enabled]:-false}; then
   response_model["manual_answer2"]=answer2
   response_start["manual_answer2"]=$(date +%s)
   response_end["manual_answer2"]=$(date +%s)
-  response_day["manual_answer2"]=$answer_recycle_date
+  response_date["manual_answer2"]=$answer_recycle_date
   response_err["manual_answer2"]=false
   response_errmsg["manual_answer2"]=""
   ((run_count++))
