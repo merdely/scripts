@@ -10,7 +10,7 @@ if [ -e /usr/bin/needs-restarting ]; then
   /usr/bin/needs-restarting -r
   [ $? != 0 ] && echo
 fi
-if [ "$ID" = debian ] || [[ $ID_LIKE =~ debian ]]; then
+if [ "$ID" = debian ] || [[ "$ID_LIKE" =~ debian ]]; then
   kernchecked=true
   if [ -f /var/run/reboot-required ]; then
     echo "System reboot required"
