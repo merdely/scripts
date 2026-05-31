@@ -242,9 +242,9 @@ function_exists() { # utility_function
   flist+=("${function_alias_list[@]}")
   flist+=("${command_checks[@]}")
   flist+=("${pacman_package_checks[@]}")
-  flist+=("${github_project_checks[@]}")
+  flist+=("${project_checks[@]%|*}")
   (( debug >= 3 )) && set -x
-  [[ ! " ${flist[*]//-/_} " == *" $1 "* ]] && { set +x ; return 1; }
+  [[ ! " ${flist[*]} " == *" "$1" "* ]] && { set +x ; return 1; }
   set +x
   return 0
 }
@@ -1191,35 +1191,36 @@ _command_check() {
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  if command -v "$1" &> /dev/null; then
-    log -d -d "Attemping '$1 --version'"
-    if out=$("$1" --version | _version_filter); then
+  local cmd=${1%_command}
+  if command -v "$cmd" &> /dev/null; then
+    log -d -d "Attemping '$cmd --version'"
+    if out=$("$cmd" --version | _version_filter); then
       echo "$out"
       return 0
     fi
-    log -d -d "Attemping '$1 -V'"
-    if out=$("$1" -V | _version_filter); then
+    log -d -d "Attemping '$cmd -V'"
+    if out=$("$cmd" -V | _version_filter); then
       echo "$out"
       return 0
     fi
-    log -d -d "Attemping '$1 --help'"
-    if out=$("$1" --help | _version_filter); then
+    log -d -d "Attemping '$cmd --help'"
+    if out=$("$cmd" --help | _version_filter); then
       echo "$out"
       return 0
     fi
     log -e "Could not determine version for $1"
     return 1
   else
-    log -e "Could not find command '$1'"
+    log -e "Could not find command '$cmd' for $1"
     return 1
   fi
 }
-_github_project_check() {
+_project_check() {
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   local check project
-  for check in "${github_project_checks[@]}"; do
+  for check in "${project_checks[@]}"; do
     if [[ "$check" =~ ^$1"|" ]]; then
       project=${check##*|}
       break
@@ -1228,10 +1229,23 @@ _github_project_check() {
 
   [[ -z "$project" ]] && { log -e "Could not find project for $1" ; return 1 ; }
 
-  if out=$(github_project "$project" | _version_filter); then
-    echo "$out"
-    return 0
-  fi
+  case "$project" in
+    "github.com/"* )
+      if out=$(github_project "${project#github.com/}" | _version_filter); then
+        echo "$out"
+        return 0
+      fi ;;
+    "codeberg.org/"* )
+      if out=$(codeberg_project "${project#codeberg.org/}" | _version_filter); then
+        echo "$out"
+        return 0
+      fi ;;
+    "code.forgejo.org/"* )
+      if out=$(codeberg_project -f "${project#code.forgejo.org/}" | _version_filter); then
+        echo "$out"
+        return 0
+      fi ;;
+  esac
   log -e "Could not determine version for $1 ($project)"
   return 1
 }
@@ -1239,7 +1253,7 @@ _pacman_package_check() {
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  if out=$(pacman_package "$1" | _version_filter); then
+  if out=$(pacman_package "${1%_pacman}" | _version_filter); then
     echo "$out"
     return 0
   fi
@@ -1657,14 +1671,6 @@ forgejo_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' codeberg.org/forgejo/forgejo
 }
 
-forgejo_latest() { # no_auto
-  codeberg_project forgejo/forgejo
-}
-
-forgejo_runner() {
-  forgejo-runner --version | awk '{print $NF;exit}'
-}
-
 IMAGE_SEARCH+=("forgejo_runner_docker|forgejo/runner")
 forgejo_runner_docker() {
   docker_compose_exec forgejo-runner --version | awk '{print $NF;exit}'
@@ -1672,10 +1678,6 @@ forgejo_runner_docker() {
 
 forgejo_runner_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' code.forgejo.org/forgejo/runner
-}
-
-forgejo_runner_latest() { # no_auto
-  codeberg_project -f forgejo/runner
 }
 
 IMAGE_SEARCH+=("frigate_docker|blakeblackshear/frigate")
@@ -1915,10 +1917,6 @@ librewolf() {
 
 librewolf_flatpak() {
   flatpak_version io.gitlab.librewolf-community
-}
-
-librewolf_latest() {
-  codeberg_project librewolf/source
 }
 
 librewolf_bin_aur_latest() { # no_auto
@@ -2548,13 +2546,6 @@ radarr_docker_latest() {
   docker_tags -s '^[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/radarr
 }
 
-rclone() {
-  local bin
-  bin=/usr/local/bin/rclone
-  [[ -x /usr/bin/rclone ]] && bin=/usr/bin/rclone
-  "$bin" --version | awk "\$1==\"rclone\"{print \$2;exit}"
-}
-
 IMAGE_SEARCH+=("readarr_docker|linuxserver/readarr")
 readarr_docker() {
   docker_inspect
@@ -2622,10 +2613,6 @@ restreamer_docker() {
 
 restreamer_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' datarhei/restreamer
-}
-
-rofi_rbw() {
-  rofi-rbw --version | sed 's/^rofi-rbw //'
 }
 
 routeros_latest() {
@@ -2774,16 +2761,6 @@ smtpd_docker() {
 smtpd_latest() {
   github_tags -r '^opensmtpd-[0-9]' -s '^v?[0-9][0-9.]+' OpenSMTPD/OpenSMTPD | \
     sed -r 's/p[0-9]+$//'
-}
-
-snapcast() {
-  if command -v snapclient > /dev/null 2>&1; then
-    snapclient --version | awk '/snapclient/{print $2;exit}'
-  elif command -v snapserver > /dev/null 2>&1; then
-    snapserver --version | awk '/snapserver/{print $2;exit}'
-  else
-    echo "{ \"Error\": \"snapcast not installed\" }" && return 1
-  fi
 }
 
 IMAGE_SEARCH+=("sonarr_docker|linuxserver/sonarr")
@@ -3343,15 +3320,16 @@ main() { # utility_function
     fi
 
     # Read config defined checks
-    local check command_checks=() pacman_package_checks=() github_project_checks=()
+    local check command_checks=() pacman_package_checks=() project_checks=()
     read -ra command_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "command_check" | tr '\n' ' ')"
+    command_checks=("${command_checks[@]/%/_command}")
     read -ra pacman_package_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "pacman_package_check" | tr '\n' ' ')"
-    pacman_package_checks=("${pacman_package_checks[@]/#/_pacman_}")
+    pacman_package_checks=("${pacman_package_checks[@]/%/_pacman}")
 
-    read -ra github_project_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "github_project_check" | tr '\n' ' ')"
-    for check in "${github_project_checks[@]}"; do
+    read -ra project_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "project_check" | tr '\n' ' ')"
+    for check in "${project_checks[@]}"; do
       if [[ ! "${check}" =~ ^[^|]+"|".+$ ]]; then
-        log -e "Invalid github_project_check ($check): must be check_name|github_project"
+        log -e "Invalid project_check ($check): must be check_name|github_project"
         exit 1
       fi
       if [[ "${check%%|*}" == *_latest ]]; then
@@ -3359,7 +3337,7 @@ main() { # utility_function
       fi
     done
     mapfile -t latest_list < <(printf '%s\n' "${latest_list[@]}" | sort -u)
-    log -d "github_project_checks: ${github_project_checks[*]/%/_latest}"
+    log -d "project_checks: ${project_checks[*]/%/_latest}"
 
     local rcmqtt_server=() rcmqtt_username=() rcmqtt_password=()
     mapfile -t rcmqtt_server < <(get_config_value "$rcfile" mqtt server)
@@ -3510,7 +3488,7 @@ main() { # utility_function
   (( $# == 0 )) && usage
 
   # Set up software list from command line arguments, substitute _ for -
-  mapfile -t software < <(printf '%s\n' "${@//-/_}" | sort -u)
+  mapfile -t software < <(printf '%s\n' "$@" | sort -u)
 
   # Prepare cache_dir
   CACHE_DIR_PREPARED=false
@@ -3834,15 +3812,15 @@ main() { # utility_function
             update_time=$(date +%s)
             (( ret != 0 )) && log -e "Could not get $sw version with sudo" && continue
           else
-            if [[ " ${command_checks[*]} " == *" $sw "* ]]; then
+            if [[ "$sw" == *_command && " ${command_checks[*]} " == *" $sw "* ]]; then
               log -d -d -d "Running '_command_check $sw' to get version"
               version=$(_command_check "$sw")
-            elif [[ "$sw" == _pacman_* && " ${pacman_package_checks[*]//-/_} " == *" $sw "* ]]; then
+            elif [[ "$sw" == *_pacman && " ${pacman_package_checks[*]} " == *" $sw "* ]]; then
               log -d -d -d "Running '_pacman_package_check $sw' to get version"
               version=$(_pacman_package_check "$sw")
-            elif [[ " ${github_project_checks[*]%%|*} " == *" $sw "* ]]; then
-              log -d -d -d "Running '_github_project_check $sw' to get version"
-              version=$(_github_project_check "$sw")
+            elif [[ " ${project_checks[*]%%|*} " == *" $sw "* ]]; then
+              log -d -d -d "Running '_project_check $sw' to get version"
+              version=$(_project_check "$sw")
             else
               log -d -d -d "Running $sw to get version"
               version=$($sw)
