@@ -237,7 +237,15 @@ function_exists() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# < 1 )) && { log -e "Missing argument for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "$1" == "$PROGNAME" ]] && return 0
-  [[ ! " ${function_list[*]} ${function_alias_list[*]} ${command_checks[*]} ${github_project_checks[*]%%|*} " == *" $1 "* ]] && return 1
+  local flist=()
+  flist+=("${function_list[@]}")
+  flist+=("${function_alias_list[@]}")
+  flist+=("${command_checks[@]}")
+  flist+=("${pacman_package_checks[@]}")
+  flist+=("${github_project_checks[@]}")
+  (( debug >= 3 )) && set -x
+  [[ ! " ${flist[*]//-/_} " == *" $1 "* ]] && { set +x ; return 1; }
+  set +x
   return 0
 }
 
@@ -1206,7 +1214,7 @@ _command_check() {
     return 1
   fi
 }
-_github_project() {
+_github_project_check() {
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
@@ -1225,6 +1233,17 @@ _github_project() {
     return 0
   fi
   log -e "Could not determine version for $1 ($project)"
+  return 1
+}
+_pacman_package_check() {
+  # log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  log -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  if out=$(pacman_package "$1" | _version_filter); then
+    echo "$out"
+    return 0
+  fi
+  log -e "Could not determine version for $1"
   return 1
 }
 
@@ -1346,10 +1365,6 @@ adguardhome_server() { # remote_host
   [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j.version' 2> /dev/null
 }
 
-archiso_systemd_boot_pacman() {
-  pacman_package archiso-systemd-boot
-}
-
 archiso_systemd_boot_aur_latest() { # no_auto
   aur_package archiso-systemd-boot
 }
@@ -1464,16 +1479,8 @@ collabora_docker_latest() {
     sed -r 's/^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+).*$/\1/'
 }
 
-cpputilities_pacman() {
-  pacman_package "c++utilities"
-}
-
 cpputilities_aur_latest() { # no_auto
   aur_package c++utilities
-}
-
-dbeaver_ce_bin_pacman() {
-  pacman_package dbeaver-ce-bin
 }
 
 dbeaver_ce_bin_aur_latest() { # no_auto
@@ -1519,10 +1526,6 @@ dockhand_docker() {
 
 dockhand_docker_latest() {
   docker_tags -r '^[0-9a-f]+$' -s '^v[0-9][0-9.]+' -r '-baseline$' fnsys/dockhand
-}
-
-electron28_bin_pacman() {
-  pacman_package electron28-bin
 }
 
 electron28_bin_aur_latest() { # no_auto
@@ -1735,10 +1738,6 @@ grafana_docker_latest() { # no_auto
   docker_tags -r '^[0-9]+$' -s '^v?[0-9][0-9.]+$' grafana/grafana
 }
 
-grayjay_bin_pacman() {
-  pacman_package grayjay-bin
-}
-
 grayjay_bin_aur_latest() { # no_auto
   aur_package grayjay-bin
 }
@@ -1880,16 +1879,8 @@ kapacitor_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' kapacitor
 }
 
-libpam_pwdfile_rs_bin_pacman() {
-  pacman_package libpam-pwdfile-rs-bin
-}
-
 libpam_pwdfile_rs_bin_aur_latest() { # no_auto
   aur_package libpam-pwdfile-rs-bin
-}
-
-libratbag_git_pacman() {
-  pacman_package libratbag-git
 }
 
 libratbag_git_latest() { # no_auto
@@ -1926,16 +1917,8 @@ librewolf_flatpak() {
   flatpak_version io.gitlab.librewolf-community
 }
 
-librewolf_pacman() {
-  pacman_package librewolf
-}
-
 librewolf_latest() {
   codeberg_project librewolf/source
-}
-
-librewolf_bin_pacman() {
-  pacman_package librewolf-bin
 }
 
 librewolf_bin_aur_latest() { # no_auto
@@ -1978,10 +1961,6 @@ linkwarden_docker() {
 
 linkwarden_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/linkwarden/linkwarden
-}
-
-lisgd_pacman() {
-  pacman_package lisgd
 }
 
 lisgd_aur_latest() {
@@ -2028,10 +2007,6 @@ localai_gpu_intel_unversioned_docker_latest() { # no_auto
   docker_tags -S -s '^sha-[0-9a-f]{7}-gpu-intel$' localai/localai
 }
 
-logseq_desktop_bin_pacman() {
-  pacman_package logseq-desktop-bin
-}
-
 logseq_desktop_bin_aur_latest() {
   aur_package logseq-desktop-bin
 }
@@ -2073,10 +2048,6 @@ memcached_docker_latest() {
 
 memcached_latest() { # no_auto
   github_tags -s '^v?[0-9][0-9.]+$' memcached/memcached
-}
-
-molly_guard_arch() {
-  pacman_package molly-guard-git | sed -r 's/-[0-9]+$//'
 }
 
 molly_guard_latest() {
@@ -2121,10 +2092,6 @@ mpv_flatpak() {
 
 mpv_flatpak_latest() { # no_auto
   flatpak_appstream io.mpv.Mpv
-}
-
-mqtt5_explorer_bin_pacman() {
-  pacman_package mqtt5-explorer-bin
 }
 
 mqtt5_explorer_bin_aur_latest() { # no_auto
@@ -2228,10 +2195,6 @@ ntfy_docker_latest() {
   docker_tags -s '^v?[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$' binwiederhier/ntfy
 }
 
-ntfysh_bin_pacman() {
-  pacman_package ntfysh-bin
-}
-
 ntfysh_bin_aur_latest() {
   aur_package ntfysh-bin
 }
@@ -2326,10 +2289,6 @@ opnsense_latest() {
   github_tags -s '^[0-9][0-9.]+$' opnsense/core
 }
 
-oscar_pacman() {
-  pacman_package oscar
-}
-
 oscar_aur_latest() { # no_auto
   aur_package oscar
 }
@@ -2391,10 +2350,6 @@ pihole_docker() {
   docker_logs pihole 2>&1 | awk '/Pi-hole version is v[0-9]/ { print $4;exit}'
 }
 
-pinta_pacman() {
-  pacman_package pinta
-}
-
 pinta_aur_latest() { # no_auto
   aur_package pinta
 }
@@ -2407,10 +2362,6 @@ pinta_flatpak_latest() { # no_auto
   flatpak_appstream com.github.PintaProject.Pinta
 }
 
-pipeline_gtk_pacman() {
-  pacman_package pipeline-gtk
-}
-
 pipeline_gtk_aur_latest() { # no_auto
   aur_package pipeline-gtk
 }
@@ -2421,10 +2372,6 @@ pipeline_flatpak() {
 
 pipeline_flatpak_latest() { # no_auto
   flatpak_appstream de.schmidhuberj.tubefeeder
-}
-
-piper_git_pacman() {
-  pacman_package piper-git
 }
 
 piper_git_latest() { # no_auto
@@ -2575,16 +2522,8 @@ qbittorrent_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+(-r[0-9]+)?-ls[0-9]+' lscr.io/linuxserver/qbittorrent
 }
 
-qtforkawesome_qt6_pacman() {
-  pacman_package qtforkawesome-qt6
-}
-
 qtforkawesome_qt6_aur_latest() { # no_auto
   aur_package qtforkawesome-qt6
-}
-
-qtutilities_qt6_pacman() {
-  pacman_package qtutilities-qt6
 }
 
 qtutilities_qt6_aur_latest() { # no_auto
@@ -2918,10 +2857,6 @@ syncthing_tray_flatpak_latest() { # no_auto
   flatpak_appstream io.github.martchus.syncthingtray
 }
 
-syncthingtray_qt6_pacman() {
-  pacman_package syncthingtray-qt6
-}
-
 syncthingtray_qt6_aur_latest() {
   aur_package syncthingtray-qt6
 }
@@ -3012,10 +2947,6 @@ truenas_server() { # remote_host
   [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j' 2> /dev/null
 }
 
-ungoogled_chromium_bin_pacman() {
-  pacman_package ungoogled-chromium-bin
-}
-
 ungoogled_chromium_bin_aur_latest() {
   aur_package ungoogled-chromium-bin
 }
@@ -3070,14 +3001,6 @@ vscode_docker() {
   docker_logs "${containername}" 2>&1 | awk '/] info  code-server [0-9]/{print $4; exit}'
 }
 
-waybar_updates() {
-  pacman_package waybar-updates
-}
-
-waybar_updates_pacman() {
-  pacman_package waybar-updates
-}
-
 waybar_updates_aur_latest() { # no_auto
   aur_package waybar-updates
 }
@@ -3089,10 +3012,6 @@ whoami_docker() {
 
 wleave_aur_latest() { # no_auto
   aur_package wleave
-}
-
-wleave_pacman() {
-  pacman_package wleave
 }
 
 yourls() {
@@ -3118,10 +3037,6 @@ zigbee2mqtt_tcp() {
   mosquitto_sub -C 1 -h "${mqtt_server:?}" -u "${mqtt_username:?}" -P "${mqtt_password:?}" \
     -i "$PROGNAME" -t zigbee2mqtt_tcp/bridge/config | \
     jq -r '.version' 2> /dev/null
-}
-
-zoom_pacman() {
-  pacman_package zoom
 }
 
 zoom_aur_latest() { # no_auto
@@ -3428,8 +3343,10 @@ main() { # utility_function
     fi
 
     # Read config defined checks
-    local check command_checks=() github_project_checks=()
+    local check command_checks=() pacman_package_checks=() github_project_checks=()
     read -ra command_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "command_check" | tr '\n' ' ')"
+    read -ra pacman_package_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "pacman_package_check" | tr '\n' ' ')"
+    pacman_package_checks=("${pacman_package_checks[@]/#/_pacman_}")
 
     read -ra github_project_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "github_project_check" | tr '\n' ' ')"
     for check in "${github_project_checks[@]}"; do
@@ -3920,12 +3837,12 @@ main() { # utility_function
             if [[ " ${command_checks[*]} " == *" $sw "* ]]; then
               log -d -d -d "Running '_command_check $sw' to get version"
               version=$(_command_check "$sw")
+            elif [[ "$sw" == _pacman_* && " ${pacman_package_checks[*]//-/_} " == *" $sw "* ]]; then
+              log -d -d -d "Running '_pacman_package_check $sw' to get version"
+              version=$(_pacman_package_check "$sw")
             elif [[ " ${github_project_checks[*]%%|*} " == *" $sw "* ]]; then
-              log -d -d -d "Running '_github_project $sw' to get version"
-              version=$(_github_project "$sw")
-            # elif [[ "$sw" == *"_latest" && " ${github_project_checks[*]%%|*} " == *" $sw "* ]]; then
-            #   log -d -d -d "Running '_github_project ${sw%_latest}' to get version"
-            #   version=$(_github_project "$sw")
+              log -d -d -d "Running '_github_project_check $sw' to get version"
+              version=$(_github_project_check "$sw")
             else
               log -d -d -d "Running $sw to get version"
               version=$($sw)
