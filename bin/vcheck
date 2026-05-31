@@ -3428,10 +3428,10 @@ main() { # utility_function
     fi
 
     # Read config defined checks
-    local check i command_checks=() github_project_checks=()
-    read -ra command_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "command_checks" | tr '\n' ' ')"
-    local github_project_checks=()
-    read -ra github_project_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "github_project_checks" | tr '\n' ' ')"
+    local check command_checks=() github_project_checks=()
+    read -ra command_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "command_check" | tr '\n' ' ')"
+
+    read -ra github_project_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "github_project_check" | tr '\n' ' ')"
     for check in "${github_project_checks[@]}"; do
       if [[ ! "${check}" =~ ^[^|]+"|".+$ ]]; then
         log -e "Invalid github_project_check ($check): must be check_name|github_project"
