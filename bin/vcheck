@@ -3441,6 +3441,7 @@ main() { # utility_function
         latest_list+=("${check%%|*}")
       fi
     done
+    mapfile -t latest_list < <(printf '%s\n' "${latest_list[@]}" | sort -u)
     log -d "github_project_checks: ${github_project_checks[*]/%/_latest}"
 
     local rcmqtt_server=() rcmqtt_username=() rcmqtt_password=()
