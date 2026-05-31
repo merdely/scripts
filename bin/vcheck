@@ -16,6 +16,10 @@ trap 'exit 1' INT TERM
 # Add $HOME/.local/bin to the PATH
 export PATH=$PATH:$HOME/.local/bin
 
+# Define a SEMVER_REGEX to be used in functions to validate version strings
+SEMVER_REGEX='(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?'
+SEMVER_BUILDMETA_REGEX='(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?'
+
 # Handle temp files
 TEMPDIR=$(mktemp -d)
 _cleanup() { # utility_function
@@ -233,7 +237,7 @@ function_exists() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# < 1 )) && { log -e "Missing argument for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "$1" == "$PROGNAME" ]] && return 0
-  [[ ! " ${function_list[*]} ${function_alias_list[*]} " == *" $1 "* ]] && return 1
+  [[ ! " ${function_list[*]} ${function_alias_list[*]} ${command_checks[*]} ${github_project_checks[*]%%|*} " == *" $1 "* ]] && return 1
   return 0
 }
 
@@ -566,6 +570,19 @@ codeberg_project() { # helper_function
     return 0
   fi
   log -e "Invalid curl output"
+  return 1
+}
+
+# Function to validate STDIN contains a version string and
+# prints that string as output, returning 0 for success and 1 for failure
+# Example usage: if out=$(command | _version_filter); then
+_version_filter() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  out=$(grep -oP "$SEMVER_REGEX")
+  if grep -oPq "^$SEMVER_REGEX$" <<< "$out"; then
+    echo "$out" | head -n1
+    return 0
+  fi
   return 1
 }
 
@@ -1160,6 +1177,57 @@ pacman_package() {
 IMAGE_SEARCH=()
 SOURCED_LIBS=("$0")
 
+# Check a specific command using --version, -V, or --help and returning the
+# first version string it finds
+_command_check() {
+  # log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  log -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  if command -v "$1" &> /dev/null; then
+    log -d -d "Attemping '$1 --version'"
+    if out=$("$1" --version | _version_filter); then
+      echo "$out"
+      return 0
+    fi
+    log -d -d "Attemping '$1 -V'"
+    if out=$("$1" -V | _version_filter); then
+      echo "$out"
+      return 0
+    fi
+    log -d -d "Attemping '$1 --help'"
+    if out=$("$1" --help | _version_filter); then
+      echo "$out"
+      return 0
+    fi
+    log -e "Could not determine version for $1"
+    return 1
+  else
+    log -e "Could not find command '$1'"
+    return 1
+  fi
+}
+_github_project() {
+  log -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  local check project
+  for check in "${github_project_checks[@]}"; do
+    if [[ "$check" =~ ^$1"|" ]]; then
+      project=${check##*|}
+      break
+    fi
+  done
+
+  [[ -z "$project" ]] && { log -e "Could not find project for $1" ; return 1 ; }
+
+  if out=$(github_project "$project" | _version_filter); then
+    echo "$out"
+    return 0
+  fi
+  log -e "Could not determine version for $1 ($project)"
+  return 1
+}
+
 printer_ink_check() { # remote_host
   [[ -z "$PRINTER" ]] && { log -e "Printer not defined" ; usage 1 ; }
   local errjson inkfile inkdata
@@ -1278,10 +1346,6 @@ adguardhome_server() { # remote_host
   [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j.version' 2> /dev/null
 }
 
-adguardhome_latest() {
-  github_project AdguardTeam/AdGuardHome
-}
-
 archiso_systemd_boot_pacman() {
   pacman_package archiso-systemd-boot
 }
@@ -1299,10 +1363,6 @@ audiobookshelf_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+' docker.io/advplyr/audiobookshelf
 }
 
-audiobookshelf_latest() { # no_auto
-  github_project advplyr/audiobookshelf
-}
-
 IMAGE_SEARCH+=("authelia_docker|authelia/authelia")
 authelia_docker() {
   docker_inspect
@@ -1312,10 +1372,6 @@ authelia_docker_latest() {
   docker_tags -s '^[0-9]\.[0-9]+\.[0-9]+' authelia/authelia
 }
 
-authelia_latest() { # no_auto
-  github_project authelia/authelia
-}
-
 IMAGE_SEARCH+=("bazarr_docker|linuxserver/bazarr")
 bazarr_docker() {
   docker_inspect | sed -r 's/-[a-z0-9]+$//'
@@ -1323,10 +1379,6 @@ bazarr_docker() {
 
 bazarr_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' lscr.io/linuxserver/bazarr
-}
-
-bazarr_latest() { # no_auto
-  github_project morpheus65535/bazarr
 }
 
 IMAGE_SEARCH+=("booklore_docker|booklore/booklore")
@@ -1344,10 +1396,6 @@ booklore_docker() {
 
 booklore_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' booklore/booklore
-}
-
-booklore_latest() { # no_auto
-  github_project booklore-app/booklore
 }
 
 IMAGE_SEARCH+=("bookshelf_docker|pennydreadful/bookshelf:softcover")
@@ -1370,10 +1418,6 @@ bookstack_docker_latest() { # no_auto
   docker_tags -s 'v[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/bookstack
 }
 
-bookstack_latest() { # no_auto
-  github_project BookStackApp/BookStack
-}
-
 IMAGE_SEARCH+=("calibre_docker|linuxserver/calibre")
 calibre_docker() {
   docker_inspect
@@ -1381,14 +1425,6 @@ calibre_docker() {
 
 calibre_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.-]+-ls[0-9]+' lscr.io/linuxserver/calibre
-}
-
-calibre_latest() { # no_auto
-  github_project kovidgoyal/calibre
-}
-
-calibre_ls_latest() { # no_auto
-  github_project linuxserver/docker-calibre
 }
 
 IMAGE_SEARCH+=("calibre_web_docker|linuxserver/calibre-web")
@@ -1400,14 +1436,6 @@ calibre_web_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.-]+-ls[0-9]+' lscr.io/linuxserver/calibre-web
 }
 
-calibre_web_latest() { # no_auto
-  github_project janeczku/calibre-web
-}
-
-calibre_web_ls_latest() { # no_auto
-  github_project linuxserver/docker-calibre-web
-}
-
 IMAGE_SEARCH+=("chronograf_docker|chronograf")
 chronograf_docker() {
   docker_printenv CHRONOGRAF_VERSION
@@ -1417,20 +1445,12 @@ chronograf_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' chronograf
 }
 
-chronograf_latest() { # no_auto
-  github_project influxdata/chronograf
-}
-
 codium() {
   if command -v rpm > /dev/null 2>&1; then
     /usr/bin/rpm -q --queryformat '%{VERSION}' codium
   else
     return 1
   fi
-}
-
-codium_latest() { # no_auto
-  github_project VSCodium/vscodium
 }
 
 IMAGE_SEARCH+=("collabora_docker|collabora/code")
@@ -1474,19 +1494,11 @@ decode_config() {
     "$(realpath "$(command -v decode-config)")"
 }
 
-decode_config_latest() {
-  github_project tasmota/decode-config
-}
-
 docker_compose() {
   check_prog docker || return 1
   docker compose version | \
     awk -F '[ ,]' '{print $4;exit}' | \
     sed 's/^v//'
-}
-
-docker_compose_latest() {
-  github_project docker/compose
 }
 
 IMAGE_SEARCH+=("dockhand_docker|fnsys/dockhand")
@@ -1507,10 +1519,6 @@ dockhand_docker() {
 
 dockhand_docker_latest() {
   docker_tags -r '^[0-9a-f]+$' -s '^v[0-9][0-9.]+' -r '-baseline$' fnsys/dockhand
-}
-
-dockhand_latest() { # no_auto
-  github_project Finsys/dockhand
 }
 
 electron28_bin_pacman() {
@@ -1548,10 +1556,6 @@ etherpad_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+' etherpad/etherpad
 }
 
-etherpad_latest() { # no_auto
-  github_project ether/etherpad
-}
-
 IMAGE_SEARCH+=("fcgiwrap_docker|fcgiwrap")
 fcgiwrap_docker() {
   if docker_compose_exec test -f /etc/alpine-release; then
@@ -1580,10 +1584,6 @@ feishin_docker() {
 
 feishin_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/jeffvli/feishin
-}
-
-feishin_latest() { # no_auto
-  github_project jeffvli/feishin
 }
 
 ffprobe() {
@@ -1629,11 +1629,6 @@ flaresolverr_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+' flaresolverr/flaresolverr
 }
 
-flaresolverr_latest() { # no_auto
-  # https://raw.githubusercontent.com/21hsmw/FlareSolverr/refs/heads/nodriver-support/CHANGELOG.md
-  github_project flaresolverr/flaresolverr
-}
-
 flatseal_flatpak() {
   flatpak_version com.github.tchx84.Flatseal
 }
@@ -1648,10 +1643,6 @@ flip_2_dnd_pro() {
   [[ "$out" ]] && jq -rn --argjson j "$out" '$j[].tag_name' 2> /dev/null | \
     sort -V | \
     tail -n1
-}
-
-flip_2_dnd_latest() {
-  github_project robinsrk/flip_2_dnd
 }
 
 IMAGE_SEARCH+=("forgejo_docker|forgejo/forgejo")
@@ -1694,10 +1685,6 @@ frigate_docker_latest() {
   docker_tags -r '^[0-9]+$' -s '^v?[0-9][0-9.]+$' ghcr.io/blakeblackshear/frigate
 }
 
-frigate_latest() { # no_auto
-  github_project blakeblackshear/frigate
-}
-
 IMAGE_SEARCH+=("giftmanager_docker|icbest/giftmanager")
 giftmanager_docker() {
   docker_compose_exec cat /app/app.py | awk '$1=="app_version" {gsub(/"/,"");print $NF;exit}'
@@ -1707,10 +1694,6 @@ giftmanager_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' icbest/giftmanager
 }
 
-giftmanager_latest() { # no_auto
-  github_project icbestCA/giftmanager
-}
-
 IMAGE_SEARCH+=("gitea_docker|docker.gitea.com/gitea")
 gitea_docker() {
   docker_compose_exec gitea --version | awk '{print $3;exit}'
@@ -1718,10 +1701,6 @@ gitea_docker() {
 
 gitea_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' docker.gitea.com/gitea
-}
-
-gitea_latest() { # no_auto
-  github_project go-gitea/gitea
 }
 
 IMAGE_SEARCH+=("gitlab_docker|gitlab/gitlab-ce")
@@ -1756,10 +1735,6 @@ grafana_docker_latest() { # no_auto
   docker_tags -r '^[0-9]+$' -s '^v?[0-9][0-9.]+$' grafana/grafana
 }
 
-grafana_latest() { # no_auto
-  github_project grafana/grafana
-}
-
 grayjay_bin_pacman() {
   pacman_package grayjay-bin
 }
@@ -1777,10 +1752,6 @@ hawser_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/finsys/hawser
 }
 
-hawser_latest() { # no_auto
-  github_project Finsys/hawser
-}
-
 IMAGE_SEARCH+=("immich_docker|immich-app/immich-server")
 immich_docker() {
   docker_printenv IMMICH_SOURCE_REF
@@ -1788,10 +1759,6 @@ immich_docker() {
 
 immich_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' "ghcr.io/immich-app/immich-server"
-}
-
-immich_latest() { # no_auto
-  github_project immich-app/immich
 }
 
 IMAGE_SEARCH+=("immichframe_docker|immichframe/immichframe")
@@ -1803,10 +1770,6 @@ immichframe_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/immichframe/immichframe
 }
 
-immichframe_latest() { # no_auto
-  github_project immichFrame/ImmichFrame
-}
-
 IMAGE_SEARCH+=("influxdb_docker|influxdb")
 influxdb_docker() {
   docker_printenv INFLUXDB_VERSION
@@ -1814,10 +1777,6 @@ influxdb_docker() {
 
 influxdb_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+-core' influxdb | sed 's/-core//'
-}
-
-influxdb_latest() { # no_auto
-  github_project influxdata/influxdb
 }
 
 IMAGE_SEARCH+=("jackett_docker|linuxserver/jackett")
@@ -1829,10 +1788,6 @@ jackett_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/jackett
 }
 
-jackett_latest() { # no_auto
-  github_project linuxserver/docker-jackett
-}
-
 IMAGE_SEARCH+=("jellyfin_docker|jellyfin/jellyfin")
 jellyfin_docker() {
   docker_compose_exec /jellyfin/jellyfin --version 2>&1 | \
@@ -1842,10 +1797,6 @@ jellyfin_docker() {
 jellyfin_docker_latest() {
   # Exclude any datestrings
   docker_tags -r 'unstable' -r '[0-9]{10}' -r '[0-9]{8}-[0-9]{6}' -s '^v?[0-9][0-9.]+' jellyfin/jellyfin
-}
-
-jellyfin_latest() { # no_auto
-  github_project jellyfin/jellyfin
 }
 
 IMAGE_SEARCH+=("jellyfin_vue_docker|jellyfin/jellyfin_vue")
@@ -1891,10 +1842,6 @@ jellystat_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+' cyfershepard/jellystat
 }
 
-jellystat_latest() { # no_auto
-  github_project CyferShepard/Jellystat
-}
-
 IMAGE_SEARCH+=("jitsi_excalidraw_docker|jitsi[-/]excalidraw")
 jitsi_excalidraw_docker() {
   docker_inspect
@@ -1904,10 +1851,6 @@ jitsi_excalidraw_docker_latest() { # no_auto
   docker_tags -r '^(latest|[0-9]{4}\.[0-9]+\.[0-9]+)$' jitsi/excalidraw-backend
 }
 
-jitsi_excalidraw_latest() { # no_auto
-  github_project "jitsi/excalidraw-backend"
-}
-
 IMAGE_SEARCH+=("jitsi_meet_docker|(jitsi/web|jitsi-meet-web)")
 jitsi_meet_docker() {
   docker_inspect -i | sed -r 's/stable-/stable\/jitsi-meet_/'
@@ -1915,10 +1858,6 @@ jitsi_meet_docker() {
 
 jitsi_meet_docker_latest() {
   docker_tags -s '^stable-[0-9]+' jitsi/web | sed -r 's#^(stable)-#\1/jitsi-meet_#'
-}
-
-jitsi_meet_latest() { # no_auto
-  github_project jitsi/jitsi-meet
 }
 
 joplin_desktop() {
@@ -1932,10 +1871,6 @@ joplin_server() {
   [[ -n "$out" ]] && awk '/Joplin Server [0-9]/{gsub(/,$/,"",$3);print "server-v" $3;exit}' <<< "$out"
 }
 
-joplin_latest() { # no_auto
-  github_project laurent22/joplin
-}
-
 IMAGE_SEARCH+=("kapacitor_docker|kapacitor")
 kapacitor_docker() {
   docker_printenv KAPACITOR_VERSION
@@ -1943,10 +1878,6 @@ kapacitor_docker() {
 
 kapacitor_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' kapacitor
-}
-
-kapacitor_latest() { # no_auto
-  github_project influxdata/kapacitor
 }
 
 libpam_pwdfile_rs_bin_pacman() {
@@ -1977,10 +1908,6 @@ librespeed_docker() {
 
 librespeed_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' "ghcr.io/librespeed/speedtest"
-}
-
-librespeed_latest() { # no_auto
-  github_project librespeed/speedtest
 }
 
 librewolf() {
@@ -2035,10 +1962,6 @@ librewolf_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.-]+-ls[0-9]+' lscr.io/linuxserver/librewolf
 }
 
-librewolf_ls_latest() { # no_auto
-  github_project linuxserver/docker-librewolf
-}
-
 IMAGE_SEARCH+=("linkding_docker|sissbruecker/linkding")
 linkding_docker() {
   docker_compose_exec cat /etc/linkding/version.txt
@@ -2048,10 +1971,6 @@ linkding_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' sissbruecker/linkding
 }
 
-linkding_latest() { # no_auto
-  github_project sissbruecker/linkding
-}
-
 IMAGE_SEARCH+=("linkwarden_docker|linkwarden/linkwarden")
 linkwarden_docker() {
   docker_inspect
@@ -2059,10 +1978,6 @@ linkwarden_docker() {
 
 linkwarden_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/linkwarden/linkwarden
-}
-
-linkwarden_latest() { # no_auto
-  github_project linkwarden/linkwarden
 }
 
 lisgd_pacman() {
@@ -2080,10 +1995,6 @@ lldap_docker() {
 
 lldap_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+-alpine$' lldap/lldap | sed 's/-alpine//'
-}
-
-lldap_latest() { # no_auto
-  github_project lldap/lldap
 }
 
 IMAGE_SEARCH+=("localai_docker|go-skynet/local-ai:(latest|master)")
@@ -2142,10 +2053,6 @@ mariadb_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]*$' mariadb
 }
 
-mariadb_latest() { # no_auto
-  github_project MariaDB/server | sed 's/^mariadb-//'
-}
-
 IMAGE_SEARCH+=("meilisearch_docker|getmeili/meilisearch")
 meilisearch_docker() {
   docker_compose_exec meilisearch -V | awk '{print $2;exit}'
@@ -2153,10 +2060,6 @@ meilisearch_docker() {
 
 meilisearch_docker_latest() {
   docker_tags -r '-(amd64|arm64)$' -s '^v?[0-9].*' getmeili/meilisearch
-}
-
-meilisearch_latest() { # no_auto
-  github_project meilisearch/meilisearch
 }
 
 IMAGE_SEARCH+=("memcached_docker|memcached")
@@ -2190,10 +2093,6 @@ mollysocket_docker() {
 
 mollysocket_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/mollyim/mollysocket
-}
-
-mollysocket_latest() { # no_auto
-  github_project mollyim/mollysocket
 }
 
 mongodb_compass_flatpak() {
@@ -2259,17 +2158,9 @@ naemon_docker() {
     awk '{if (match($NF, /^[0-9][0-9.]+/,a)){gsub(/\.$/,"",a[0]);print a[0]}else print $NF;exit}'
 }
 
-naemon_latest() {
-  github_project naemon/naemon-core
-}
-
 IMAGE_SEARCH+=("nagios_docker|nagios")
 nagios_docker() {
   docker_compose_exec cat /etc/versions/nagios.txt
-}
-
-nagios_latest() { # no_auto
-  github_project "NagiosEnterprises/nagioscore"
 }
 
 IMAGE_SEARCH+=("navidrome_docker|deluan/navidrome")
@@ -2279,10 +2170,6 @@ navidrome_docker() {
 
 navidrome_docker_latest() {
   docker_tags -s '^[0-9][0-9.]+$' deluan/navidrome
-}
-
-navidrome_latest() { # no_auto
-  github_project navidrome/navidrome
 }
 
 IMAGE_SEARCH+=("nextcloud_docker|nextcloud")
@@ -2316,10 +2203,6 @@ nginx_alpine_latest() {
   alpine_repo_package nginx
 }
 
-nginx_latest() { # no_auto
-  github_project nginx/nginx
-}
-
 nginx_docker_mainline_alpine_latest() {
   docker_tags -s '^v?[0-9][0-9.]+-alpine$' nginx | sed 's/-alpine$//'
 }
@@ -2345,10 +2228,6 @@ ntfy_docker_latest() {
   docker_tags -s '^v?[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$' binwiederhier/ntfy
 }
 
-ntfy_latest() { # no_auto
-  github_project binwiederhier/ntfy
-}
-
 ntfysh_bin_pacman() {
   pacman_package ntfysh-bin
 }
@@ -2366,10 +2245,6 @@ octoprint_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' octoprint/octoprint
 }
 
-octoprint_latest() { # no_auto
-  github_project OctoPrint/OctoPrint
-}
-
 IMAGE_SEARCH+=("ollama_docker|ollama/ollama")
 ollama_docker() {
   docker_compose_exec ollama -v | awk '{print $4;exit}'
@@ -2377,10 +2252,6 @@ ollama_docker() {
 
 ollama_docker_latest() {
   docker_tags -s '^[0-9][0-9.]+$' ollama/ollama
-}
-
-ollama_latest() { # no_auto
-  github_project ollama/ollama
 }
 
 IMAGE_SEARCH+=("ollama_ipex_llm_docker|ollama.*ipex")
@@ -2404,10 +2275,6 @@ opencloud_docker() {
 
 opencloud_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+$' opencloudeu/opencloud-rolling
-}
-
-opencloud_latest() { # no_auto
-  github_project opencloud-eu/opencloud
 }
 
 IMAGE_SEARCH+=("openregex_docker|sunnev/openregex")
@@ -2495,10 +2362,6 @@ pagefind_docker() {
   docker run --rm pagefind pagefind --version | awk '{print $NF;exit}'
 }
 
-pagefind_latest() {
-  github_project Pagefind/pagefind
-}
-
 IMAGE_SEARCH+=("php_fpm_docker|php.*fpm")
 php_fpm_docker() {
   if docker_compose_exec test -f /etc/alpine-release; then
@@ -2526,10 +2389,6 @@ php_latest() { # no_auto
 IMAGE_SEARCH+=("pihole_docker|pihole")
 pihole_docker() {
   docker_logs pihole 2>&1 | awk '/Pi-hole version is v[0-9]/ { print $4;exit}'
-}
-
-pihole_latest() { # no_auto
-  github_project pi-hole/pi-hole
 }
 
 pinta_pacman() {
@@ -2626,10 +2485,6 @@ portainer_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' portainer/portainer-ce
 }
 
-portainer_latest() { # no_auto
-  github_project portainer/portainer
-}
-
 IMAGE_SEARCH+=("portainer_agent_docker|portainer/agent")
 portainer_agent_docker() {
   docker_compose_exec wget --no-check-certificate -qSO- "https://127.0.0.1:9001/ping" 2>&1 | \
@@ -2669,10 +2524,6 @@ pot_provider_docker() {
   docker_compose_exec cat /app/package.json | jq -r '.version' 2> /dev/null
 }
 
-pot_provider_latest() {
-  github_project Brainicism/bgutil-ytdlp-pot-provider
-}
-
 privatebin() {
   local out
   out=$(curl_api)
@@ -2680,18 +2531,10 @@ privatebin() {
     awk -F '[><]' '/<p class="col-md-1 col-xs-4 text-center">[^<]+<\/p>/{print $3;exit}' <<< "$out"
 }
 
-privatebin_latest() { # no_auto
-  github_project PrivateBin/PrivateBin
-}
-
 proton_ge() {
   find "$HOME"/.local/share/Steam/compatibilitytools.d -maxdepth 1 -type d -iname "*proton*ge*"
     sort -V | \
     tail -n1
-}
-
-proton_ge_latest() { # no_auto
-  github_project GloriousEggroll/proton-ge-custom
 }
 
 protonup_qt_flatpak() {
@@ -2709,14 +2552,6 @@ prowlarr_docker() {
 
 prowlarr_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/prowlarr
-}
-
-prowlarr_latest() { # no_auto
-  github_project linuxserver/docker-prowlarr
-}
-
-putty_cac_latest() { # no_auto
-  github_project NoMoreFood/putty-cac
 }
 
 putty_cac_work() { # remote_host
@@ -2738,10 +2573,6 @@ qbittorrent_docker() {
 
 qbittorrent_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+(-r[0-9]+)?-ls[0-9]+' lscr.io/linuxserver/qbittorrent
-}
-
-qbittorrent_latest() { # no_auto
-  github_project linuxserver/docker-qbittorrent
 }
 
 qtforkawesome_qt6_pacman() {
@@ -2769,10 +2600,6 @@ qui_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/autobrr/qui
 }
 
-qui_latest() { # no_auto
-  github_project autobrr/qui
-}
-
 IMAGE_SEARCH+=("radarr_docker|linuxserver/radarr")
 radarr_docker() {
   docker_inspect
@@ -2782,19 +2609,11 @@ radarr_docker_latest() {
   docker_tags -s '^[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/radarr
 }
 
-radarr_latest() { # no_auto
-  github_project linuxserver/docker-radarr
-}
-
 rclone() {
   local bin
   bin=/usr/local/bin/rclone
   [[ -x /usr/bin/rclone ]] && bin=/usr/bin/rclone
   "$bin" --version | awk "\$1==\"rclone\"{print \$2;exit}"
-}
-
-rclone_latest() { # no_auto
-  github_project rclone/rclone
 }
 
 IMAGE_SEARCH+=("readarr_docker|linuxserver/readarr")
@@ -2819,10 +2638,6 @@ redis_docker_latest() {
   docker_tags -s '^[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$' redis
 }
 
-redis_latest() { # no_auto
-  github_project redis/redis
-}
-
 IMAGE_SEARCH+=("registry_docker|registry")
 registry_docker() {
   docker_logs registry 2>&1 | \
@@ -2840,20 +2655,12 @@ registry_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' registry
 }
 
-registry_latest() { # no_auto
-  github_project distribution/distribution
-}
-
 restic_command() {
   if [[ -e /opt/homebrew/bin/restic ]]; then
     /opt/homebrew/bin/restic version | awk '{print $2;exit}'
   else
     /usr/local/bin/restic version | awk '{print $2;exit}'
   fi
-}
-
-restic_command_latest() { # no_auto
-  github_project restic/restic
 }
 
 IMAGE_SEARCH+=("restic_rest_server_docker|restic/rest-server")
@@ -2863,10 +2670,6 @@ restic_rest_server_docker() {
 
 restic_rest_server_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' restic/rest-server
-}
-
-restic_rest_server_latest() { # no_auto
-  github_project restic/rest-server
 }
 
 IMAGE_SEARCH+=("restreamer_docker|datarhei/restreamer")
@@ -2882,16 +2685,8 @@ restreamer_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' datarhei/restreamer
 }
 
-restreamer_latest() { # no_auto
-  github_project datarhei/restreamer
-}
-
 rofi_rbw() {
   rofi-rbw --version | sed 's/^rofi-rbw //'
-}
-
-rofi_rbw_latest() {
-  github_project fdw/rofi-rbw
 }
 
 routeros_latest() {
@@ -2952,10 +2747,6 @@ seerr_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' seerr/seerr
 }
 
-seerr_latest() { # no_auto
-  github_project seerr-team/seerr
-}
-
 IMAGE_SEARCH+=("shlink_docker|shlinkio/shlink:")
 shlink_docker() {
   docker_inspect
@@ -2965,10 +2756,6 @@ shlink_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+$' shlinkio/shlink
 }
 
-shlink_latest() { # no_auto
-  github_project shlinkio/shlink
-}
-
 IMAGE_SEARCH+=("shlink_web_client_docker|shlinkio/shlink-web-client")
 shlink_web_client_docker() {
   docker_inspect
@@ -2976,10 +2763,6 @@ shlink_web_client_docker() {
 
 shlink_web_client_docker_latest() { # no_auto
   docker_tags -s '^[0-9][0-9.]+$' shlinkio/shlink
-}
-
-shlink_web_client_latest() { # no_auto
-  github_project shlinkio/shlink
 }
 
 slzb_core() { # remote_host
@@ -3064,10 +2847,6 @@ snapcast() {
   fi
 }
 
-snapcast_latest() {
-  github_project snapcast/snapcast | sed -r 's/p[0-9]+" }$/" }/'
-}
-
 IMAGE_SEARCH+=("sonarr_docker|linuxserver/sonarr")
 sonarr_docker() {
   docker_inspect
@@ -3075,10 +2854,6 @@ sonarr_docker() {
 
 sonarr_docker_latest() {
   docker_tags -s '^[0-9][0-9.]+-ls[0-9]+' lscr.io/linuxserver/sonarr
-}
-
-sonarr_latest() { # no_auto
-  github_project linuxserver/docker-sonarr
 }
 
 splunk() {
@@ -3108,10 +2883,6 @@ splunk_forwarder_latest() {
     awk -F'[<>]' '/<span class="version">/{print $3;exit}'
 }
 
-splunk_unix_ta() {
-  github_project merdely/TA-unix | sed 's/\+.*$//'
-}
-
 splunk_unix_ta_latest() {
   check_prog jq || return 1
   check_prog xmllint || return 1
@@ -3130,10 +2901,6 @@ streamystats_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' fredrikburmester/streamystats-v2-nextjs
 }
 
-streamystats_latest() { # no_auto
-  github_project fredrikburmester/streamystats
-}
-
 IMAGE_SEARCH+=("syncthing_docker|syncthing/syncthing")
 syncthing_docker() {
   docker_inspect
@@ -3141,10 +2908,6 @@ syncthing_docker() {
 
 syncthing_docker_latest() {
   docker_tags -s '^[0-9][0-9.]*$' syncthing/syncthing
-}
-
-syncthing_latest() { # no_auto
-  github_project syncthing/syncthing
 }
 
 syncthing_tray_flatpak() {
@@ -3171,10 +2934,6 @@ tasmobackup_latest() { # no_auto
   github_tags -r '^(list|v)' danmed/TasmoBackupV1
 }
 
-tasmota_latest() {
-  github_project arendst/Tasmota
-}
-
 tasmota_device() { # remote_host
   check_prog jq || return 1
   local out
@@ -3194,10 +2953,6 @@ tautulli_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' tautulli/tautulli
 }
 
-tautulli_latest() { # no_auto
-  github_project Tautulli/Tautulli
-}
-
 IMAGE_SEARCH+=("telegraf_docker|telegraf")
 telegraf_docker() {
   docker_printenv TELEGRAF_VERSION
@@ -3205,10 +2960,6 @@ telegraf_docker() {
 
 telegraf_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' telegraf
-}
-
-telegraf_latest() { # no_auto
-  github_project influxdata/telegraf
 }
 
 IMAGE_SEARCH+=("thruk_docker|thruk")
@@ -3230,10 +2981,6 @@ tmux() {
   fi
 }
 
-tmux_latest() { # no_auto
-  github_project tmux/tmux
-}
-
 IMAGE_SEARCH+=("traefik_docker|traefik")
 traefik_docker() {
   docker_inspect
@@ -3243,10 +2990,6 @@ traefik_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' traefik
 }
 
-traefik_latest() { # no_auto
-  github_project traefik/traefik
-}
-
 IMAGE_SEARCH+=("trilium_docker|triliumnext/trilium")
 trilium_docker() {
   docker_inspect
@@ -3254,10 +2997,6 @@ trilium_docker() {
 
 trilium_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' triliumnext/trilium
-}
-
-trilium_latest() { # no_auto
-  github_project TriliumNext/Trilium
 }
 
 truenas_latest() { # no_auto
@@ -3299,21 +3038,12 @@ unifi_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' lscr.io/linuxserver/unifi-network-application
 }
 
-unifi_latest() { # no_auto
-  github_project linuxserver/docker-unifi-network-application | \
-    sed -r 's/-ls[0-9]+" }$/" }/'
-}
-
 unifi_poller() {
   docker_inspect unpoller/unpoller | awk -F- '{print $1;exit}'
 }
 
 unifi_poller_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/unpoller/unpoller
-}
-
-unifi_poller_latest() { # no_auto
-  github_project unpoller/unpoller
 }
 
 IMAGE_SEARCH+=("unpackerr_docker|golift/unpackerr")
@@ -3323,10 +3053,6 @@ unpackerr_docker() {
 
 unpackerr_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+' golift/unpackerr
-}
-
-unpackerr_latest() { # no_auto
-  github_project Unpackerr/unpackerr
 }
 
 IMAGE_SEARCH+=("upmpdcli_docker|giof71/upmpdcli")
@@ -3342,10 +3068,6 @@ vscode_docker() {
   local containername
   containername=$(get_container_name "${FUNCNAME[0]}") || return 1
   docker_logs "${containername}" 2>&1 | awk '/] info  code-server [0-9]/{print $4; exit}'
-}
-
-vscode_latest() { # no_auto
-  github_project coder/code-server
 }
 
 waybar_updates() {
@@ -3373,10 +3095,6 @@ wleave_pacman() {
   pacman_package wleave
 }
 
-wleave_latest() { # no_auto
-  github_project AMNatty/wleave
-}
-
 yourls() {
   # Create a ver.php in the root of the yourls directory:
   # <?php
@@ -3384,10 +3102,6 @@ yourls() {
   # print("{\n  \"version\": \"" . YOURLS_VERSION . "\"\n}\n");
   # ?>
   curl_api
-}
-
-yourls_latest() { # no_auto
-  github_project YOURLS/YOURLS
 }
 
 zigbee2mqtt() {
@@ -3406,10 +3120,6 @@ zigbee2mqtt_tcp() {
     jq -r '.version' 2> /dev/null
 }
 
-zigbee2mqtt_latest() { # no_auto
-  github_project Koenkk/zigbee2mqtt
-}
-
 zoom_pacman() {
   pacman_package zoom
 }
@@ -3421,10 +3131,6 @@ zoom_aur_latest() { # no_auto
 zwave_js() {
   /usr/bin/head /var/log/zwave.out | \
     awk '/INFO.* .*(APP|STORE).*: Version:/{print $NF;exit}'
-}
-
-zwave_js_latest() {
-  github_project zwave-js/zwave-js-ui
 }
 ## END CHECK FUNCTIONS
 
@@ -3661,6 +3367,99 @@ main() { # utility_function
   done # while getopts OPTS_LIST opt; do
   shift $(( OPTIND - 1 ))
 
+  # If -c passed and rcfile cannot be read, die
+  if $rcfile_set && [[ ! -r "$rcfile" ]]; then
+    log -e "Cannot read rcfile"
+    exit 1
+  fi
+
+  if [[ -n "$rcfile" && -s "$rcfile" ]]; then
+    log -d "Using $rcfile for configfile"
+  fi
+  if [[ ! -s "$rcfile" ]]; then
+    log -d -d "Not using a config file (rcfile=$rcfile)"
+  fi
+
+  # Validate output_mode
+  case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
+
+  # Read configuration settings
+  if [[ -z "$exec_user" && -s "$rcfile" ]]; then
+    mapfile -t arr < <(get_config_value "$rcfile" "$PROGNAME" user)
+    (( ${#arr[@]} > 0 )) && exec_user=${arr[-1]}
+    unset arr
+  fi
+
+  # Drop privileges if running as root and $exec_user is defined
+  [[ $(id -u) == 0 && -n "$exec_user" ]] && drop_privs "$exec_user" "${args_orig[@]}"
+
+  # Read configuration file options
+  if [[ -s "$rcfile" ]]; then
+    mapfile -t rccache_dir < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
+    (( ${#rccache_dir[@]} > 0 )) && cache_dir=${rccache_dir[-1]}
+
+    ! $cache_lifetime_set && mapfile -t rccache_lifetime < <(get_config_value "$rcfile" "$PROGNAME" cache_lifetime)
+    [[ ${#rccache_lifetime[@]} -gt 0 && ${rccache_lifetime[-1]} =~ ^[0-9]+$ ]] && cache_lifetime=${rccache_lifetime[-1]}
+
+    ! $retry_delay_set && mapfile -t rcretry_delay < <(get_config_value "$rcfile" "$PROGNAME" retry_delay)
+    [[ ${#rcretry_delay[@]} -gt 0 && ${rcretry_delay[-1]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcretry_delay[-1]}
+
+    mapfile -t rcmax_retries < <(get_config_value "$rcfile" "$PROGNAME" max_retries)
+    [[ ${#rcmax_retries[@]} -gt 0 && ${rcmax_retries[-1]} =~ ^[0-9]+$ ]] && max_retries=${rcmax_retries[-1]}
+
+    ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME" compose_file)
+    (( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
+
+    ! $docker_seconds_set && mapfile -t rcdocker_seconds < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
+    [[ ${rcdocker_seconds[@]} -gt 0 && ${rcdocker_seconds[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcdocker_seconds[-1]}
+
+    ! $printer_set && mapfile -t rcprinter < <(get_config_value "$rcfile" "$PROGNAME" printer)
+    (( ${#rcprinter[@]} > 0 )) && PRINTER=${rcprinter[-1]}
+
+    ! $sudo_user_set && mapfile -t rcsudo_user < <(get_config_value "$rcfile" "$PROGNAME" sudo_user)
+    (( ${#rcsudo_user[@]} > 0 )) && sudo_user=${rcsudo_user[-1]}
+
+    # Deal with multiple sudo_regex lines
+    if ! $sudo_regex_set; then
+      mapfile -t rcsudo_regexes < <(get_config_value "$rcfile" "$PROGNAME" sudo_regex)
+      for rcsudo_regex in "${rcsudo_regexes[@]}"; do
+        sudo_regexes+=("$rcsudo_regex")
+      done
+    fi
+
+    # Read config defined checks
+    local check i command_checks=() github_project_checks=()
+    read -ra command_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "command_checks" | tr '\n' ' ')"
+    local github_project_checks=()
+    read -ra github_project_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "github_project_checks" | tr '\n' ' ')"
+    for check in "${github_project_checks[@]}"; do
+      if [[ ! "${check}" =~ ^[^|]+"|".+$ ]]; then
+        log -e "Invalid github_project_check ($check): must be check_name|github_project"
+        exit 1
+      fi
+      if [[ "${check%%|*}" == *_latest ]]; then
+        latest_list+=("${check%%|*}")
+      fi
+    done
+    log -d "github_project_checks: ${github_project_checks[*]/%/_latest}"
+
+    local rcmqtt_server=() rcmqtt_username=() rcmqtt_password=()
+    mapfile -t rcmqtt_server < <(get_config_value "$rcfile" mqtt server)
+    (( ${#rcmqtt_server[@]} > 0 )) && mqtt_server=${rcmqtt_server[-1]}
+    mapfile -t rcmqtt_username < <(get_config_value "$rcfile" mqtt username)
+    (( ${#rcmqtt_username[@]} > 0 )) && mqtt_username=${rcmqtt_username[-1]}
+    mapfile -t rcmqtt_password < <(get_config_value "$rcfile" mqtt password)
+    (( ${#rcmqtt_password[@]} > 0 )) && mqtt_password=${rcmqtt_password[-1]}
+
+    ! $host_name_set && mapfile -t rchost_name < <(get_config_value "$rcfile" mqtt host_name)
+    [[ ${#rchost_name[@]} -gt 0 && ${rchost_name[-1]} =~ ^[0-9]+$ ]] && host_name=$rchost_name
+    ! $ink_topic_set && mapfile -t rcink_topic < <(get_config_value "$rcfile" mqtt ink_topic)
+    [[ ${#rcink_topic[@]} -gt 0 && ${rcink_topic[-1]} =~ ^[0-9]+$ ]] && ink_topic=$rcink_topic
+    ! $prepend_name_set && mapfile -t rcprepend_name < <(get_config_value "$rcfile" mqtt prepend_name)
+    [[ ${#rcprepend_name[@]} -gt 0 && ${rcprepend_name[-1]} =~ ^[0-9]+$ ]] && prepend_name=$rcprepend_name
+
+  fi # if [[ -s "$rcfile" ]]; then
+
   local i=0 n=0 checks=()
   if [[ -n "$print_opt" ]]; then
     case "$print_opt" in
@@ -3788,86 +3587,9 @@ main() { # utility_function
     esac # case "$print_opt" in
   fi
 
-  # If -c passed and rcfile cannot be read, die
-  if $rcfile_set && [[ ! -r "$rcfile" ]]; then
-    log -e "Cannot read rcfile"
-    exit 1
-  fi
-
-  if [[ -n "$rcfile" && -s "$rcfile" ]]; then
-    log -d "Using $rcfile for configfile"
-  fi
-  if [[ ! -s "$rcfile" ]]; then
-    log -d -d "Not using a config file (rcfile=$rcfile)"
-  fi
-
   # If -L was given and no software was listed, add 'docker' to software list
   [[ -n "$update_list" ]] && (( $# == 0 )) && set -- "$update_list"
   (( $# == 0 )) && usage
-
-  # Validate output_mode
-  case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
-
-  # Read configuration settings
-  if [[ -z "$exec_user" && -s "$rcfile" ]]; then
-    mapfile -t arr < <(get_config_value "$rcfile" "$PROGNAME" user)
-    (( ${#arr[@]} > 0 )) && exec_user=${arr[-1]}
-    unset arr
-  fi
-
-  # Drop privileges if running as root and $exec_user is defined
-  [[ $(id -u) == 0 && -n "$exec_user" ]] && drop_privs "$exec_user" "${args_orig[@]}"
-
-  # Read configuration file options
-  if [[ -s "$rcfile" ]]; then
-    mapfile -t rccache_dir < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
-    (( ${#rccache_dir[@]} > 0 )) && cache_dir=${rccache_dir[-1]}
-
-    ! $cache_lifetime_set && mapfile -t rccache_lifetime < <(get_config_value "$rcfile" "$PROGNAME" cache_lifetime)
-    [[ ${#rccache_lifetime[@]} -gt 0 && ${rccache_lifetime[-1]} =~ ^[0-9]+$ ]] && cache_lifetime=${rccache_lifetime[-1]}
-
-    ! $retry_delay_set && mapfile -t rcretry_delay < <(get_config_value "$rcfile" "$PROGNAME" retry_delay)
-    [[ ${#rcretry_delay[@]} -gt 0 && ${rcretry_delay[-1]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcretry_delay[-1]}
-
-    mapfile -t rcmax_retries < <(get_config_value "$rcfile" "$PROGNAME" max_retries)
-    [[ ${#rcmax_retries[@]} -gt 0 && ${rcmax_retries[-1]} =~ ^[0-9]+$ ]] && max_retries=${rcmax_retries[-1]}
-
-    ! $compose_file_set && mapfile -t rccompose_file < <(get_config_value "$rcfile" "$PROGNAME" compose_file)
-    (( ${#rccompose_file[@]} > 0 )) && compose_file=${rccompose_file[-1]}
-
-    ! $docker_seconds_set && mapfile -t rcdocker_seconds < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
-    [[ ${rcdocker_seconds[@]} -gt 0 && ${rcdocker_seconds[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcdocker_seconds[-1]}
-
-    ! $printer_set && mapfile -t rcprinter < <(get_config_value "$rcfile" "$PROGNAME" printer)
-    (( ${#rcprinter[@]} > 0 )) && PRINTER=${rcprinter[-1]}
-
-    ! $sudo_user_set && mapfile -t rcsudo_user < <(get_config_value "$rcfile" "$PROGNAME" sudo_user)
-    (( ${#rcsudo_user[@]} > 0 )) && sudo_user=${rcsudo_user[-1]}
-
-    # Deal with multiple sudo_regex lines
-    if ! $sudo_regex_set; then
-      mapfile -t rcsudo_regexes < <(get_config_value "$rcfile" "$PROGNAME" sudo_regex)
-      for rcsudo_regex in "${rcsudo_regexes[@]}"; do
-        sudo_regexes+=("$rcsudo_regex")
-      done
-    fi
-
-    local rcmqtt_server=() rcmqtt_username=() rcmqtt_password=()
-    mapfile -t rcmqtt_server < <(get_config_value "$rcfile" mqtt server)
-    (( ${#rcmqtt_server[@]} > 0 )) && mqtt_server=${rcmqtt_server[-1]}
-    mapfile -t rcmqtt_username < <(get_config_value "$rcfile" mqtt username)
-    (( ${#rcmqtt_username[@]} > 0 )) && mqtt_username=${rcmqtt_username[-1]}
-    mapfile -t rcmqtt_password < <(get_config_value "$rcfile" mqtt password)
-    (( ${#rcmqtt_password[@]} > 0 )) && mqtt_password=${rcmqtt_password[-1]}
-
-    ! $host_name_set && mapfile -t rchost_name < <(get_config_value "$rcfile" mqtt host_name)
-    [[ ${#rchost_name[@]} -gt 0 && ${rchost_name[-1]} =~ ^[0-9]+$ ]] && host_name=$rchost_name
-    ! $ink_topic_set && mapfile -t rcink_topic < <(get_config_value "$rcfile" mqtt ink_topic)
-    [[ ${#rcink_topic[@]} -gt 0 && ${rcink_topic[-1]} =~ ^[0-9]+$ ]] && ink_topic=$rcink_topic
-    ! $prepend_name_set && mapfile -t rcprepend_name < <(get_config_value "$rcfile" mqtt prepend_name)
-    [[ ${#rcprepend_name[@]} -gt 0 && ${rcprepend_name[-1]} =~ ^[0-9]+$ ]] && prepend_name=$rcprepend_name
-
-  fi # if [[ -s "$rcfile" ]]; then
 
   # Set up software list from command line arguments, substitute _ for -
   mapfile -t software < <(printf '%s\n' "${@//-/_}" | sort -u)
@@ -4194,8 +3916,19 @@ main() { # utility_function
             update_time=$(date +%s)
             (( ret != 0 )) && log -e "Could not get $sw version with sudo" && continue
           else
-            log -d -d -d "Running $sw to get version"
-            version=$($sw)
+            if [[ " ${command_checks[*]} " == *" $sw "* ]]; then
+              log -d -d -d "Running '_command_check $sw' to get version"
+              version=$(_command_check "$sw")
+            elif [[ " ${github_project_checks[*]%%|*} " == *" $sw "* ]]; then
+              log -d -d -d "Running '_github_project $sw' to get version"
+              version=$(_github_project "$sw")
+            # elif [[ "$sw" == *"_latest" && " ${github_project_checks[*]%%|*} " == *" $sw "* ]]; then
+            #   log -d -d -d "Running '_github_project ${sw%_latest}' to get version"
+            #   version=$(_github_project "$sw")
+            else
+              log -d -d -d "Running $sw to get version"
+              version=$($sw)
+            fi
             ret=$?
             update_time=$(date +%s)
           fi
