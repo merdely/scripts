@@ -1006,7 +1006,6 @@ print_output() {
   local err
   err=$(IFS=';'; echo "${answer_error_msg[*]}" | sed 's/;/; /')
   [ ${#answer_error_msg[@]} -eq 0 ] && answer_error=false
-    echo $answer_json >&2
   answer_json=$(jq -nc --argjson a "$answer_json" --arg e "$answer_error" --arg m "$err" '$a | .error = ($e=="true") | .error_msg = $m' 2> /dev/null)
   [ $? != 0 ] && log -t DEBUG "jq error adding error and error_msg answer_json"
 
