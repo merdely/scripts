@@ -17,8 +17,10 @@ trap 'exit 1' INT TERM
 export PATH=$PATH:$HOME/.local/bin
 
 # Define a SEMVER_REGEX to be used in functions to validate version strings
-SEMVER_REGEX='(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?'
+#SEMVER_REGEX='(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?'
+SEMVER_REGEX='((?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)|(?P<year>[0-9]{4})[\._-](?<month>[01]?[0-9])[\._-](?<day>[0123]?[0-9])(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?)'
 SEMVER_BUILDMETA_REGEX='(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?'
+AUTO_CHECKS='(aur_latest|codeberg|codeberg_latest|command|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|pacman)'
 
 # Handle temp files
 TEMPDIR=$(mktemp -d)
@@ -240,8 +242,6 @@ function_exists() { # utility_function
   local flist=()
   flist+=("${function_list[@]}")
   flist+=("${function_alias_list[@]}")
-  flist+=("${command_checks[@]}")
-  flist+=("${pacman_package_checks[@]}")
   flist+=("${project_checks[@]%|*}")
   (( debug >= 3 )) && set -x
   [[ ! " ${flist[*]} " == *" "$1" "* ]] && { set +x ; return 1; }
@@ -524,29 +524,6 @@ alpine_repo_package() { # helper_function
   log -d -d "xmllint output: $out"
   [[ -n "$out" ]] && sort -V <<< "$out" \
     | tail -n1
-}
-
-aur_package() { # helper_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local pkg=$1 out
-
-  out=$(maketemp)
-  curl -sLo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
-  log -d -d -d "Curl output: $(cat "$out")"
-  [[ -s "$out" ]] && awk -F= '
-      /^_major=/ { m = $2 }
-      /^_subver=/ { s = $2 }
-      /^pkgver=/ { pv = $2 }
-      /^pkgrel=/ { pr = $2 }
-    END {
-      if (m != "" && s != "")
-        o=sprintf("%s.%s-%s\n",m,s,pr)
-      else if (pv != "")
-        o=sprintf("%s-%s\n",pv,pr)
-      gsub(/"/,"",o)
-      print o
-    }' "$out"
 }
 
 codeberg_project() { # helper_function
@@ -1001,7 +978,7 @@ flatpak_version() { # helper_function
   local out
   out=$(flatpak list --columns=application,version)
   log -d -d -d "Flatpak list output: $out"
-  [[ -n "$out" ]] && awk -v a="$1" '$1==a {print $NF;exit}'
+  [[ -n "$out" ]] && awk -v a="$1" '$1==a {print $NF;exit}' <<< "$out"
 }
 
 get_docker_image_name() { # helper_function
@@ -1173,13 +1150,6 @@ myaur_package() { # helper_function
   [[ -n "$out" ]] && awk -F= '/^pkgver=/{pv=$2}/^pkgrel=/{pr=$2}END{printf "%s-%s\n",pv,pr;exit}' <<< "$out"
 }
 
-pacman_package() {
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  (( $# < 1 )) && { log -e "Package name required for ${FUNCNAME[0]}" ; return 1 ; }
-  check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  pacman -Q "$1" | awk '{print $2;exit}'
-}
-
 ## BEGIN CHECK FUNCTIONS
 # Define image_search array for mapping checks to image strings
 IMAGE_SEARCH=()
@@ -1191,20 +1161,25 @@ _command_check() {
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local cmd=${1%_command}
+  local cmd=${1%/command}
   if command -v "$cmd" &> /dev/null; then
     log -d -d "Attemping '$cmd --version'"
-    if out=$("$cmd" --version | _version_filter); then
+    if out=$("$cmd" --version 2>&1 | _version_filter); then
       echo "$out"
       return 0
     fi
     log -d -d "Attemping '$cmd -V'"
-    if out=$("$cmd" -V | _version_filter); then
+    if out=$("$cmd" -V 2>&1 | _version_filter); then
+      echo "$out"
+      return 0
+    fi
+    log -d -d "Attemping '$cmd version'"
+    if out=$("$cmd" version 2>&1 | _version_filter); then
       echo "$out"
       return 0
     fi
     log -d -d "Attemping '$cmd --help'"
-    if out=$("$cmd" --help | _version_filter); then
+    if out=$("$cmd" --help 2>&1 | _version_filter); then
       echo "$out"
       return 0
     fi
@@ -1215,48 +1190,66 @@ _command_check() {
     return 1
   fi
 }
-_project_check() {
-  log -d "Running: ${FUNCNAME[0]} $*"
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
-  local check project
-  for check in "${project_checks[@]}"; do
-    if [[ "$check" =~ ^$1"|" ]]; then
-      project=${check##*|}
-      break
-    fi
-  done
-
-  [[ -z "$project" ]] && { log -e "Could not find project for $1" ; return 1 ; }
-
-  case "$project" in
-    "github.com/"* )
-      if out=$(github_project "${project#github.com/}" | _version_filter); then
-        echo "$out"
-        return 0
-      fi ;;
-    "codeberg.org/"* )
-      if out=$(codeberg_project "${project#codeberg.org/}" | _version_filter); then
-        echo "$out"
-        return 0
-      fi ;;
-    "code.forgejo.org/"* )
-      if out=$(codeberg_project -f "${project#code.forgejo.org/}" | _version_filter); then
-        echo "$out"
-        return 0
-      fi ;;
-  esac
-  log -e "Could not determine version for $1 ($project)"
-  return 1
-}
-_pacman_package_check() {
+_auto_check() {
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  if out=$(pacman_package "${1%_pacman}" | _version_filter); then
-    echo "$out"
-    return 0
+  if [[ ! "$1" =~ /$AUTO_CHECKS ]]; then
+    log -e "Package must be in the format of package/type ($1)"
+    return 1
   fi
+  local project
+  case "${1##*/}" in
+    aur_latest)
+      check_prog aur "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+      if out=$(aur query -t info "${1%/aur_latest}" | jq -r '.results[].Version' 2> /dev/null); then
+        echo "$out"
+        return 0
+      fi ;;
+    command)
+      if out=$(_command_check "$1"); then
+        echo "$out"
+        return 0
+      fi ;;
+    codeberg|codeberg_latest)
+      project=${1%/codeberg_latest}
+      if out=$(codeberg_project "${project%/codeberg}" | _version_filter); then
+        echo "$out"
+        return 0
+        fi ;;
+    flatpak)
+      if out=$(flatpak_version "${1%/flatpak}"); then
+        echo "$out"
+        return 0
+      fi;;
+    flatpak_latest)
+      if out=$(flatpak_appstream "${1%/flatpak_latest}"); then
+        echo "$out"
+        return 0
+      fi;;
+    forgejo|forgejo_latest)
+      project=${1%/forgejo_latest}
+      if out=$(codeberg_project -f "${project%/forgejo}" | _version_filter); then
+        echo "$out"
+        return 0
+        fi ;;
+    github|github_latest)
+      project=${1%/github_latest}
+      if out=$(github_project "${project%/github}" | _version_filter); then
+        echo "$out"
+        return 0
+        fi ;;
+    pacman)
+      check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+      if out=$(pacman -Q "${1%/pacman}" 2> /dev/null); then
+        echo "$out"
+        return 0
+      fi ;;
+    *)
+      log -e "Unknown package check: ${1##*/}"
+      return 1 ;;
+  esac
   log -e "Could not determine version for $1"
   return 1
 }
@@ -1379,10 +1372,6 @@ adguardhome_server() { # remote_host
   [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j.version' 2> /dev/null
 }
 
-archiso_systemd_boot_aur_latest() { # no_auto
-  aur_package archiso-systemd-boot
-}
-
 IMAGE_SEARCH+=("audiobookshelf_docker|advplyr/audiobookshelf")
 audiobookshelf_docker() {
   docker_inspect
@@ -1493,35 +1482,6 @@ collabora_docker_latest() {
     sed -r 's/^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+).*$/\1/'
 }
 
-cpputilities_aur_latest() { # no_auto
-  aur_package c++utilities
-}
-
-dbeaver_ce_bin_aur_latest() { # no_auto
-  aur_package dbeaver-ce-bin
-}
-
-dbeaver_flatpak() {
-  flatpak_version io.dbeaver.DBeaverCommunity
-}
-
-dbeaver_flatpak_latest() { # no_auto
-  flatpak_appstream io.dbeaver.DBeaverCommunity
-}
-
-decode_config() {
-  check_prog decode-config || return 1
-  awk -F"'" '$2=="VERSION"{split($4,a,".");printf "%s.%s.%s\n",a[1],a[2],a[3];exit}' \
-    "$(realpath "$(command -v decode-config)")"
-}
-
-docker_compose() {
-  check_prog docker || return 1
-  docker compose version | \
-    awk -F '[ ,]' '{print $4;exit}' | \
-    sed 's/^v//'
-}
-
 IMAGE_SEARCH+=("dockhand_docker|fnsys/dockhand")
 dockhand_docker() {
   check_prog jq || return 1
@@ -1542,10 +1502,6 @@ dockhand_docker_latest() {
   docker_tags -r '^[0-9a-f]+$' -s '^v[0-9][0-9.]+' -r '-baseline$' fnsys/dockhand
 }
 
-electron28_bin_aur_latest() { # no_auto
-  aur_package electron28-bin
-}
-
 empiretech_camera_file() {
   cat "$PROGDATA"/"${FUNCNAME[0]%_file}".txt
 }
@@ -1554,14 +1510,6 @@ empiretech_camera_latest() {
   check_prog xmllint || return 1
   curl -s "https://empiretech01.com/pages/download-firmwares" | \
     xmllint --html --xpath "//div[@class='firmwares_content_container']/div[1][contains(text(), 'IPC-Color4K-T-S2')]/following-sibling::div[2]/text()" - 2> /dev/null
-}
-
-errands_flatpak() {
-  flatpak_version io.github.mrvladus.List
-}
-
-errands_flatpak_latest() { # no_auto
-  flatpak_appstream io.github.mrvladus.List
 }
 
 IMAGE_SEARCH+=("etherpad_docker|etherpad")
@@ -1628,14 +1576,6 @@ filestash_latest() { # no_auto
   echo "$app_version$build_date"
 }
 
-firefox_flatpak() {
-  flatpak_version org.mozilla.firefox
-}
-
-firefox_flatpak_latest() { # no_auto
-  flatpak_appstream org.mozilla.firefox
-}
-
 IMAGE_SEARCH+=("flaresolverr_docker|flaresolverr/flaresolverr")
 flaresolverr_docker() {
   check_prog jq || return 1
@@ -1644,14 +1584,6 @@ flaresolverr_docker() {
 
 flaresolverr_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+' flaresolverr/flaresolverr
-}
-
-flatseal_flatpak() {
-  flatpak_version com.github.tchx84.Flatseal
-}
-
-flatseal_flatpak_latest() { # no_auto
-  flatpak_appstream com.github.tchx84.Flatseal
 }
 
 flip_2_dnd_pro() {
@@ -1723,14 +1655,6 @@ gitlab_latest() { # no_auto
     | awk '/^## [0-9]+\.[0-9]+\.[0-9]+ \([0-9]{4}-[0-9]{2}-[0-9]{2}\)/{print $2;exit}'
 }
 
-gpuviewer_flatpak() {
-  flatpak_version io.github.arunsivaramanneo.GPUViewer
-}
-
-gpuviewer_flatpak_latest() { # no_auto
-  flatpak_appstream io.github.arunsivaramanneo.GPUViewer
-}
-
 IMAGE_SEARCH+=("grafana_docker|grafana/grafana")
 grafana_docker() {
   docker_compose_exec grafana-server -v | awk '/^Version [0-9]/{print $2;exit}'
@@ -1738,10 +1662,6 @@ grafana_docker() {
 
 grafana_docker_latest() { # no_auto
   docker_tags -r '^[0-9]+$' -s '^v?[0-9][0-9.]+$' grafana/grafana
-}
-
-grayjay_bin_aur_latest() { # no_auto
-  aur_package grayjay-bin
 }
 
 IMAGE_SEARCH+=("hawser_docker|finsys/hawser")
@@ -1881,10 +1801,6 @@ kapacitor_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' kapacitor
 }
 
-libpam_pwdfile_rs_bin_aur_latest() { # no_auto
-  aur_package libpam-pwdfile-rs-bin
-}
-
 libratbag_git_latest() { # no_auto
   check_prog xmllint || return 1
   curl -s "https://github.com/libratbag/libratbag/commits/master/" | \
@@ -1913,18 +1829,6 @@ librewolf() {
   else
     printf '{ "Error": "Librewolf not found" }'
   fi
-}
-
-librewolf_flatpak() {
-  flatpak_version io.gitlab.librewolf-community
-}
-
-librewolf_bin_aur_latest() { # no_auto
-  aur_package librewolf-bin
-}
-
-librewolf_flatpak_latest() { # no_auto
-  flatpak_appstream io.gitlab.librewolf-community
 }
 
 librewolf_homebrew_latest() {
@@ -1959,10 +1863,6 @@ linkwarden_docker() {
 
 linkwarden_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/linkwarden/linkwarden
-}
-
-lisgd_aur_latest() {
-  aur_package lisgd
 }
 
 IMAGE_SEARCH+=("lldap_docker|lldap/lldap")
@@ -2003,18 +1903,6 @@ localai_gpu_intel_docker_latest() {
 
 localai_gpu_intel_unversioned_docker_latest() { # no_auto
   docker_tags -S -s '^sha-[0-9a-f]{7}-gpu-intel$' localai/localai
-}
-
-logseq_desktop_bin_aur_latest() {
-  aur_package logseq-desktop-bin
-}
-
-logseq_flatpak() {
-  flatpak_version com.logseq.Logseq
-}
-
-logseq_flatpak_latest() { # no_auto
-  flatpak_appstream com.logseq.Logseq
 }
 
 IMAGE_SEARCH+=("mariadb_docker|mariadb")
@@ -2064,14 +1952,6 @@ mollysocket_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+$' ghcr.io/mollyim/mollysocket
 }
 
-mongodb_compass_flatpak() {
-  flatpak_version com.mongodb.Compass
-}
-
-mongodb_compass_flatpak_latest() { # no_auto
-  flatpak_appstream com.mongodb.Compass
-}
-
 mosquitto() {
   docker_printenv VERSION
 }
@@ -2082,26 +1962,6 @@ mosquitto_docker_latest() { # no_auto
 
 mosquitto_latest() { # no_auto
   github_tags eclipse-mosquitto/mosquitto
-}
-
-mpv_flatpak() {
-  flatpak_version io.mpv.Mpv
-}
-
-mpv_flatpak_latest() { # no_auto
-  flatpak_appstream io.mpv.Mpv
-}
-
-mqtt5_explorer_bin_aur_latest() { # no_auto
-  aur_package mqtt5-explorer-bin
-}
-
-mqtt5_explorer_flatpak() {
-  flatpak_version io.github.Omniaevo.mqtt5-explorer
-}
-
-mqtt5_explorer_flatpak_latest() { # no_auto
-  flatpak_appstream io.github.Omniaevo.mqtt5-explorer
 }
 
 IMAGE_SEARCH+=("mysql_docker|mysql/mysql-server")
@@ -2191,10 +2051,6 @@ ntfy_docker() {
 
 ntfy_docker_latest() {
   docker_tags -s '^v?[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$' binwiederhier/ntfy
-}
-
-ntfysh_bin_aur_latest() {
-  aur_package ntfysh-bin
 }
 
 IMAGE_SEARCH+=("octoprint_docker|octoprint/octoprint")
@@ -2287,18 +2143,6 @@ opnsense_latest() {
   github_tags -s '^[0-9][0-9.]+$' opnsense/core
 }
 
-oscar_aur_latest() { # no_auto
-  aur_package oscar
-}
-
-oscar_flatpak() {
-  flatpak_version com.sleepfiles.OSCAR
-}
-
-oscar_flatpak_latest() { # no_auto
-  flatpak_appstream com.sleepfiles.OSCAR
-}
-
 IMAGE_SEARCH+=("owncloud_docker|owncloud")
 owncloud_docker() {
   docker_compose_exec cat /var/www/owncloud/version.php | \
@@ -2348,47 +2192,12 @@ pihole_docker() {
   docker_logs pihole 2>&1 | awk '/Pi-hole version is v[0-9]/ { print $4;exit}'
 }
 
-pinta_aur_latest() { # no_auto
-  aur_package pinta
-}
-
-pinta_flatpak() {
-  flatpak_version com.github.PintaProject.Pinta
-}
-
-pinta_flatpak_latest() { # no_auto
-  flatpak_appstream com.github.PintaProject.Pinta
-}
-
-pipeline_gtk_aur_latest() { # no_auto
-  aur_package pipeline-gtk
-}
-
-pipeline_flatpak() {
-  flatpak_version de.schmidhuberj.tubefeeder
-}
-
-pipeline_flatpak_latest() { # no_auto
-  flatpak_appstream de.schmidhuberj.tubefeeder
-}
-
 piper_git_latest() { # no_auto
   check_prog xmllint || return 1
   curl -s "https://github.com/libratbag/piper/commits/master/" | \
     xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
     grep -iv "^All time$" | \
     head -n1
-}
-
-piper_git_aur_latest() {
-  aur_package piper-git
-}
-piper_flatpak() {
-  flatpak_version org.freedesktop.Piper
-}
-
-piper_flatpak_latest() { # no_auto
-  flatpak_appstream org.freedesktop.Piper
 }
 
 IMAGE_SEARCH+=("plex_docker|plexinc/pms-docker")
@@ -2482,14 +2291,6 @@ proton_ge() {
     tail -n1
 }
 
-protonup_qt_flatpak() {
-  flatpak_version net.davidotek.pupgui2
-}
-
-protonup_qt_flatpak_latest() { # no_auto
-  flatpak_appstream net.davidotek.pupgui2
-}
-
 IMAGE_SEARCH+=("prowlarr_docker|linuxserver/prowlarr")
 prowlarr_docker() {
   docker_inspect
@@ -2518,14 +2319,6 @@ qbittorrent_docker() {
 
 qbittorrent_docker_latest() {
   docker_tags -s '^v?[0-9][0-9.]+(-r[0-9]+)?-ls[0-9]+' lscr.io/linuxserver/qbittorrent
-}
-
-qtforkawesome_qt6_aur_latest() { # no_auto
-  aur_package qtforkawesome-qt6
-}
-
-qtutilities_qt6_aur_latest() { # no_auto
-  aur_package qtutilities-qt6
 }
 
 IMAGE_SEARCH+=("qui_docker|autobrr/qui")
@@ -2583,14 +2376,6 @@ registry_docker() {
 
 registry_docker_latest() { # no_auto
   docker_tags -s '^v?[0-9][0-9.]+$' registry
-}
-
-restic_command() {
-  if [[ -e /opt/homebrew/bin/restic ]]; then
-    /opt/homebrew/bin/restic version | awk '{print $2;exit}'
-  else
-    /usr/local/bin/restic version | awk '{print $2;exit}'
-  fi
 }
 
 IMAGE_SEARCH+=("restic_rest_server_docker|restic/rest-server")
@@ -2826,18 +2611,6 @@ syncthing_docker_latest() {
   docker_tags -s '^[0-9][0-9.]*$' syncthing/syncthing
 }
 
-syncthing_tray_flatpak() {
-  flatpak_version io.github.martchus.syncthingtray
-}
-
-syncthing_tray_flatpak_latest() { # no_auto
-  flatpak_appstream io.github.martchus.syncthingtray
-}
-
-syncthingtray_qt6_aur_latest() {
-  aur_package syncthingtray-qt6
-}
-
 tasmobackup() {
   /usr/bin/curl -s "http://127.0.0.1:8259" | awk '/>TasmoBackup .+ by Dan Medhurst</ {print $6;exit}'
 }
@@ -2924,18 +2697,6 @@ truenas_server() { # remote_host
   [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j' 2> /dev/null
 }
 
-ungoogled_chromium_bin_aur_latest() {
-  aur_package ungoogled-chromium-bin
-}
-
-ungoogled_chromium_flatpak() {
-  flatpak_version io.github.ungoogled_software.ungoogled_chromium
-}
-
-ungoogled_chromium_flatpak_latest() { # no_auto
-  flatpak_appstream io.github.ungoogled_software.ungoogled_chromium
-}
-
 IMAGE_SEARCH+=("unifi_docker|linuxserver/unifi-network-application")
 unifi_docker() {
   docker_compose_exec cat /usr/lib/unifi/data/db/version | \
@@ -2978,17 +2739,9 @@ vscode_docker() {
   docker_logs "${containername}" 2>&1 | awk '/] info  code-server [0-9]/{print $4; exit}'
 }
 
-waybar_updates_aur_latest() { # no_auto
-  aur_package waybar-updates
-}
-
 IMAGE_SEARCH+=("whoami_docker|whoami")
 whoami_docker() {
   docker_inspect
-}
-
-wleave_aur_latest() { # no_auto
-  aur_package wleave
 }
 
 yourls() {
@@ -3014,10 +2767,6 @@ zigbee2mqtt_tcp() {
   mosquitto_sub -C 1 -h "${mqtt_server:?}" -u "${mqtt_username:?}" -P "${mqtt_password:?}" \
     -i "$PROGNAME" -t zigbee2mqtt_tcp/bridge/config | \
     jq -r '.version' 2> /dev/null
-}
-
-zoom_aur_latest() { # no_auto
-  aur_package zoom
 }
 
 zwave_js() {
@@ -3320,11 +3069,7 @@ main() { # utility_function
     fi
 
     # Read config defined checks
-    local check command_checks=() pacman_package_checks=() project_checks=()
-    read -ra command_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "command_check" | tr '\n' ' ')"
-    command_checks=("${command_checks[@]/%/_command}")
-    read -ra pacman_package_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "pacman_package_check" | tr '\n' ' ')"
-    pacman_package_checks=("${pacman_package_checks[@]/%/_pacman}")
+    local check project_checks=()
 
     read -ra project_checks <<< "$(get_config_value "$rcfile" "$PROGNAME" "project_check" | tr '\n' ' ')"
     for check in "${project_checks[@]}"; do
@@ -3707,6 +3452,7 @@ main() { # utility_function
             break
           fi
         done
+        [[ "$sw" =~ /$AUTO_CHECKS ]] && found=true
       else
         found=true
       fi
@@ -3769,14 +3515,15 @@ main() { # utility_function
         # If -f and -F not used, user is not root, sw IS a latest check, and 
         # cache_file is readable, read the cache file if not stale
         if ! $force_all && [[ $(id -u) != 0 && " ${force_list[*]} " != *" $sw "* ]] && \
-            [[ "$sw" == *"_latest" && -r "$cache_dir"/"$sw${minver:+_$minver}" ]]; then
-          stamp=$(stat -c "%Y" "$cache_dir"/"$sw${minver:+_$minver}")
+            [[ "$sw" == *"_latest" && -r "$cache_dir"/"${sw//\//__}${minver:+_$minver}" ]]; then
+          stamp=$(stat -c "%Y" "$cache_dir"/"${sw//\//__}${minver:+_$minver}")
           now=$(date +%s)
 
           # If the timestamp is less than 1 hour
           if (( now - stamp < lifetime * 60 - 1 )) ; then
             log -v "$sw was updated $(( (now - stamp) / 60 )) minutes ago, using cache ($lifetime minutes)"
-            version=$(cat "$cache_dir"/"$sw${minver:+_$minver}")
+            log -d "Reading $sw info from cache ($(( (now - stamp) / 60 )) of $lifetime minutes)"
+            version=$(cat "$cache_dir"/"${sw//\//__}${minver:+_$minver}")
             ret=$?
             update_time=$stamp
           fi
@@ -3812,15 +3559,9 @@ main() { # utility_function
             update_time=$(date +%s)
             (( ret != 0 )) && log -e "Could not get $sw version with sudo" && continue
           else
-            if [[ "$sw" == *_command && " ${command_checks[*]} " == *" $sw "* ]]; then
-              log -d -d -d "Running '_command_check $sw' to get version"
-              version=$(_command_check "$sw")
-            elif [[ "$sw" == *_pacman && " ${pacman_package_checks[*]} " == *" $sw "* ]]; then
-              log -d -d -d "Running '_pacman_package_check $sw' to get version"
-              version=$(_pacman_package_check "$sw")
-            elif [[ " ${project_checks[*]%%|*} " == *" $sw "* ]]; then
-              log -d -d -d "Running '_project_check $sw' to get version"
-              version=$(_project_check "$sw")
+            if [[ "$sw" =~ /$AUTO_CHECKS && " ${app_list[*]} ${app_alias_list[*]} " != *" $sw "* ]]; then
+              log -d -d -d "Running '_auto_check $sw' to get version"
+              version=$(_auto_check "$sw")
             else
               log -d -d -d "Running $sw to get version"
               version=$($sw)
@@ -3837,22 +3578,22 @@ main() { # utility_function
               version="---"
             fi
             update_time=$(date +%s)
-            rm -f "$cache_dir"/"$sw${minver:+_$minver}"
+            rm -f "$cache_dir"/"${sw//\//__}${minver:+_$minver}"
             break
           fi
 
           if [[ "$sw" == *"_latest" ]]; then
             log -d "Writing latest update for $sw to cache"
-            echo "$version" > "$cache_dir"/"$sw${minver:+_$minver}"
+            echo "$version" > "$cache_dir"/"${sw//\//__}${minver:+_$minver}"
             # shellcheck disable=SC2153
-            (( $(id -u) == 0 )) && chown "$SUDO_USER":"$(id -g "$SUDO_USER")" "$cache_dir"/"$sw${minver:+_$minver}"
+            (( $(id -u) == 0 )) && chown "$SUDO_USER":"$(id -g "$SUDO_USER")" "$cache_dir"/"${sw//\//__}${minver:+_$minver}"
           fi
         fi
         # If version is set, move on
         [[ "$ret" == "0" && -n "$version" && "$version" != "null" ]] && break
         # Otherwise, set to --- and delete cache file
         version="---"
-        rm -f "$cache_dir"/"$sw${minver:+_$minver}"
+        rm -f "$cache_dir"/"${sw//\//__}${minver:+_$minver}"
         i=$(( i + 1 ))
       done # while (( i <= retries )); do
 
