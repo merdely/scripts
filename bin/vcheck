@@ -31,7 +31,7 @@ VER_YMD='(?P<year>[0-9]{4})[\._-](?P<month>[01]?[0-9])[\._-](?P<day>[0123]?[0-9]
 LSVER='(?:-(?P<lsver>ls[0-9]+))?'
 SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 
-AUTO_CHECKS='(aur_latest|codeberg|codeberg_latest|command|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|gitlab_latest|pacman)'
+AUTO_CHECKS='(aur_latest|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|gitlab_latest|pacman)'
 
 # Handle temp files
 TEMPDIR=$(mktemp -d)
@@ -577,15 +577,16 @@ _auto_check() { # helper_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
 
-  local search=() project tmp sedstring skipverfilter=false
+  local search=() project tmp jqfilter sedstring skipverfilter=false
   local opt OPTARG OPTIND=1
-  while getopts ":p:t:r:s:S:vV" opt; do
+  while getopts ":p:t:j:r:s:S:vV" opt; do
     case "$opt" in
       p) project=$OPTARG ;;
       t) tag=$OPTARG ;;
+      j) jqfilter=$OPTARG ;;       # Uses last one given
       r) search+=(-r "$OPTARG") ;;
       s) search+=(-s "$OPTARG") ;;
-      S) sedstring=$OPTARG ;;
+      S) sedstring=$OPTARG ;;      # Uses last one given
       v) skipverfilter=true ;;
       V) skipverfilter=false ;;
       *) log -w "Invalid flag ($OPTARG)" ;;
@@ -609,6 +610,7 @@ _auto_check() { # helper_function
     aur_latest) out=$(_aur_package "$project") ;;
     command) out=$(_command_check "$project") ;;
     codeberg|codeberg_latest) out=$(_codeberg_project "$project") ;;
+    docker_exec) out=$(_docker_exec "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
     docker_tags|docker_tags_latest) out=$(_docker_tags "${search[@]}" "$project") ;;
@@ -628,6 +630,13 @@ _auto_check() { # helper_function
       log -e "Unknown package check: $tag"
       return 1 ;;
   esac
+
+  # Apply jq filter, if set
+  if [[ -n "$out" && -n "$jqfilter" ]]; then
+    log -d -d -d "Using jq -rn --argjson j '\$out' '$jqfilter'"
+    out=$(jq -rn --argjson j "$out" "\$j | $jqfilter")
+    log -d -d -d "jq output: $out"
+  fi
 
   # Apply sedstring, if set
   if [[ -n "$out" && -n "$sedstring" ]]; then
@@ -745,6 +754,40 @@ curl_api() { # helper_function
   fi
   log -d -d "Curl output: $out"
   cat "$out"
+}
+
+_docker_exec() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+
+  local image image_search command=() out
+  if (( $# == 1 )); then
+    if [[ "$1" == */* ]]; then
+      image_search=${1%%/*}
+      command=${1#*/}
+    else
+      image_search=$1
+      command=($*)
+    fi
+  else
+    image_search=$1
+    shift
+    command=("$@")
+  fi
+
+  container=$(_docker_container_search "$image_search")
+  log -d -d "container=$container"
+  [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
+
+  log -d -d "Executing: docker exec -t -u nobody $container ${command[*]}"
+  out=$(docker exec -t -u nobody "$container" ${command[*]})
+  log -d -d "docker exec output = $out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
 }
 
 docker_compose_exec() { # helper_function
@@ -1316,6 +1359,7 @@ _use_sudo_exec() { # helper_function
       [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
     fi
   done
+  return 1
 }
 
 ## BEGIN CHECK FUNCTIONS
@@ -1749,15 +1793,6 @@ openregex_docker() {
 
 openregex_latest() { # no_auto
   github_tags SunneV/OpenRegex
-}
-
-open-webui_docker() {
-  docker_compose_exec cat /app/CHANGELOG.md | \
-    awk -F '[][]' '
-      /^## \[([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9_]+)?)] - ([0-9]{4}-[0-9]{2}-[0-9]{2})/ {
-        print $2
-        exit
-      }'
 }
 
 open_webui_latest() { # no_auto
@@ -2671,7 +2706,7 @@ main() { # utility_function
   saved_docker_seconds=$docker_seconds
   saved_compose_file=$compose_file
 
-  local tmpstring sw_skip_vflag=() sw_search=() sw_sed=()
+  local tmpstring sw_skip_vflag=() sw_jq=() sw_search=() sw_sed=()
   local sw_name sw_check_set tmp_name sw_orig sw_tag sw_project
 
   # TODO: Turn into function?
@@ -2814,6 +2849,7 @@ main() { # utility_function
       sw_check_set=false
       sw_skip_vflag=(-V)
       sw_search=()
+      sw_jq=()
       sw_sed=()
 
       log -d "Starting $sw"
@@ -2829,12 +2865,17 @@ main() { # utility_function
       # For dynamic/auto checks, strip off preceding 
       sw_name=$sw
       sw_tag=$(grep -Po "(?<=/)$AUTO_CHECKS$" <<< "$sw_name")
-      while [[ "$sw_name" =~ ^(postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
+      while [[ "$sw_name" =~ ^(jq=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
         case "$sw_name" in
+          jq=*)
+            tmpstring=${sw_name%%/*}
+            sw_name=${sw_name#jq=*/}
+            sw_jq+=(-j "${tmpstring#jq=}")       # The last one will be used
+            ;;
           postsed=*)
             tmpstring=${sw_name%%/*}
             sw_name=${sw_name#postsed=*/}
-            sw_sed+=(-S "${tmpstring#postsed=}")
+            sw_sed+=(-S "${tmpstring#postsed=}")  # The last one will be used
             ;;
           remove=*)
             tmpstring=${sw_name%%/*}
@@ -2869,6 +2910,7 @@ main() { # utility_function
       log -d -d "sw_tag=$sw_tag"
       log -d -d "sw_project=$sw_project"
       log -d -d "sw_skip_vflag=${sw_skip_vflag[*]}"
+      log -d -d "sw_jq=${sw_jq[*]}"
       log -d -d "sw_search=${sw_search[*]}"
       log -d -d "sw_sed=${sw_sed[*]}"
       log -d -d "sw_orig=$sw_orig"
@@ -3021,8 +3063,9 @@ main() { # utility_function
             (( ret != 0 )) && log -e "Could not get $sw_name version with sudo" && continue
           else
             if [[ "$sw" =~ /$AUTO_CHECKS && " ${app_list[*]} ${app_alias_list[*]} " != *" $sw "* ]]; then
-              log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_search[*]} ${sw_sed[*]} $sw_name' to get version"
-              version=$(_auto_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" "${sw_search[@]}" "${sw_sed[@]}" "$sw_name")
+              log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_jq[*]} ${sw_search[*]} ${sw_sed[*]} $sw_name' to get version"
+              version=$(_auto_check -p "$sw_project" -t "$sw_tag" \
+                "${sw_skip_vflag[@]}" "${sw_jq[@]}" "${sw_search[@]}" "${sw_sed[@]}" "$sw_name")
             else
               log -d -d -d "Running $sw to get version"
               version=$($sw)
