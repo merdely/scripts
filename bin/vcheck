@@ -1356,7 +1356,8 @@ _use_sudo_exec() { # helper_function
       log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 ${debug_args[*]}'"
       out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" "${debug_args[@]}")
       log -d "sudoexec ${FUNCNAME[1]} returned out='$out'"
-      [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+      [[ -n "$out" ]] && echo "$out"
+      return 0
     fi
   done
   return 1
