@@ -762,7 +762,8 @@ _docker_exec() { # helper_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
-  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
   local image image_search command=() out
   if (( $# == 1 )); then
@@ -833,7 +834,8 @@ _docker_container_search() { # helper_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
-  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
   local docker_ps out
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}')
@@ -850,7 +852,8 @@ _docker_image_search() { # helper_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
-  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
   local docker_ps out
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}')
@@ -876,7 +879,8 @@ _docker_inspect() { # helper_function
   local container out
 
   # Run through sudo exec if necessary
-  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
   container=$(_docker_container_search "$1")
   log -d -d "container=$container"
@@ -916,7 +920,8 @@ docker_logs() { # helper_function
   [[ "$1" == "-h" ]] && { log "usage: docker_logs dockername" ; return 0 ; }
 
   # Run through sudo exec if necessary
-  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
   local name
   name=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Name}}' "$1" 2> /dev/null)
@@ -929,7 +934,8 @@ _docker_printenv() { # helper_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
-  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
   local image image_search variable out
   if (( $# == 1 )); then
@@ -1344,7 +1350,7 @@ _version_filter() { # helper_function
 
 # Function to determine if function should be run with sudo_exec and do it if so
 _use_sudo_exec() { # helper_function
-  $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 1 ; }
+  $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 2 ; }
   log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
 
   for regex in "${sudo_regexes[@]}"; do
@@ -1356,11 +1362,11 @@ _use_sudo_exec() { # helper_function
       log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 ${debug_args[*]}'"
       out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" "${debug_args[@]}")
       log -d "sudoexec ${FUNCNAME[1]} returned out='$out'"
-      [[ -n "$out" ]] && echo "$out"
-      return 0
+      [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+      return 3
     fi
   done
-  return 1
+  return 4
 }
 
 ## BEGIN CHECK FUNCTIONS
@@ -1826,7 +1832,8 @@ pagefind_docker() {
   check_prog docker || return 1
 
   # Run through sudo exec if necessary
-  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
   docker run --rm pagefind pagefind --version | awk '{print $NF;exit}'
 }
