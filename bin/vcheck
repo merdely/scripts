@@ -2827,22 +2827,22 @@ main() { # utility_function
       # For dynamic/auto checks, strip off preceding 
       sw_name=$sw
       sw_tag=$(grep -Po "(?<=/)$AUTO_CHECKS$" <<< "$sw_name")
-      while [[ "$sw_name" =~ ^(postsed_|remove_|search_|noskip_version_filter|skip_version_filter) ]]; do
+      while [[ "$sw_name" =~ ^(postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
         case "$sw_name" in
-          postsed_*)
+          postsed=*)
             tmpstring=${sw_name%%/*}
-            sw_name=${sw_name#postsed_*/}
-            sw_sed+=(-S "${tmpstring#postsed_}")
+            sw_name=${sw_name#postsed=*/}
+            sw_sed+=(-S "${tmpstring#postsed=}")
             ;;
-          remove_*)
+          remove=*)
             tmpstring=${sw_name%%/*}
-            sw_name=${sw_name#remove_*/}
-            sw_search+=(-r "${tmpstring#remove_}")
+            sw_name=${sw_name#remove=*/}
+            sw_search+=(-r "${tmpstring#remove=}")
             ;;
-          search_*)
+          search=*)
             tmpstring=${sw_name%%/*}
-            sw_name=${sw_name#search_*/}
-            sw_search+=(-s "${tmpstring#search_}")
+            sw_name=${sw_name#search=*/}
+            sw_search+=(-s "${tmpstring#search=}")
             ;;
           noskip_version_filter*)
             sw_name=${sw_name#noskip_version_filter/}

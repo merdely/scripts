@@ -1,251 +1,251 @@
 # AUR Checks
 [vcheck:librewolf-bin_aur_latest]
-check: postsed_#^[0-9]:##/librewolf-bin/aur_latest
+check: postsed=#^[0-9]:##/librewolf-bin/aur_latest
 
 # Latest Checks
 [vcheck:audiobookshelf_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/advplyr/audiobookshelf/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/advplyr/audiobookshelf/docker_tags_latest
 
 [vcheck:authelia_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/authelia/authelia/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/authelia/authelia/docker_tags_latest
 
 [vcheck:bazarr_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/bazarr/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/bazarr/docker_tags_latest
 
 #[vcheck:booklore_docker_latest]
-#check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/booklore/booklore/docker_tags_latest
+#check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/booklore/booklore/docker_tags_latest
 
 [vcheck:bookshelf_docker_latest]
-check: search_^softcover-v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/pennydreadful/bookshelf/docker_tags_latest
+check: search=^softcover-v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/pennydreadful/bookshelf/docker_tags_latest
 
 [vcheck:bookstack_docker_latest]
-check: search_v[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/bookstack/docker_tags_latest
+check: search=v[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/bookstack/docker_tags_latest
 
 [vcheck:calibre_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/calibre/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/calibre/docker_tags_latest
 
 [vcheck:calibre-web_docker_latest]
-check: remove_-ls1$/search_^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/calibre-web/docker_tags_latest
+check: remove=-ls1$/search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/calibre-web/docker_tags_latest
 
 [vcheck:chronograf_docker_latest]
-check: postsed_#-alpine##/search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/chronograf/docker_tags_latest
+check: postsed=#-alpine##/search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/chronograf/docker_tags_latest
 
 [vcheck:collabora_docker_latest]
-check: remove_(alpha|beta|rc)([0-9]+)?$/search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/collabora/code/docker_tags_latest
+check: remove=(alpha|beta|rc)([0-9]+)?$/search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/collabora/code/docker_tags_latest
 
 [vcheck:dockhand_docker_latest]
-check: remove_^[0-9a-f]+$/search_^v[0-9]+(\.[0-9]+){2,3}$/docker.io/fnsys/dockhand/docker_tags_latest
+check: remove=^[0-9a-f]+$/search=^v[0-9]+(\.[0-9]+){2,3}$/docker.io/fnsys/dockhand/docker_tags_latest
 
 [vcheck:etherpad_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/etherpad/etherpad/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/etherpad/etherpad/docker_tags_latest
 
 [vcheck:feishin_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/jeffvli/feishin/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/jeffvli/feishin/docker_tags_latest
 
 [vcheck:flaresolverr_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/flaresolverr/flaresolverr/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/flaresolverr/flaresolverr/docker_tags_latest
 
 [vcheck:forgejo_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/codeberg.org/forgejo/forgejo/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/codeberg.org/forgejo/forgejo/docker_tags_latest
 
 [vcheck:forgejo-runner_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/code.forgejo.org/forgejo/runner/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/code.forgejo.org/forgejo/runner/docker_tags_latest
 
 [vcheck:frigate_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/ghcr.io/blakeblackshear/frigate/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/ghcr.io/blakeblackshear/frigate/docker_tags_latest
 
 [vcheck:giftmanager_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/icbest/giftmanager/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/icbest/giftmanager/docker_tags_latest
 
 [vcheck:gitea_docker_latest]
-check: postsed_#-rootless##/search_^v?[0-9]+(\.[0-9]+){2,3}-rootless$/docker.gitea.com/gitea/docker_tags_latest
+check: postsed=#-rootless##/search=^v?[0-9]+(\.[0-9]+){2,3}-rootless$/docker.gitea.com/gitea/docker_tags_latest
 
 [vcheck:gitlab_docker_latest]
-check: postsed_#-ce.*##/search_^v?[0-9]+(\.[0-9]+){2,3}-ce/docker.io/gitlab/gitlab-ce/docker_tags_latest
+check: postsed=#-ce.*##/search=^v?[0-9]+(\.[0-9]+){2,3}-ce/docker.io/gitlab/gitlab-ce/docker_tags_latest
 
 [vcheck:grafana_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/grafana/grafana/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/grafana/grafana/docker_tags_latest
 
 [vcheck:hawser_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/finsys/hawser/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/finsys/hawser/docker_tags_latest
 
 [vcheck:immich_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/immich-app/immich-server/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/immich-app/immich-server/docker_tags_latest
 
 [vcheck:immichframe_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/immichframe/immichframe/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/immichframe/immichframe/docker_tags_latest
 
 [vcheck:influxdb_docker_latest]
-check: postsed_#-core##/search_^v?[0-9]+(\.[0-9]+){2,3}-core$/docker.io/influxdb/docker_tags_latest
+check: postsed=#-core##/search=^v?[0-9]+(\.[0-9]+){2,3}-core$/docker.io/influxdb/docker_tags_latest
 
 [vcheck:jackett_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/jackett/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/jackett/docker_tags_latest
 
 [vcheck:jellyfin_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/jellyfin/jellyfin/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/jellyfin/jellyfin/docker_tags_latest
 
 [vcheck:jellyfin-vue_docker_latest]
-check: postsed_#^stable-rc\.##/search_^stable-rc.[0-9]+(\.[0-9]+){2,3}$/docker.io/jellyfin/jellyfin-vue/docker_tags_latest
+check: postsed=#^stable-rc\.##/search=^stable-rc.[0-9]+(\.[0-9]+){2,3}$/docker.io/jellyfin/jellyfin-vue/docker_tags_latest
 
 [vcheck:jellystat_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/cyfershepard/jellystat/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/cyfershepard/jellystat/docker_tags_latest
 
 [vcheck:jitsi-excalidraw_docker_latest]
-check: search_^[0-9]{4}\.[0-9]+\.[0-9]+$/docker.io/jitsi/excalidraw-backend/docker_tags_latest
+check: search=^[0-9]{4}\.[0-9]+\.[0-9]+$/docker.io/jitsi/excalidraw-backend/docker_tags_latest
 
 [vcheck:jitsi-meet_docker_latest]
-check: skip_version_filter/postsed_#^stable-##/search_^stable-[0-9]+$/docker.io/jitsi/web/docker_tags_latest
+check: skip_version_filter/postsed=#^stable-##/search=^stable-[0-9]+$/docker.io/jitsi/web/docker_tags_latest
 
 [vcheck:kapacitor_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/kapacitor/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/kapacitor/docker_tags_latest
 
 [vcheck:librespeed_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/librespeed/speedtest/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/librespeed/speedtest/docker_tags_latest
 
 [vcheck:librewolf_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}-[0-9]+-ls[0-9]+$/docker.io/linuxserver/librewolf/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}-[0-9]+-ls[0-9]+$/docker.io/linuxserver/librewolf/docker_tags_latest
 
 [vcheck:linkding_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/sissbruecker/linkding/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/sissbruecker/linkding/docker_tags_latest
 
 [vcheck:linkwarden_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/linkwarden/linkwarden/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/linkwarden/linkwarden/docker_tags_latest
 
 [vcheck:lldap_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/lldap/lldap/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/lldap/lldap/docker_tags_latest
 
 [vcheck:localai_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/localai/localai/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/localai/localai/docker_tags_latest
 
 [vcheck:mariadb_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/mariadb/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/mariadb/docker_tags_latest
 
-[vcheck:meilisearch_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/getmeili/meilisearch/docker_tags_latest
+[vcheck:meilisearch=docker_latest]
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/getmeili/meilisearch/docker_tags_latest
 
 [vcheck:memcached_docker_latest]
-check: postsed_#-alpine##/search_^v?[0-9]+(\.[0-9]+){2,3}-alpine$/docker.io/memcached/docker_tags_latest
+check: postsed=#-alpine##/search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$/docker.io/memcached/docker_tags_latest
 
 [vcheck:mollysocket_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/mollyim/mollysocket/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/mollyim/mollysocket/docker_tags_latest
 
 [vcheck:mosquitto_docker_latest]
-check: postsed_#-alpine##/search_^v?[0-9]+(\.[0-9]+){2,3}-alpine$/docker.io/eclipse-mosquitto/docker_tags_latest
+check: postsed=#-alpine##/search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$/docker.io/eclipse-mosquitto/docker_tags_latest
 
 [vcheck:mysql_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/mysql/mysql-server/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/mysql/mysql-server/docker_tags_latest
 
 [vcheck:navidrome_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/deluan/navidrome/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/deluan/navidrome/docker_tags_latest
 
 [vcheck:nextcloud_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/nextcloud/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/nextcloud/docker_tags_latest
 
 [vcheck:nginx_docker_latest]
-check: postsed_#-alpine##/search_^v?[0-9]+(\.[0-9]+){2,3}-alpine$/docker.io/nginx/docker_tags_latest
+check: postsed=#-alpine##/search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$/docker.io/nginx/docker_tags_latest
 
 [vcheck:ntfy_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/binwiederhier/ntfy/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/binwiederhier/ntfy/docker_tags_latest
 
 [vcheck:octoprint_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/octoprint/octoprint/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/octoprint/octoprint/docker_tags_latest
 
 [vcheck:ollama_docker_latest]
 cache_lifetime: 480
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/ollama/ollama/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/ollama/ollama/docker_tags_latest
 
 [vcheck:opencloud_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/opencloudeu/opencloud-rolling/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/opencloudeu/opencloud-rolling/docker_tags_latest
 
 [vcheck:open-webui_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/openwebui/open-webui/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/openwebui/open-webui/docker_tags_latest
 
 [vcheck:openregex_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/sunnev/openregex/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/sunnev/openregex/docker_tags_latest
 
 [vcheck:owncloud_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/owncloud/server/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/owncloud/server/docker_tags_latest
 
 [vcheck:plex_docker_latest]
-check: skip_version_filter/search_^v?[0-9]+(\.[0-9]+){2,3}-[0-9a-f]+$/docker.io/plexinc/pms-docker/docker_tags_latest
+check: skip_version_filter/search=^v?[0-9]+(\.[0-9]+){2,3}-[0-9a-f]+$/docker.io/plexinc/pms-docker/docker_tags_latest
 
 [vcheck:portainer_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/portainer/portainer-ce/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/portainer/portainer-ce/docker_tags_latest
 
 [vcheck:portainer-agent_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/portainer/agent/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/portainer/agent/docker_tags_latest
 
 [vcheck:postgres_docker_latest]
-check: search_^v?[0-9]+\.[0-9]+$/docker.io/postgres/docker_tags_latest
+check: search=^v?[0-9]+\.[0-9]+$/docker.io/postgres/docker_tags_latest
 
 [vcheck:vchord-postgres_docker_latest]
-check: postsed_#-(arm64|amd64)##/search_^pg17-v0\.4\.3$/docker.io/tensorchord/vchord-postgres/docker_tags_latest
+check: postsed=#-(arm64|amd64)##/search=^pg17-v0\.4\.3$/docker.io/tensorchord/vchord-postgres/docker_tags_latest
 
 [vcheck:prowlarr_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/prowlarr/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/prowlarr/docker_tags_latest
 
 [vcheck:qbittorrent_docker_latest]
-check: skip_version_filter/search_^v?[0-9]+(\.[0-9]+){2,3}(-r[0-9]+|_v[0-9]+(\.[0-9]+){2})?-ls[0-9]+$/docker.io/linuxserver/qbittorrent/docker_tags_latest
+check: skip_version_filter/search=^v?[0-9]+(\.[0-9]+){2,3}(-r[0-9]+|_v[0-9]+(\.[0-9]+){2})?-ls[0-9]+$/docker.io/linuxserver/qbittorrent/docker_tags_latest
 
 [vcheck:qui_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/autobrr/qui/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/autobrr/qui/docker_tags_latest
 
 [vcheck:radarr_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/radarr/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/radarr/docker_tags_latest
 
 [vcheck:redis_docker_latest]
-check: search_^v?[0-9a-z]+(\.[0-9a-z]+){2,3}$/docker.io/redis/docker_tags_latest
+check: search=^v?[0-9a-z]+(\.[0-9a-z]+){2,3}$/docker.io/redis/docker_tags_latest
 
 [vcheck:registry_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/registry/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/registry/docker_tags_latest
 
 [vcheck:restic-rest-server_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/restic/rest-server/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/restic/rest-server/docker_tags_latest
 
 [vcheck:restreamer_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/datarhei/restreamer/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/datarhei/restreamer/docker_tags_latest
 
 [vcheck:seafile_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/seafileltd/seafile-mc/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/seafileltd/seafile-mc/docker_tags_latest
 
 [vcheck:seerr_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/seerr/seerr/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/seerr/seerr/docker_tags_latest
 
 [vcheck:shlink_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/shlinkio/shlink/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/shlinkio/shlink/docker_tags_latest
 
 [vcheck:shlink-web-client_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/shlinkio/shlink/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/shlinkio/shlink/docker_tags_latest
 
 [vcheck:sonarr_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/sonarr/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$/docker.io/linuxserver/sonarr/docker_tags_latest
 
 [vcheck:streamystats_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/fredrikburmester/streamystats-v2-nextjs/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/fredrikburmester/streamystats-v2-nextjs/docker_tags_latest
 
 [vcheck:syncthing_docker_latest]
-check: search_^[0-9]+(\.[0-9]+){2,3}$/docker.io/syncthing/syncthing/docker_tags_latest
+check: search=^[0-9]+(\.[0-9]+){2,3}$/docker.io/syncthing/syncthing/docker_tags_latest
 
 [vcheck:tautulli_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/tautulli/tautulli/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/tautulli/tautulli/docker_tags_latest
 
 [vcheck:telegraf_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/telegraf/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/telegraf/docker_tags_latest
 
 [vcheck:traefik_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/traefik/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/traefik/docker_tags_latest
 
 [vcheck:trilium_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/triliumnext/trilium/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/triliumnext/trilium/docker_tags_latest
 
 [vcheck:unifi_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/linuxserver/unifi-network-application/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/linuxserver/unifi-network-application/docker_tags_latest
 
 [vcheck:unifi-poller_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/unpoller/unpoller/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/unpoller/unpoller/docker_tags_latest
 
 [vcheck:unpackerr_docker_latest]
-check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_latest
+check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_latest
 
 ## Source Projects to get latest version
 # adguardhome: AdguardTeam/AdGuardHome/github_latest
@@ -381,7 +381,7 @@ check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 # zoom
 
 # AUR Checks
-# librewolf-bin : postsed_#^[0-9]:##/librewolf-bin/aur_latest
+# librewolf-bin : postsed=#^[0-9]:##/librewolf-bin/aur_latest
 
 ## Docker printenv checks: <container>/<variable>/docker_printenv
 # chronograf/CHRONOGRAF_VERSION
@@ -416,7 +416,7 @@ check: search_^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 # - jackett
 # - jellyfin
 # - jitsi-excalidraw (jitsi/excalidraw-backend/docker_inspect)
-# - jitsi-meet  (postsed_#^stable-##/jitsi/web/docker_inspect)
+# - jitsi-meet  (postsed=#^stable-##/jitsi/web/docker_inspect)
 # - librewolf
 # - linkwarden
 # - lldap
