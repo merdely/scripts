@@ -422,15 +422,16 @@ sudo_exec() { # utility_function
   set -- "${args[@]}"
 
   cd /
-  log -d "Running: ${FUNCNAME[0]} $* ${dflags[*]}"
+  log -d "Running: ${FUNCNAME[0]} $*" # ${dflags[*]}"
 
   export SUDO_EXEC=true
   # Check to see if function is in app_list
   [[ " ${helper_list[*]} ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
-  log -d "Executing '$1 ${*:2} ${dflags[*]}' as $(id -un)"
+  # log -d "Executing '$1 ${*:2} ${dflags[*]}' as $(id -un)"
+  log -d "Executing '$1 ${*:2} as $(id -un)"
   # Execute check function
   export debug
-  "$1" "${@:2}" "${dflags[@]}"
+  "$1" "${@:2}" # "${dflags[@]}"
 }
 
 # Function to fold the usage lines
