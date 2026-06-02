@@ -845,9 +845,7 @@ _docker_inspect() { # helper_function
 
   out=$(docker inspect --format='{{index .Config.Labels "version"}}' "$container" 2> /dev/null)
   log -d -d "version label = $out"
-  set -x
   [[ -n "$out" ]] && grep -qP "$SEMVER_REGEX" <<< "$out" && { echo "$out" ; return 0 ; }
-  set +x
 
   out=$(_docker_image_search "$container")
   log -d -d "image_search = $out"
