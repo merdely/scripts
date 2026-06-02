@@ -14,8 +14,8 @@ TMPFILES=()
 trap 'rm -Rf -- "${TMPFILES[@]}"' EXIT
 trap 'exit 1' INT TERM
 
-# Add $HOME/.local/bin to the PATH
-export PATH=/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:$HOME/.local/bin
+# Add common bin dirs to the PATH
+export PATH=$PATH:$HOME/.local/bin:/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin
 
 # Define a SEMVER_REGEX to be used in functions to validate version strings
 # From https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
