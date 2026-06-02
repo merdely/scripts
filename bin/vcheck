@@ -605,13 +605,13 @@ _auto_check() { # helper_function
 
   case "$tag" in
     aur_latest) out=$(_aur_package "$project") ;;
-    command) out=$(_command_check "$check") ;;
+    command) out=$(_command_check "$project") ;;
     codeberg|codeberg_latest) out=$(_codeberg_project "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
     docker_tags|docker_tags_latest) out=$(_docker_tags "${search[@]}" "$project") ;;
-    flatpak) out=$(_flatpak_version "${1%/flatpak}") ;;
-    flatpak_latest) out=$(_flatpak_appstream "${1%/flatpak_latest}") ;;
+    flatpak) out=$(_flatpak_version "$project") ;;
+    flatpak_latest) out=$(_flatpak_appstream "$project") ;;
     forgejo|forgejo_latest) out=$(_codeberg_project -f "$project") ;;
     github|github_latest) out=$(_github_project "$project") ;;
     gitlab|gitlab_latest) out=$(_gitlab_project "$project") ;;
