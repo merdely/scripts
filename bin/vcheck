@@ -1995,6 +1995,8 @@ slzb_core_latest() {
   log -d -d "Curl Output: $out"
   [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.["fw"][] | select(.dev == false) | .ver' 2> /dev/null)
   log -d -d "Jq Output: $out"
+  [[ -n "$out" ]] && out=$(grep -vP "\.dev.+$" <<< "$out")
+  log -d -d "Sed Output: $out"
   [[ -n "$out" ]] && sort -V <<< "$out" | \
     tail -n1
 }
