@@ -120,7 +120,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/localai/localai/docker_tags_la
 [vcheck:mariadb_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/mariadb/docker_tags_latest
 
-[vcheck:meilisearch=docker_latest]
+[vcheck:meilisearch_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/getmeili/meilisearch/docker_tags_latest
 
 [vcheck:memcached_docker_latest]
