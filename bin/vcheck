@@ -536,6 +536,41 @@ alpine_repo_package() { # helper_function
     | tail -n1
 }
 
+_aur_package() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local pkg=$1 out
+
+  if command -v aur &> /dev/null; then
+    log -d -d "Using aur command for $1"
+    out=$(aur query -t info "$1")
+    log -d -d -d "aur query output: $out"
+    out=$(jq -rn --argjson j "$out" '$j.results[].Version' 2> /dev/null)
+    log -d -d -d "jq output: $out"
+  else
+    log -d -d "Using curl/awk via github for $1"
+    out=$(maketemp)
+    curl -sLo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
+    log -d -d -d "Curl output: $(cat "$out")"
+    [[ -s "$out" ]] && out=$(awk -F= '
+        /^_major=/ { m = $2 }
+        /^_subver=/ { s = $2 }
+        /^pkgver=/ { pv = $2 }
+        /^pkgrel=/ { pr = $2 }
+      END {
+        if (m != "" && s != "")
+          o=sprintf("%s.%s-%s\n",m,s,pr)
+        else if (pv != "")
+          o=sprintf("%s-%s\n",pv,pr)
+        gsub(/"/,"",o)
+        print o
+      }' "$out")
+  fi
+  [[ -z "$out" ]] && return 1
+  echo "$out"
+  return 0
+}
+
 _auto_check() { # helper_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
@@ -569,11 +604,7 @@ _auto_check() { # helper_function
   [[ "$tag" =~ (aur_latest|command|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
   case "$tag" in
-    aur_latest)
-      log -d -d -d "Processing $tag for $check"
-      check_prog aur "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-      out=$(aur query -t info "$project" | jq -r '.results[].Version' 2> /dev/null)
-      ;;
+    aur_latest) out=$(_aur_package "$project") ;;
     command) out=$(_command_check "$check") ;;
     codeberg|codeberg_latest) out=$(_codeberg_project "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
