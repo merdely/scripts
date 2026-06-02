@@ -2877,6 +2877,7 @@ main() { # utility_function
       while [[ "$sw_name" =~ ^(jq=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
         case "$sw_name" in
           jq=*)
+            log -d "MWE: Hi: $sw_name"
             tmpstring=${sw_name%%/*}
             sw_name=${sw_name#jq=*/}
             sw_jq+=(-j "${tmpstring#jq=}")       # The last one will be used
