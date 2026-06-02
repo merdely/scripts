@@ -5,6 +5,7 @@ PROGNAME=vcheck
 PROGVER=1.1.0
 PROGDATA=/etc/"$PROGNAME"
 ALPINE_VER=""
+SUDO_EXEC=false
 
 # Define check for this program
 eval "$PROGNAME() { echo \$PROGVER; }" # { # utility_function
@@ -14,7 +15,7 @@ trap 'rm -Rf -- "${TMPFILES[@]}"' EXIT
 trap 'exit 1' INT TERM
 
 # Add $HOME/.local/bin to the PATH
-export PATH=$PATH:$HOME/.local/bin
+export PATH=/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:$HOME/.local/bin
 
 # Define a SEMVER_REGEX to be used in functions to validate version strings
 # From https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
@@ -144,7 +145,7 @@ get_config_value() {
 # Function to find which index matches "$1" in a array passed as $2...
 arr_index() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  (( $# < 1 )) && { log -e "usage: ${FUNCNAME[0]} needle stack1 [stack2 stack3...]" ; echo "-1" ; return 1 ; }
+  (( $# == 0 )) && { log -e "usage: ${FUNCNAME[0]} needle stack1 [stack2 stack3...]" ; echo "-1" ; return 1 ; }
   local needle=$1 i=0
   shift
   local arr=("$@")
@@ -176,7 +177,7 @@ calc_seconds() { # utility_function
 # Function to check if a program exists and print an error message
 check_prog() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  (( $# < 1 )) && { echo "usage: check_prog prog" ; return 1 ; }
+  (( $# == 0 )) && { echo "usage: check_prog prog" ; return 1 ; }
   local dirs dir prog=$1 func=" (needed for ${FUNCNAME[1]})"
   [[ -n "$2" ]] && func=" (needed for $2)"
   [[ -z "$2" && "${FUNCNAME[1]}" == "main" ]] && unset func
@@ -247,7 +248,7 @@ drop_privs() { # utility_function
 # Function to ensure that a check function exists
 function_exists() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  (( $# < 1 )) && { log -e "Missing argument for ${FUNCNAME[0]}" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Missing argument for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "$1" == "$PROGNAME" ]] && return 0
   local flist=()
   flist+=("${function_list[@]}")
@@ -296,7 +297,7 @@ get_arch() { # utility_function
 # Print the length of the longest element
 get_longest() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} from ${FUNCNAME[1]}"
-  (( $# < 1 )) && { echo 0 ; return 0 ; }
+  (( $# == 0 )) && { echo 0 ; return 0 ; }
   local max=0 s
   for s in "$@"; do
     (( ${#s} > max )) && max=${#s}
@@ -328,7 +329,7 @@ maketemp() { # utility_function
 prepare_cache_dir() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} from ${FUNCNAME[1]}"
   $CACHE_DIR_PREPARED && return 0
-  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local cache_dir=$1 cache_parent
   if [[ -n "$cache_dir" ]]; then
     if [[ ! -d "$cache_dir" ]]; then
@@ -373,7 +374,7 @@ print_list() { # utility_function
     esac
   done
   shift $(( OPTIND - 1 ))
-  (( $# < 1 )) && return 1
+  (( $# == 0 )) && return 1
 
   (( maxlen == 0 )) && maxlen=$(get_longest "$@")
   local term_width=100
@@ -423,12 +424,13 @@ sudo_exec() { # utility_function
   cd /
   log -d "Running: ${FUNCNAME[0]} $* ${dflags[*]}"
 
+  export SUDO_EXEC=true
   # Check to see if function is in app_list
-  [[ " ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
-  log -d "Executing $1 as $(id -un)"
+  [[ " ${helper_list[*]} ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
+  log -d "Executing '$1 ${*:2} ${dflags[*]}' as $(id -un)"
   # Execute check function
   export debug
-  "$1" "${dflags[@]}"
+  "$1" "${@:2}" "${dflags[@]}"
 }
 
 # Function to fold the usage lines
@@ -692,7 +694,7 @@ _codeberg_project() { # helper_function
     esac
   done
   shift $(( OPTIND - 1 ))
-  (( $# < 1 )) && { log -d "${FUNCNAME[0]} requires a project argument" ; return 1 ; }
+  (( $# == 0 )) && { log -d "${FUNCNAME[0]} requires a project argument" ; return 1 ; }
 
   local uri="$site/$1/releases/latest"
   log -d "uri: $uri"
@@ -756,7 +758,7 @@ docker_compose_exec() { # helper_function
   [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
   local copy_mode=false i=0 containername
   [[ "$1" == "--copy" ]] && copy_mode=true && shift
-  (( $# < 1 )) && return 1
+  (( $# == 0 )) && return 1
   for (( i=1; i < ${#FUNCNAME[@]}; i++ )); do
     [[ ! ${FUNCNAME[-$i]} =~ ^(main|sudo_exec) ]] && break
   done
@@ -786,6 +788,10 @@ _docker_container_search() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+
   local docker_ps out
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}')
   log -d -d -d "docker ps output=$docker_ps"
@@ -799,6 +805,10 @@ _docker_image_search() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+
   local docker_ps out
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}')
   log -d -d -d "docker ps output=$docker_ps"
@@ -821,6 +831,10 @@ _docker_inspect() { # helper_function
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local container out
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+
   container=$(_docker_container_search "$1")
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
@@ -857,8 +871,11 @@ docker_logs() { # helper_function
     return 1
   fi
   [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
-  (( $# < 1 )) && { log -e "You must supply docker name" ; return 1 ; }
+  (( $# == 0 )) && { log -e "You must supply docker name" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: docker_logs dockername" ; return 0 ; }
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
 
   local name
   name=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Name}}' "$1" 2> /dev/null)
@@ -869,6 +886,10 @@ _docker_printenv() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+
   local image image_search variable out
   if (( $# == 1 )); then
     if [[ "$1" == */* ]]; then
@@ -921,7 +942,7 @@ _docker_tags() { # helper_function
     esac
   done
   shift $(( OPTIND - 1 ))
-  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   local parts site org repo
   IFS=/ read -ra parts <<< "$1"
@@ -1127,7 +1148,7 @@ _docker_tags() { # helper_function
 _flatpak_appstream() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} application_id" ; return 0 ; }
 
   local out
@@ -1140,7 +1161,7 @@ _flatpak_appstream() { # helper_function
 _flatpak_version() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog flatpak "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} application_id" ; return 0 ; }
 
   local out
@@ -1149,44 +1170,10 @@ _flatpak_version() { # helper_function
   [[ -n "$out" ]] && awk -v a="$1" '$1==a {print $NF;exit}' <<< "$out"
 }
 
-get_docker_image_name() { # helper_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  local opt OPTARG OPTIND=1 mode=all
-  while getopts ":intT" opt; do
-    case "$opt" in
-      i) mode=image ;;
-      n) mode=name ;;
-      t) mode=tag ;;
-      T) mode=tagonly ;;
-      *) log -w "Invalid flag ($OPTARG)" ;;
-    esac
-  done
-  shift $(( OPTIND - 1 ))
-  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local out
-  out=$(docker ps --format '{{.Image}}|{{.Names}}')
-  log -d -d -d "docker ps output: $(echo "$out" | paste -sd ' ')"
-  out=$(grep -E "$1" <<< "$out")
-  log -d -d "grep -E \"$1\": $out"
-  [[ $(echo "$out" | wc -l) -ne 1 ]] && log -v "Warning: More than one image result for '$1', choosing first match"
-  out=$(head -n1 <<< "$out")
-  log -d -d -d "out = $out"
-  case "$mode" in
-    image) out=${out%\|*}; out=${out%:*} ;;
-    name) out=${out#*\|} out=${out#/} ;;
-    tag) out=${out%\|*} ;;
-    tagonly) out=${out%\|*} ; out=${out#*:} ;;
-  esac
-  log -d -d -d "output: $out"
-  [[ -z "$out" ]] && return 1
-  echo "$out"
-}
-
 _github_project() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
 
   local authstring=() err errmsg out
@@ -1207,7 +1194,7 @@ _github_project() { # helper_function
 _gitlab_project() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# < 1 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
 
   local authstring=() err errmsg out
@@ -1291,7 +1278,7 @@ github_tags() { # helper_function
 # This function cannot use curl_api because of the dynamic URL with $1
 myaur_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  (( $# < 1 )) && { log -e "Package name required for ${FUNCNAME[0]}" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Package name required for ${FUNCNAME[0]}" ; return 1 ; }
   local url out
   [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[0]}" ; return 1; }
   mapfile -t url < <(get_config_value "$rcfile" private_aur url)
@@ -1312,6 +1299,25 @@ _version_filter() { # helper_function
     return 0
   fi
   return 1
+}
+
+# Function to determine if function should be run with sudo_exec and do it if so
+_use_sudo_exec() { # helper_function
+  $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 1 ; }
+  log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
+
+  for regex in "${sudo_regexes[@]}"; do
+    if [[ "${FUNCNAME[1]}" =~ $regex ]]; then
+      used_sudo=true
+      log -v -v "Using sudo as $sudo_user to ${FUNCNAME[1]}"
+      for (( i = 0 ; i < debug ; i++ )); do debug_args+=("-d"); done
+      rp=$(realpath "$0")
+      log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 ${debug_args[*]}'"
+      out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" "${debug_args[@]}")
+      log -d "sudoexec ${FUNCNAME[1]} returned out='$out'"
+      [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+    fi
+  done
 }
 
 ## BEGIN CHECK FUNCTIONS
@@ -1784,6 +1790,10 @@ owncloud_latest() { # no_auto
 
 pagefind_docker() {
   check_prog docker || return 1
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") && { echo "$out" ; return 0 ; }
+
   docker run --rm pagefind pagefind --version | awk '{print $NF;exit}'
 }
 
@@ -2985,7 +2995,7 @@ main() { # utility_function
           use_sudo=false
           # Loop through sudo_regexes to see if $sw_name matches a regex to use sudo
           for regex in "${sudo_regexes[@]}"; do
-            [[ $sw =~ $regex ]] && use_sudo=true
+            [[ "$sw" =~ $regex ]] && use_sudo=true
           done
           log -d -d "Checking to see if $sw should be run with sudo (use_sudo=$use_sudo)"
 
