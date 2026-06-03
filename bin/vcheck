@@ -2692,8 +2692,8 @@ main() { # utility_function
     elif [[ -n "$update_list" || "$list" =~ ^[0-9a-zA_Z_-]+: ]]; then
       sw_list=("${list#*:}")
       if [[ "$list" == "$update_list" && -s "$rcfile" ]]; then
-        log -d "Reading configfile for software list for $list"
-        read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME:$list" "list" | tr '\n' ' ')"
+        log -d "Reading configfile for software list for ${list//\\/\\\\} (update_list)"
+        read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME:${list//\\/\\\\}" "list" | tr '\n' ' ')"
         log -d "Setting software list to '${sw_list[*]}' for $list"
       fi
       [[ -n "$update_list" ]] && list=$update_list
@@ -2704,8 +2704,8 @@ main() { # utility_function
 
     # If sw is a list defined in the config, load its software in sw list
     elif [[ " ${list_reserved_words[*]} " != *" $list "* && -s "$rcfile" ]]; then
-      log -d "Reading configfile for software list for $list"
-      read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME:$list" "list" | tr '\n' ' ')"
+      log -d "Reading configfile for software list for ${list//\\/\\\\}"
+      read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME:${list//\\/\\\\}" "list" | tr '\n' ' ')"
       log -d "Setting software list to '${sw_list[*]}' for $list"
       # Add check for this program if list=all
       [[ "$list" == "all" ]] && { sw_list+=("$PROGNAME") ; log -d "Adding self to all sw_list" ; }
@@ -2717,24 +2717,24 @@ main() { # utility_function
     unset rcoutput_file rcoutput_mode
     if [[ -s "$rcfile" ]]; then
       # output_mode
-      rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$list" output_mode)
+      rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" output_mode)
       (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[-1]} && \
         case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
       # output_file
-      rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$list" output_file)
+      rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" output_file)
       (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[-1]} && output_mode=json
-      log -d "Reading $list config settings: output_file='$output_file' output_mode='$output_mode'"
+      log -d "Reading ${list//\\/\\\\} config settings: output_file='$output_file' output_mode='$output_mode'"
 
       # prepend_name
-      rcvalue=() ; ! $prepend_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$list" prepend_name)
+      rcvalue=() ; ! $prepend_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" prepend_name)
       (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[-1]}
 
       # include_invalid
-      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$list" include_invalid)
+      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}t" include_invalid)
       (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[-1]}
 
-      rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$list" compose_file)
+      rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" compose_file)
       (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[-1]}
     fi
 
@@ -2814,7 +2814,7 @@ main() { # utility_function
       [[ "$listname" == "$sw" ]] && unset listname
       tmp_name=$sw
 
-      rcvalue=() ; [[ -s "$rcfile" ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw" check)
+      rcvalue=() ; [[ -s "$rcfile" ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${sw//\\/\\\\}" check)
       (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[-1]} && sw_check_set=true && \
         log -d "Read check '$sw' for $tmp_name"
       sw_orig=$sw
