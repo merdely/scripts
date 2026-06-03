@@ -413,17 +413,14 @@ print_list() { # utility_function
 
 # Function to allow a user to run a specific function with sudo
 sudo_exec() { # utility_function
-  local saved_debug=$debug saved_trap
-  saved_trap=$(trap -p RETURN)
-  trap 'debug="$saved_debug";${saved_trap:-trap - RETURN}' RETURN
-  local arg args=() local_debug=0
+  local arg args=()
 
   # Check to see if this is called with -d
   for arg in "$@"; do
-    [[ "$arg" == "SUDO_EXEC_DEBUG="* ]] && { local_debug=${SUDO_EXEC_DEBUG#*=} ; continue ; }
+    [[ "$arg" == "SUDO_EXEC_DEBUG="* ]] && { debug=${arg#*=} ; continue ; }
     args+=("$arg")
   done
-  debug=$local_debug
+  [[ ! "$debug" =~ ^[0-9]+$ ]] && debug=${debug:-0}
   set -- "${args[@]}"
 
   cd /
@@ -432,7 +429,7 @@ sudo_exec() { # utility_function
   export SUDO_EXEC
   # Check to see if function is in app_list
   [[ " ${helper_list[*]} ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
-  log -d "Executing 'debug=$local_debug $1 ${*:2} ${dflags[*]}' as $(id -un)"
+  log -d "Executing '$1 ${*:2} as $(id -un)" >&2
 
   # Execute check function
   "$1" "${@:2}"
@@ -1346,7 +1343,7 @@ _use_sudo_exec() { # helper_function
       rp=$(realpath "$0")
       log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 SUDO_EXEC_DEBUG=$debug'"
       out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" SUDO_EXEC_DEBUG="$debug")
-      log -d "sudoexec ${FUNCNAME[1]} returned out='$out'"
+      log -d "sudo_exec ${FUNCNAME[1]} returned out='$out'"
       [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
       return 3
     fi
