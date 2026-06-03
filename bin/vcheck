@@ -1527,10 +1527,6 @@ dockhand_docker() {
   fi
 }
 
-empiretech_camera_file() {
-  cat "$PROGDATA"/"${FUNCNAME[0]%_file}".txt
-}
-
 empiretech_camera_latest() {
   check_prog xmllint || return 1
   curl -s "https://empiretech01.com/pages/download-firmwares" | \
