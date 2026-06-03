@@ -6,6 +6,7 @@ PROGVER=1.1.0
 PROGDATA=/etc/"$PROGNAME"
 ALPINE_VER=""
 SUDO_EXEC=false
+export PROGNAME PROGVER PROGDATA ALPINE_VER SUDO_EXEC
 
 # Define check for this program
 eval "$PROGNAME() { echo \$PROGVER; }" # { # utility_function
@@ -13,9 +14,11 @@ eval "$PROGNAME() { echo \$PROGVER; }" # { # utility_function
 TMPFILES=()
 trap 'rm -Rf -- "${TMPFILES[@]}"' EXIT
 trap 'exit 1' INT TERM
+export TMPFILES
 
 # Add common bin dirs to the PATH
-export PATH=$PATH:$HOME/.local/bin:/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin
+PATH=$PATH:$HOME/.local/bin:/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin
+export PATH
 
 # Define a SEMVER_REGEX to be used in functions to validate version strings
 # From https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
@@ -30,8 +33,10 @@ HOTFIX='(?:\.(?P<hotfix>[0-9]\d*))?'
 VER_YMD='(?P<year>[0-9]{4})[\._-](?P<month>[01]?[0-9])[\._-](?P<day>[0123]?[0-9])'
 LSVER='(?:-(?P<lsver>ls[0-9]+))?'
 SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
+export SEMVER_REGEX
 
 AUTO_CHECKS='(aur_latest|cat|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|github_tags|github_tags_latest|gitlab_latest|pacman)'
+export AUTO_CHECKS
 
 # Handle temp files
 TEMPDIR=$(mktemp -d)
@@ -424,7 +429,8 @@ sudo_exec() { # utility_function
   cd /
   log -d "Running: ${FUNCNAME[0]} $* ${dflags[*]}"
 
-  export SUDO_EXEC=true
+  SUDO_EXEC=true
+  export SUDO_EXEC
   # Check to see if function is in app_list
   [[ " ${helper_list[*]} ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
   log -d "Executing '$1 ${*:2} ${dflags[*]}' as $(id -un)"
@@ -521,6 +527,7 @@ alpine_repo_package() { # helper_function
       awk '/v[0-9]/{gsub(/^ +/,"");gsub(/ +$/,"");print}' | \
       sort -V | \
       tail -n1)
+    export ALPINE_VER
   fi
 
   [[ -z "$ALPINE_VER" ]] && { log -q "Warning: Could not determine alpine version" ; return 1 ; }
@@ -608,7 +615,7 @@ _auto_check() { # helper_function
 
   case "$tag" in
     aur_latest) out=$(_aur_package "$project") ;;
-    cat) out=$(cat "$project" 2> /dev/null) ;;
+    cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ;;
     codeberg|codeberg_latest) out=$(_codeberg_project "$project") ;;
     command) out=$(_command_check "$project") ;;
     docker_exec) out=$(_docker_exec "$project") ;;
@@ -1894,10 +1901,6 @@ proton_ge() {
   find "$HOME"/.local/share/Steam/compatibilitytools.d -maxdepth 1 -type d -iname "*proton*ge*"
     sort -V | \
     tail -n1
-}
-
-putty_cac_work() { # remote_host
-  cat "$PROGDATA"/putty-cac-work.txt
 }
 
 putty_latest() { # no_auto
