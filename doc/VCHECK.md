@@ -475,3 +475,8 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 ## Docker Exec Checks
 
 - open-webui: jq=.version/open-webui/cat /app/package.json/docker_exec
+
+## Cat file Checks
+
+- example: /path/to/file.txt/cat
+

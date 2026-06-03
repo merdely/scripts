@@ -31,7 +31,7 @@ VER_YMD='(?P<year>[0-9]{4})[\._-](?P<month>[01]?[0-9])[\._-](?P<day>[0123]?[0-9]
 LSVER='(?:-(?P<lsver>ls[0-9]+))?'
 SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 
-AUTO_CHECKS='(aur_latest|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|github_tags|github_tags_latest|gitlab_latest|pacman)'
+AUTO_CHECKS='(aur_latest|cat|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|github_tags|github_tags_latest|gitlab_latest|pacman)'
 
 # Handle temp files
 TEMPDIR=$(mktemp -d)
@@ -608,8 +608,9 @@ _auto_check() { # helper_function
 
   case "$tag" in
     aur_latest) out=$(_aur_package "$project") ;;
-    command) out=$(_command_check "$project") ;;
+    cat) out=$(cat "$project" 2> /dev/null) ;;
     codeberg|codeberg_latest) out=$(_codeberg_project "$project") ;;
+    command) out=$(_command_check "$project") ;;
     docker_exec) out=$(_docker_exec "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
