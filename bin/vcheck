@@ -520,7 +520,7 @@ _alpine_repo_package() { # helper_function
   local pkg=$1 url out
 
   if [[ -z "$ALPINE_VER" ]]; then
-    ALPINE_VER=$(curl -s "https://pkgs.alpinelinux.org/packages" \
+    ALPINE_VER=$(curl --no-progress-meter "https://pkgs.alpinelinux.org/packages" \
       | xmllint --html --xpath '//select[@id="branch"]/option/text()' - 2>/dev/null | \
       awk '/v[0-9]/{gsub(/^ +/,"");gsub(/ +$/,"");print}' | \
       sort -V | \
@@ -534,7 +534,7 @@ _alpine_repo_package() { # helper_function
   log -d "DEBUG (${FUNCNAME[0]}): URL = $url"
 
   out=$(maketemp)
-  curl -sLo "$out" "$url"
+  curl --no-progress-meter -Lo "$out" "$url"
   log -d -d "Curl output: $(cat "$out")"
   [[ ! -s "$out" ]] && return 1
   out=$(xmllint --html --xpath '//strong[@aria-label="Package version"]/text()' "$out" 2>/dev/null)
@@ -557,7 +557,7 @@ _aur_package() { # helper_function
   else
     log -d -d "Using curl/awk via github for $1"
     out=$(maketemp)
-    curl -sLo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
+    curl --no-progress-meter -Lo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
     log -d -d -d "Curl output: $(cat "$out")"
     [[ -s "$out" ]] && out=$(awk -F= '
         /^_major=/ { m = $2 }
@@ -622,26 +622,16 @@ _auto_check() { # helper_function
     cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ;;
     codeberg) out=$(_codeberg_project "$project") ;;
     command) out=$(_command_check "$project") ;;
-    curl) if [[ "$project" =~ ^proto=[^/]+/ ]]; then
-            proto=${project%%/*}
-            proto=${proto#proto=}
-            project=${project#*/}
-          fi
-          project=${project#https://}
-          project=${project#http://}
-          log -d -d "Running: curl -L $proto://$project"
-          out=$(curl -L "$proto://$project") ;;
+    curl) out=$(curl --no-progress-meter -L "$project") ;;
     curlapi) out=$(_curl_api "$project") ;;
     docker_exec) out=$(_docker_exec "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
-    # docker_tags|docker_tags_latest) out=$(_docker_tags "${search[@]}" "$project") ;;
     docker_tags) out=$(_docker_tags "$project") ;;
     flatpak) out=$(_flatpak_version "$project") ;;
     flatpak_appstream) out=$(_flatpak_appstream "$project") ;;
     forgejo) out=$(_codeberg_project -f "$project") ;;
     github) out=$(_github_project "$project") ;;
-    # github_tags|github_tags_latest) out=$(_github_tags "${search[@]}" "$project") ;;
     github_tags) out=$(_github_tags "$project") ;;
     gitlab) out=$(_gitlab_project "$project") ;;
     pacman)
@@ -793,18 +783,18 @@ _curl_api() { # helper_function
   out=$(maketemp)
   (( ${#url[@]} == 0 ))      && { log -e "Could not read $check_name URL from $rcfile" ; return 1 ; }
   if (( ${#apikey[@]} > 0 )); then
-    curl -sLo "$out" -X GET -H \
+    curl --no-progress-meter -Lo "$out" -X GET -H \
       "Authorization: Bearer ${apikey[-1]}" \
       "${url[-1]}"
   elif (( ${#username[@]} > 0 || ${#password[@]} > 0 )); then
     (( ${#username[@]} == 0 )) && { log -e "Could not read $check_name Username from $rcfile" ; return 1 ; }
     (( ${#password[@]} == 0 )) && { log -e "Could not read $check_name Password from $rcfile" ; return 1 ; }
 
-    curl -sLo "$out" -X GET -H \
+    curl --no-progress-meter -Lo "$out" -X GET -H \
       "Authorization: Basic $(printf '%s:%s' "${username[-1]}" "${password[-1]}"|base64|tr -d '\n')" \
       "${url[-1]}"
   else
-    curl -sLo "$out" -X GET "${url[-1]}"
+    curl --no-progress-meter -Lo "$out" -X GET "${url[-1]}"
   fi
   log -d -d "Curl output: $out"
   cat "$out"
@@ -821,9 +811,9 @@ _docker_exec() { # helper_function
 
   local image image_search command=() out
   if (( $# == 1 )); then
-    if [[ "$1" == */* ]]; then
-      image_search=${1%%/*}
-      command=("${1#*/}")
+    if [[ "$1" == *!!* ]]; then
+      image_search=${1%%!!*}
+      command=("${1#*!!}")
     else
       image_search=$1
       # command=($*)
@@ -1108,7 +1098,7 @@ _docker_tags() { # helper_function
         if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
           log -d -d "Connecting to hub.docker.com to get token"
           out=$(maketemp)
-          curl -sfo "$out" --max-time 15 -X POST -H "Content-Type: application/json" \
+          curl --no-progress-meter -fo "$out" --max-time 15 -X POST -H "Content-Type: application/json" \
             -d "{\"username\": \"${username[-1]}\", \"password\": \"${token[-1]}\"}" \
             "https://hub.docker.com/v2/users/login"
           if [[ -s "$out" ]]; then
@@ -1127,7 +1117,7 @@ _docker_tags() { # helper_function
         if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
           log -d -d "Connecting to ghcr.io to get token"
           out=$(maketemp)
-          curl -sLo "$out" "https://ghcr.io/token?service=ghcr.io&scope=repository:${org:+$org/}$repo:pull" \
+          curl --no-progress-meter -Lo "$out" "https://ghcr.io/token?service=ghcr.io&scope=repository:${org:+$org/}$repo:pull" \
              -u "${username[-1]}:${token[-1]}"
           if [[ -s "$out" ]]; then
             out=$(jq -r '$j.token // ""' "$out" 2>/dev/null)
@@ -1145,7 +1135,7 @@ _docker_tags() { # helper_function
       *)
         if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
           log -d -d "Downloading auth token from $site"
-          out=$(curl -si --max-time 10 "https://$site/v2/" 2> /dev/null)
+          out=$(curl --no-progress-meter -i --max-time 10 "https://$site/v2/" 2> /dev/null)
           log -d -d -d "Curl output: $out"
           [[ -n "$out" ]] && out=$(awk -F: 'tolower($1) ~ /www-authenticate/ {sub("^.*"$1":[[:space:]]([Bb]earer )?*","");print}' <<< "$out" | tr -d '\r')
           log -d -d -d "awk output: '$out'"
@@ -1156,7 +1146,7 @@ _docker_tags() { # helper_function
             log -d -d -d "scope=$scope"
             if [[ -n "$realm" && -n "$service" && -n "$scope" ]]; then
               local token_url="$realm?service=$service&scope=$scope:${org:+$org/}$repo:pull"
-              out=$(curl -sf --max-time 15 "$token_url")
+              out=$(curl --no-progress-meter -f --max-time 15 "$token_url")
               [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.token // .access_token // ""' 2> /dev/null)
               log -d -d -d "curl + jq output: $out"
               [[ -n "$out" ]] && authstring=("-H" "Authorization: Bearer $out") && \
@@ -1177,8 +1167,8 @@ _docker_tags() { # helper_function
     local results=() arr=() link next_path
     while [[ -n "$page_url" ]]; do
       (( page++ ))
-      log -d -d "Running: curl -sLfo $cmdout ${curl_args[*]} ${authstring[*]} $page_url"
-      code=$(curl -sLfo "$cmdout" "${curl_args[@]}" "${authstring[@]}" "$page_url") || \
+      log -d -d "Running: curl --no-progress-meter -Lfo $cmdout ${curl_args[*]} ${authstring[*]} $page_url"
+      code=$(curl --no-progress-meter -Lfo "$cmdout" "${curl_args[@]}" "${authstring[@]}" "$page_url") || \
         { log -e "Could not download from $site (page $page)" ; log -d -d -d "Curl output: $(cat "$cmdout")" ; break ; }
       if [[ "$code" == "401" ]]; then
         log -e "Authentication required"
@@ -1223,7 +1213,7 @@ _flatpak_appstream() { # helper_function
 
   local out
   out=$(maketemp)
-  curl -sLo "$out" "https://flathub.org/api/v2/appstream/$1"
+  curl --no-progress-meter -Lo "$out" "https://flathub.org/api/v2/appstream/$1"
   log -d -d -d "Curl output: $(cat "$out")"
   [[ -s "$out" ]] && jq -r '.releases[0].version' "$out" 2> /dev/null
 }
@@ -1324,7 +1314,7 @@ myaur_package() { # helper_function
   [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[0]}" ; return 1; }
   mapfile -t url < <(get_config_value "$rcfile" private_aur url)
   (( ${#url[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} URL from $rcfile" ; return 1 ; }
-  out=$(curl -s "${url[-1]}/raw/branch/main/$1/PKGBUILD")
+  out=$(curl --no-progress-meter "${url[-1]}/raw/branch/main/$1/PKGBUILD")
   log -d -d -d "Curl output: $out"
   [[ -n "$out" ]] && awk -F= '/^pkgver=/{pv=$2}/^pkgrel=/{pr=$2}END{printf "%s-%s\n",pv,pr;exit}' <<< "$out"
 }
@@ -1495,13 +1485,13 @@ dockhand_docker() {
 
 empiretech_camera_latest() {
   check_prog xmllint || return 1
-  curl -s "https://empiretech01.com/pages/download-firmwares" | \
+  curl --no-progress-meter "https://empiretech01.com/pages/download-firmwares" | \
     xmllint --html --xpath "//div[@class='firmwares_content_container']/div[1][contains(text(), 'IPC-Color4K-T-S2')]/following-sibling::div[2]/text()" - 2> /dev/null
 }
 
 filestash_latest() { # no_auto
   local app_version build_date
-  app_version=$(curl -s "https://raw.githubusercontent.com/mickael-kerjean/filestash/refs/heads/master/server/common/constants.go" | \
+  app_version=$(curl --no-progress-meter "https://raw.githubusercontent.com/mickael-kerjean/filestash/refs/heads/master/server/common/constants.go" | \
     awk -F '"' '/^[[:space:]]*APP_VERSION[[:space:]]+=[[:space:]]+"/{print $2;exit}')
   build_date=$(skopeo inspect docker://machines/filestash:latest | jq -r '.Created' 2> /dev/null)
   build_date=$(echo "$build_date" | \
@@ -1528,7 +1518,7 @@ gitlab_docker() {
 }
 
 gitlab_latest() { # no_auto
-  curl -s "https://gitlab.com/gitlab-org/gitlab-foss/-/raw/master/CHANGELOG.md" \
+  curl --no-progress-meter "https://gitlab.com/gitlab-org/gitlab-foss/-/raw/master/CHANGELOG.md" \
     | awk '/^## [0-9]+\.[0-9]+\.[0-9]+ \([0-9]{4}-[0-9]{2}-[0-9]{2}\)/{print $2;exit}'
 }
 
@@ -1582,7 +1572,7 @@ joplin_server() {
 
 libratbag_git_latest() { # no_auto
   check_prog xmllint || return 1
-  curl -s "https://github.com/libratbag/libratbag/commits/master/" | \
+  curl --no-progress-meter "https://github.com/libratbag/libratbag/commits/master/" | \
     xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
     grep -iv "^All time$" | \
     head -n1
@@ -1607,7 +1597,7 @@ librewolf() {
 
 librewolf_homebrew_latest() {
   check_prog xmllint || return 1
-  curl -sL "https://formulae.brew.sh/cask/librewolf#default" | \
+  curl --no-progress-meter -L "https://formulae.brew.sh/cask/librewolf#default" | \
     xmllint --html --xpath '//p[starts-with(text(), "Current version:")]/a/text()' - 2> /dev/null | \
     sed -r 's/,([0-9]+)$/-\1/'
 }
@@ -1634,7 +1624,7 @@ memcached_docker() {
 
 molly_guard_latest() {
   check_prog xmllint || return 1
-  curl -s "https://salsa.debian.org/debian/molly-guard/-/tags?format=atom" | \
+  curl --no-progress-meter "https://salsa.debian.org/debian/molly-guard/-/tags?format=atom" | \
     xmllint --html --xpath "string(//feed/entry/title)" - 2> /dev/null | \
     awk -F/ '/^debian/{print $2;exit}'
 }
@@ -1657,7 +1647,7 @@ nagios_docker() {
 }
 
 nextcloud_latest() { # no_auto
-  curl -s "https://nextcloud.com/changelog/" | \
+  curl --no-progress-meter "https://nextcloud.com/changelog/" | \
     awk -F'[/"]' '
       /\/download\.nextcloud\.com\/server\/releases\/nextcloud-.*\.tar\.bz2/ {
         gsub(/^nextcloud-/, "", $9)
@@ -1674,7 +1664,7 @@ nginx_docker() {
 }
 
 nginx_docker_mainline_latest() { # no_auto
-  curl -s "https://hub.docker.com/_/nginx" | \
+  curl --no-progress-meter "https://hub.docker.com/_/nginx" | \
     awk -F '[><]' '
       />mainline</ {
         for (i=1; i<NF; i++)
@@ -1704,7 +1694,7 @@ ollama_ipex_llm_docker() {
 
 ollama_ipex_llm_latest() { # no_auto
   check_prog jq || return 1
-  curl -s "https://api.github.com/repos/ipex-llm/ipex-llm/releases" | \
+  curl --no-progress-meter "https://api.github.com/repos/ipex-llm/ipex-llm/releases" | \
     jq -r '.[] | select(.tag_name=="v2.3.0-nightly") | .assets[] | .name' 2> /dev/null | \
     grep -E "^ollama-.*-ubuntu\.tgz" | sort -V | tail -n1 | \
     sed -r 's/^ollama-ipex-llm-(.*)-ubuntu.tgz$/\1/'
@@ -1739,7 +1729,7 @@ pagefind_docker() {
 }
 
 php_latest() { # no_auto
-  curl -s "https://www.php.net/downloads.php?usage=web&os=linux&osvariant=linux-debian&version=default&source=Y" | \
+  curl --no-progress-meter "https://www.php.net/downloads.php?usage=web&os=linux&osvariant=linux-debian&version=default&source=Y" | \
     awk -F '["/]' '/<a href="\/distributions\/php-[^"]+\.tar\.gz">/{gsub(/\.tar\.gz/,"",$4);print $4;exit}'
 }
 
@@ -1749,7 +1739,7 @@ pihole_docker() {
 
 piper_git_latest() { # no_auto
   check_prog xmllint || return 1
-  curl -s "https://github.com/libratbag/piper/commits/master/" | \
+  curl --no-progress-meter "https://github.com/libratbag/piper/commits/master/" | \
     xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
     grep -iv "^All time$" | \
     head -n1
@@ -1774,7 +1764,7 @@ plex_docker() {
 
 plex_latest() { # no_auto
   check_prog jq || return 1
-  curl -s "https://plex.tv/pms/downloads/5.json?channel=plexpass" | \
+  curl --no-progress-meter "https://plex.tv/pms/downloads/5.json?channel=plexpass" | \
     jq -r '.["computer"]["Linux"].version' 2> /dev/null | \
     awk -F- '{print $1;exit}'
 }
@@ -1798,7 +1788,7 @@ proton_ge() {
 }
 
 putty_latest() { # no_auto
-  curl -s "https://git.tartarus.org/?p=simon/putty.git;a=tags" | \
+  curl --no-progress-meter "https://git.tartarus.org/?p=simon/putty.git;a=tags" | \
     xmllint --html --xpath '//table[@class="tags"]//td/a[@class="list name"]/text()' - 2>/dev/null | \
     grep -E '^[0-9]+(\.[0-9]+)+$' | \
     sort -V | \
@@ -1827,7 +1817,7 @@ restreamer_docker() {
 
 routeros_latest() {
   check_prog xmllint || return 1
-  curl -sL "https://cdn.mikrotik.com/routeros/latest-stable.rss" | \
+  curl --no-progress-meter -L "https://cdn.mikrotik.com/routeros/latest-stable.rss" | \
     xmllint --xpath "string(/rss/channel/item/link)" - 2> /dev/null | sed -r 's#^https?://.*mikrotik\.com/download\?v=##'
 }
 
@@ -1838,7 +1828,7 @@ seafile_client_appimage() {
 
 seafile_client_appimage_latest() { # no_auto
   check_prog xmllint || return 1
-  curl -s "https://www.seafile.com/en/download/" | \
+  curl --no-progress-meter "https://www.seafile.com/en/download/" | \
     xmllint --html --xpath 'string(//h3[contains(text(), "Client for Linux")]/following-sibling::p/following-sibling::a[contains(@href, "Seafile-x86_64-")]/@href)' - 2>/dev/null | \
     sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
 }
@@ -1854,12 +1844,12 @@ slzb_core_latest() {
   (( ${#esptype[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} EspType from $rcfile" ; return 1 ; }
 
   local fw_url
-  fw_url=$(curl -s --compressed "${url[-1]}" 2>&1 | \
+  fw_url=$(curl --no-progress-meter --compressed "${url[-1]}" 2>&1 | \
     awk -F"'" '/^const espFwInfoUrl[[:space:]]*=/{print $2;exit}')
   log -d -d "fw_url = $fw_url"
   [[ ! $fw_url =~ ^https?:// ]] && { log -e "Could not get firmware url from ${url[-1]}" ; return 1 ; }
   log -d -d "fw_url=${fw_url}${esptype[-1]}" >&2
-  out=$(curl -s "${fw_url}${esptype[-1]}")
+  out=$(curl --no-progress-meter "${fw_url}${esptype[-1]}")
   log -d -d "Curl Output: $out"
   [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.["fw"][] | select(.dev == false) | .ver' 2> /dev/null)
   log -d -d "Jq Output: $out"
@@ -1882,10 +1872,10 @@ slzb_radio_latest() {
   (( ${#type[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} Type from $rcfile" ; return 1 ; }
 
   local fw_url
-  fw_url=$(curl -s --compressed "${url[-1]}" 2>&1 | \
+  fw_url=$(curl --no-progress-meter --compressed "${url[-1]}" 2>&1 | \
     awk -F"'" '/^const zbFwInfoUrl[[:space:]]*=/{print $2;exit}')
   [[ ! $fw_url =~ ^https?:// ]] && return 1
-  curl -s "$fw_url" | \
+  curl --no-progress-meter "$fw_url" | \
     jq -r --arg chip "${chip[-1]}" --arg type "${type[-1]}" \
       '.[$chip][] | select(.type == $type) | .rev' 2> /dev/null| \
     sort -V | \
@@ -1901,7 +1891,7 @@ splunk() {
 }
 
 splunk_latest() {
-  curl -s "https://www.splunk.com/en_us/download/splunk-enterprise.html" | \
+  curl --no-progress-meter "https://www.splunk.com/en_us/download/splunk-enterprise.html" | \
     awk -F'[<>]' '/<span class="version">/{print $3;exit}'
 }
 
@@ -1914,25 +1904,26 @@ splunk_forwarder() {
 }
 
 splunk_forwarder_latest() {
-  curl -s "https://www.splunk.com/en_us/download/universal-forwarder.html" | \
+  curl --no-progress-meter "https://www.splunk.com/en_us/download/universal-forwarder.html" | \
     awk -F'[<>]' '/<span class="version">/{print $3;exit}'
 }
 
 splunk_unix_ta_latest() {
   check_prog jq || return 1
   check_prog xmllint || return 1
-  curl -sL "https://splunkbase.splunk.com/app/833" | \
+  curl --no-progress-meter -L "https://splunkbase.splunk.com/app/833" | \
     xmllint --html --xpath "string(//html/body/script[@id='__NEXT_DATA__'])" - 2> /dev/null | \
     jq -r '.props.pageProps.appDetails.release.name' 2> /dev/null
 }
 
 tasmobackup() {
-  /usr/bin/curl -s "http://127.0.0.1:8259" | awk '/>TasmoBackup .+ by Dan Medhurst</ {print $6;exit}'
+  /usr/bin/curl --no-progress-meter "http://127.0.0.1:8259" | \
+    awk '/>TasmoBackup .+ by Dan Medhurst</ {print $6;exit}'
 }
 
 truenas_latest() { # no_auto
   check_prog jq || return 1
-  curl -sL "https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1" | \
+  curl --no-progress-meter -L "https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1" | \
     jq -r '.version' 2> /dev/null
 }
 
@@ -1969,12 +1960,15 @@ zigbee2mqtt_tcp() {
 
 ## END CHECK FUNCTIONS
 
+DEBUG_EXIT=5
+export DEBUG_EXIT
+
 usage() { # utility_function
   echo "usage: $PROGNAME [Options] SOFTWARE"
   echo "Options:"
   echo "  -h|--help     : print help text"
   echo "  --version     : print version number and exit"
-  echo "  -d          + : print debug info"
+  echo "  -d          + : print debug info (use $DEBUG_EXIT times to print and exit)"
   echo "  -v          + : be verbose"
   echo "  -q          + : be quiet"
   echo
@@ -2447,7 +2441,6 @@ main() { # utility_function
     [[ -n "$mqtt_server" && -n "$prepend_name" ]] && log -d "[GLOBAL SETTINGS] prepend_name=$prepend_name"
     [[ -n "$mqtt_server" && -n "$ink_topic" ]]    && log -d "[GLOBAL SETTINGS] ink_topic=$ink_topic"
     echo
-    (( debug > 3 )) && exit
   fi
 
   # Prep variables
@@ -2486,15 +2479,15 @@ main() { # utility_function
       fi
 
     # If command line parameter is "list:sw", do update
-    elif [[ -n "$update_list" || "$list" =~ ^[0-9a-zA_Z_-]+: ]]; then
-      sw_list=("${list#*:}")
+    elif [[ -n "$update_list" || "$list" =~ ^[0-9a-zA_Z_-]+:: ]]; then
+      sw_list=("${list#*::}")
       if [[ "$list" == "$update_list" && -s "$rcfile" ]]; then
         log -d "Reading configfile for software list for ${list//\\/\\\\} (update_list)"
-        read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME:${list//\\/\\\\}" "list" | tr '\n' ' ')"
+        read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
         log -d "Setting software list to '${sw_list[*]}' for $list"
       fi
       [[ -n "$update_list" ]] && list=$update_list
-      list=${list%:*}
+      list=${list%::*}
 
       log -d "Processing an update of ${sw_list[*]} for $list"
       update=true
@@ -2502,7 +2495,7 @@ main() { # utility_function
     # If sw is a list defined in the config, load its software in sw list
     elif [[ " ${list_reserved_words[*]} " != *" $list "* && -s "$rcfile" ]]; then
       log -d "Reading configfile for software list for ${list//\\/\\\\}"
-      read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME:${list//\\/\\\\}" "list" | tr '\n' ' ')"
+      read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
       log -d "Setting software list to '${sw_list[*]}' for $list"
       # Add check for this program if list=all
       [[ "$list" == "all" ]] && { sw_list+=("$PROGNAME") ; log -d "Adding self to all sw_list" ; }
@@ -2514,24 +2507,24 @@ main() { # utility_function
     unset rcoutput_file rcoutput_mode
     if [[ -s "$rcfile" ]]; then
       # output_mode
-      rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" output_mode)
+      rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}" output_mode)
       (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[-1]} && \
         case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
       # output_file
-      rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" output_file)
+      rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}" output_file)
       (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[-1]} && output_mode=json
       log -d "Reading ${list//\\/\\\\} config settings: output_file='$output_file' output_mode='$output_mode'"
 
       # prepend_name
-      rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" prepend_name)
+      rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}" prepend_name)
       (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[-1]}
 
       # include_invalid
-      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}t" include_invalid)
+      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}t" include_invalid)
       (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[-1]}
 
-      rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" compose_file)
+      rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}" compose_file)
       (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[-1]}
     fi
 
@@ -2540,7 +2533,7 @@ main() { # utility_function
     if $update && [[ "$list" == docker ]]; then
       docker_seconds_local=$docker_seconds
       if [[ -s "$rcfile" ]]; then
-        rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$list" docker_seconds)
+        rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$list" docker_seconds)
         (( ${#rcvalue[@]} > 0 )) && docker_seconds_local=${rcvalue[-1]}
       fi
 
@@ -2595,7 +2588,6 @@ main() { # utility_function
       [[ "$compose_file" != "$saved_compose_file" ]] && log -d "[$list SETTINGS] compose_file=$compose_file"
       log -d "[$list SETTINGS] list=${sw_list[*]}"
       echo
-      (( debug > 3 )) && exit
     fi
 
     for sw in "${sw_list[@]}"; do
@@ -2611,48 +2603,48 @@ main() { # utility_function
       [[ "$listname" == "$sw" ]] && unset listname
       tmp_name=$sw
 
-      rcvalue=() ; [[ -s "$rcfile" ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${sw//\\/\\\\}" check)
+      rcvalue=() ; [[ -s "$rcfile" ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${sw//\\/\\\\}" check)
       (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[-1]} && sw_check_set=true && \
         log -d "Read check '$sw' for $tmp_name"
       sw_orig=$sw
 
       # For dynamic/auto checks, strip off preceding 
       sw_name=$sw
-      sw_tag=$(grep -Po "(?<=/)$AUTO_CHECKS$" <<< "$sw_name")
+      sw_tag=$(grep -Po "(?<=!!)$AUTO_CHECKS$" <<< "$sw_name")
       while [[ "$sw_name" =~ ^(jq=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
         case "$sw_name" in
           jq=*)
-            tmpstring=${sw_name%%/*}
-            sw_name=${sw_name#jq=*/}
+            tmpstring=${sw_name%%!!*}
+            sw_name=${sw_name#jq=*!!}
             sw_jq+=(-j "${tmpstring#jq=}")       # The last one will be used
             ;;
           postsed=*)
-            tmpstring=${sw_name%%/*}
-            sw_name=${sw_name#postsed=*/}
+            tmpstring=${sw_name%%!!*}
+            sw_name=${sw_name#postsed=*!!}
             sw_sed+=(-S "${tmpstring#postsed=}")  # The last one will be used
             ;;
           remove=*)
-            tmpstring=${sw_name%%/*}
-            sw_name=${sw_name#remove=*/}
+            tmpstring=${sw_name%%!!*}
+            sw_name=${sw_name#remove=*!!}
             sw_search+=(-r "${tmpstring#remove=}")
             ;;
           search=*)
-            tmpstring=${sw_name%%/*}
-            sw_name=${sw_name#search=*/}
+            tmpstring=${sw_name%%!!*}
+            sw_name=${sw_name#search=*!!}
             sw_search+=(-s "${tmpstring#search=}")
             ;;
           noskip_version_filter*)
-            sw_name=${sw_name#noskip_version_filter/}
+            sw_name=${sw_name#noskip_version_filter!!}
             sw_skip_vflag=(-V)
             ;;
           skip_version_filter*)
-            sw_name=${sw_name#skip_version_filter/}
+            sw_name=${sw_name#skip_version_filter!!}
             sw_skip_vflag=(-v)
             ;;
           *) ;;
         esac
       done
-      sw_project=${sw_name%/"$sw_tag"}
+      sw_project=${sw_name%!!"$sw_tag"}
       ! $sw_check_set && tmp_name=$sw_project
       sw_name=$tmp_name
 
@@ -2674,25 +2666,25 @@ main() { # utility_function
       unset rcoutput_file rcoutput_mode
       if [[ -s "$rcfile" ]]; then
         # See if check is defined
-        # rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$list" check)
+        # rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$list" check)
         # (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[-1]} && \
         #   log -d "Read check '$sw' for $sw_name"
 
         # output_mode
-        rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" output_mode)
+        rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" output_mode)
         (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[-1]} && \
           case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
         # output_file
-        rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" output_file)
+        rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" output_file)
         (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[-1]} && output_mode=json
         log -d "Reading $sw_name config settings: output_file='$output_file' output_mode='$output_mode'"
 
         # prepend_name
-        rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" prepend_name)
+        rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" prepend_name)
         (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[-1]}
 
-        rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" compose_file)
+        rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" compose_file)
         (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[-1]}
       fi
 
@@ -2700,7 +2692,7 @@ main() { # utility_function
       [[ -n "$compose_file" ]] && export COMPOSE_FILE=$compose_file
 
       found=false
-      [[ "$sw_orig" =~ /$AUTO_CHECKS ]] && found=true
+      [[ "$sw_orig" =~ !!$AUTO_CHECKS ]] && found=true
       if ! $found && ! function_exists "$sw"; then
         for tag in docker git flatpak appimage pacman arch command; do
           if function_exists "$sw"_"$tag"; then
@@ -2729,15 +2721,15 @@ main() { # utility_function
       if [[ -s "$rcfile" ]]; then
         log -d "Reading cache_lifetime retry_delay max_retries settings from config for $sw_name"
         # Check if this version check has a setting for cache_lifetime and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" cache_lifetime)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" cache_lifetime)
         (( ${#rcvalue[@]} > 0 )) && lifetime=${rcvalue[-1]}
 
         # Check if this version check has a setting for retry_delay and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" retry_delay)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" retry_delay)
         (( ${#rcvalue[@]} > 0 )) && delay=${rcvalue[-1]}
 
         # Check if this version check has a setting for max_retries and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" max_retries)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" max_retries)
         (( ${#rcvalue[@]} > 0 )) && retries=${rcvalue[-1]}
       fi
 
@@ -2755,8 +2747,9 @@ main() { # utility_function
         [[ "$retries" != "$max_retries" ]]     && log -d "[${listname:+$listname:}$sw_name SETTINGS] retries=$retries"
         log -d "[${listname:+$listname:}$sw_name SETTINGS] sw=$sw_name"
         echo
-        (( debug > 3 )) && exit
       fi
+
+      (( debug >= DEBUG_EXIT )) && continue
 
       # If not-force and check is for latest version, respect timestamp
       i=0
@@ -2797,9 +2790,9 @@ main() { # utility_function
 
           if [[ -s "$rcfile" ]]; then
             # Read config file to see if there are specific settings for $sw
-            rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" use_sudo)
+            rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" use_sudo)
             (( ${#rcvalue[@]} > 0 )) && use_sudo=${rcvalue[-1]}
-            rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" sudo_user)
+            rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" sudo_user)
             (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[-1]}
           fi
 
@@ -2814,7 +2807,7 @@ main() { # utility_function
             update_time=$(date +%s)
             (( ret != 0 )) && log -e "Could not get $sw_name version with sudo" && continue
           else
-            if [[ "$sw" =~ /$AUTO_CHECKS && " ${app_list[*]} ${app_alias_list[*]} " != *" $sw "* ]]; then
+            if [[ "$sw" =~ !!$AUTO_CHECKS && " ${app_list[*]} ${app_alias_list[*]} " != *" $sw "* ]]; then
               log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_jq[*]} ${sw_search[*]} ${sw_sed[*]} $sw_name' to get version"
               version=$(_auto_check -p "$sw_project" -t "$sw_tag" \
                 "${sw_skip_vflag[@]}" "${sw_jq[@]}" "${sw_search[@]}" "${sw_sed[@]}" "$sw_name")
@@ -2990,6 +2983,7 @@ main() { # utility_function
       fi
     done # for sw in "${sw_list[@]}"; do
   done # for list in "${software[@]}"; do
+  (( debug >= DEBUG_EXIT )) && exit
 
   # Print global json_string to the screen
   if [[ "$output_mode" == "json" && "$output_file" == "/dev/stdout" ]]; then
