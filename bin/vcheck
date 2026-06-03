@@ -416,27 +416,25 @@ sudo_exec() { # utility_function
   local saved_debug=$debug saved_trap
   saved_trap=$(trap -p RETURN)
   trap 'debug="$saved_debug";${saved_trap:-trap - RETURN}' RETURN
-  local arg args=() dflags=()
-  debug=0
+  local arg args=() local_debug=0
 
   # Check to see if this is called with -d
   for arg in "$@"; do
-    [[ "$arg" == "-d" ]] && { (( debug++ )) ; dflags+=(-d) ; continue ; }
+    [[ "$arg" == "SUDO_EXEC_DEBUG="* ]] && { local_debug=${SUDO_EXEC_DEBUG#*=} ; continue ; }
     args+=("$arg")
   done
   set -- "${args[@]}"
 
   cd /
-  log -d "Running: ${FUNCNAME[0]} $* ${dflags[*]}"
 
   SUDO_EXEC=true
   export SUDO_EXEC
   # Check to see if function is in app_list
   [[ " ${helper_list[*]} ${app_list[*]} " != *" $1 "* ]] && { log -e "Invalid app_check function: $1" ; return 1 ; }
-  log -d "Executing '$1 ${*:2} ${dflags[*]}' as $(id -un)"
+  log -d "Executing 'debug=$local_debug $1 ${*:2} ${dflags[*]}' as $(id -un)"
+
   # Execute check function
-  export debug
-  "$1" "${@:2}" "${dflags[@]}"
+  debug=$local_debug "$1" "${@:2}"
 }
 
 # Function to fold the usage lines
@@ -1340,13 +1338,13 @@ _use_sudo_exec() { # helper_function
   $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 2 ; }
   log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
 
+  local regex rp out
   for regex in "${sudo_regexes[@]}"; do
     if [[ "${FUNCNAME[1]}" =~ $regex ]]; then
       log -v -v "Using sudo as $sudo_user to ${FUNCNAME[1]}"
-      for (( i = 0 ; i < debug ; i++ )); do debug_args+=("-d"); done
       rp=$(realpath "$0")
-      log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 ${debug_args[*]}'"
-      out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" "${debug_args[@]}")
+      log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 SUDO_EXEC_DEBUG=$debug'"
+      out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" SUDO_EXEC_DEBUG="$debug")
       log -d "sudoexec ${FUNCNAME[1]} returned out='$out'"
       [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
       return 3
@@ -1470,14 +1468,6 @@ printer_ink_check() { # remote_host
   jq -rn --argjson j "$inkdata" '$j' 2> /dev/null
 }
 
-codium() {
-  if command -v rpm > /dev/null 2>&1; then
-    /usr/bin/rpm -q --queryformat '%{VERSION}' codium
-  else
-    return 1
-  fi
-}
-
 dockhand_docker() {
   check_prog jq || return 1
   local tmp
@@ -1501,11 +1491,6 @@ empiretech_camera_latest() {
 
 ffprobe_latest() { # no_auto
   curl -s "https://johnvansickle.com/ffmpeg/" | awk '/<th>release: [0-9]/{gsub(/<.*$/,"",$2);print $2;exit}'
-}
-
-filestash_docker() {
-  docker_compose_exec curl -s "http://127.0.0.1:8334/about" | \
-    awk '/<h1> Filestash .+ <\/h1>/{print $3;exit}'
 }
 
 filestash_latest() { # no_auto
@@ -2817,10 +2802,8 @@ main() { # utility_function
             unset dflags
             log -v -v "Using sudo as $sudo_user to check $sw_name version"
             rp=$(realpath "$0")
-            debug_args=()
-            for (( i = 0 ; i < debug ; i++ )); do debug_args+=("-d"); done
-            log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $sw ${debug_args[*]}'"
-            version=$(sudo -n -u "$sudo_user" "$rp" -X "$sw" "${debug_args[@]}")
+            log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $sw SUDO_EXEC_DEBUG=$debug'"
+            version=$(sudo -n -u "$sudo_user" "$rp" -X "$sw" SUDO_EXEC_DEBUG="$debug")
             ret=$?
             update_time=$(date +%s)
             (( ret != 0 )) && log -e "Could not get $sw_name version with sudo" && continue
