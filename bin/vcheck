@@ -605,7 +605,7 @@ _auto_check() { # helper_function
   log -d -d "tag=$tag"
   log -d -d "project=$project"
   log -d -d "search=${search[*]}"
-  log -d -d "sedstring=$sedstring"
+  log -d -d "sedstring=${sedstrings[*]}"
   log -d -d "skip=$skipverfilter"
 
   local latest=false
