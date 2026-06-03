@@ -259,7 +259,7 @@ function_exists() { # utility_function
   flist+=("${function_list[@]}")
   flist+=("${function_alias_list[@]}")
   (( debug >= 3 )) && set -x
-  [[ ! " ${flist[*]} " == *" "$1" "* ]] && { set +x ; return 1; }
+  [[ ! " ${flist[*]} " == *" $1 "* ]] && { set +x ; return 1; }
   set +x
   return 0
 }
@@ -604,12 +604,12 @@ _auto_check() { # helper_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local check=$1
 
-  log -d -d check=$check
-  log -d -d tag=$tag
-  log -d -d project=$project
+  log -d -d "check=$check"
+  log -d -d "tag=$tag"
+  log -d -d "project=$project"
   log -d -d "search=${search[*]}"
-  log -d -d sedstring=$sedstring
-  log -d -d skip=$skipverfilter
+  log -d -d "sedstring=$sedstring"
+  log -d -d "skip=$skipverfilter"
 
   [[ "$tag" =~ (aur_latest|command|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
@@ -655,6 +655,7 @@ _auto_check() { # helper_function
   fi
 
   # Apply versionfilter if $skipverfilter is false
+  # shellcheck disable=SC2119
   [[ -n "$out" ]] && ! $skipverfilter && out=$(_version_filter <<< "$out")
 
   # If there is still output, print it
@@ -672,21 +673,25 @@ _command_check() { # helper_function
   local cmd=${1%/command}
   if command -v "$cmd" &> /dev/null; then
     log -d -d "Attemping '$cmd --version'"
+    # shellcheck disable=SC2119
     if out=$("$cmd" --version 2>&1 | _version_filter); then
       echo "$out"
       return 0
     fi
     log -d -d "Attemping '$cmd -V'"
+    # shellcheck disable=SC2119
     if out=$("$cmd" -V 2>&1 | _version_filter); then
       echo "$out"
       return 0
     fi
     log -d -d "Attemping '$cmd version'"
+    # shellcheck disable=SC2119
     if out=$("$cmd" version 2>&1 | _version_filter); then
       echo "$out"
       return 0
     fi
     log -d -d "Attemping '$cmd --help'"
+    # shellcheck disable=SC2119
     if out=$("$cmd" --help 2>&1 | _version_filter); then
       echo "$out"
       return 0
@@ -778,10 +783,11 @@ _docker_exec() { # helper_function
   if (( $# == 1 )); then
     if [[ "$1" == */* ]]; then
       image_search=${1%%/*}
-      command=${1#*/}
+      command=("${1#*/}")
     else
       image_search=$1
-      command=($*)
+      # command=($*)
+      read -ra command <<< "$*"
     fi
   else
     image_search=$1
@@ -794,6 +800,7 @@ _docker_exec() { # helper_function
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
 
   log -d -d "Executing: docker exec -t -u nobody $container ${command[*]}"
+  # shellcheck disable=SC2048,SC2086
   out=$(docker exec -t -u nobody "$container" ${command[*]})
   log -d -d "docker exec output = $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
@@ -1020,7 +1027,7 @@ _docker_tags() { # helper_function
   esac
 
   local token authfile
-  local foundstop=false maxpages=200 pagesize=100 jqfilter='.results[].name'
+  local maxpages=200 jqfilter='.results[].name'
   [[ "$site" == "quay.io" ]] && site=docker.io
   case "$site" in
     code.forgejo.org)
@@ -1045,7 +1052,6 @@ _docker_tags() { # helper_function
       mapfile -t username < <(get_config_value "$rcfile" github username)
       mapfile -t token    < <(get_config_value "$rcfile" github token)
       jqfilter='.[].metadata.container.tags[] | select(. != "")'
-      foundstop=true
       ;;
     *) log -e "Unknown site for skopeo ($site)" && return 1 ;;
   esac
@@ -1054,7 +1060,7 @@ _docker_tags() { # helper_function
   if ${useskopeo:-false} && command -v skopeo &> /dev/null; then
     if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
       authfile=$(maketemp)
-      hash=$(printf "${username[-1]}:${token[-1]}" | base64 | tr -d '\n')
+      hash=$(printf "%s:%s" "${username[-1]}" "${token[-1]}" | base64 | tr -d '\n')
       printf '{\n\t"auths": {\n\t\t"%s": {\n\t\t\t"auth": "%s"\n\t\t}\n\t}\n}\n' "$site" "$hash" > "$authfile"
       skopeoargs=("--authfile=$authfile")
     fi
@@ -1143,12 +1149,12 @@ _docker_tags() { # helper_function
         ;;
     esac
 
-    local done=false page=0 code=0 url="$uri/${org:+$org/}$repo/$uri_path"
+    local done=false page=0 code=0 page_url="$uri/${org:+$org/}$repo/$uri_path"
     local results=() arr=() link next_path
-    while [[ -n "$url" ]]; do
+    while [[ -n "$page_url" ]]; do
       (( page++ ))
-      log -d -d "Running: curl -sLfo $cmdout ${curl_args[@]} ${authstring[@]} $url"
-      code=$(curl -sLfo "$cmdout" "${curl_args[@]}" "${authstring[@]}" "$url") || \
+      log -d -d "Running: curl -sLfo $cmdout ${curl_args[*]} ${authstring[*]} $page_url"
+      code=$(curl -sLfo "$cmdout" "${curl_args[@]}" "${authstring[@]}" "$page_url") || \
         { log -e "Could not download from $site (page $page)" ; log -d -d -d "Curl output: $(cat "$cmdout")" ; break ; }
       if [[ "$code" == "401" ]]; then
         log -e "Authentication required"
@@ -1169,12 +1175,12 @@ _docker_tags() { # helper_function
         link=$(grep -i '^link:' "$hdrfile" | tr -d '\r')
         if grep -q 'rel="next"' <<< "$link"; then
           next_path=$(grep -oP '<[^>]+>' <<< "$link" | tr -d '<>' | head -n 1)
-          url="https://${site}${next_path}"
+          page_url="https://${site}${next_path}"
         else
-          unset url
+          unset page_url
         fi
       else
-        url=$(jq -r '.next // ""' "$cmdout" 2> /dev/null)
+        page_url=$(jq -r '.next // ""' "$cmdout" 2> /dev/null)
       fi
     done
     out=$(printf '%s\n' "${results[@]}")
@@ -1353,6 +1359,7 @@ myaur_package() { # helper_function
 # Function to validate STDIN contains a version string and
 # prints that string as output, returning 0 for success and 1 for failure
 # Example usage: if out=$(command | _version_filter); then
+# shellcheck disable=SC2120
 _version_filter() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   out=$(grep -oP "$SEMVER_REGEX")
@@ -1370,7 +1377,6 @@ _use_sudo_exec() { # helper_function
 
   for regex in "${sudo_regexes[@]}"; do
     if [[ "${FUNCNAME[1]}" =~ $regex ]]; then
-      used_sudo=true
       log -v -v "Using sudo as $sudo_user to ${FUNCNAME[1]}"
       for (( i = 0 ; i < debug ; i++ )); do debug_args+=("-d"); done
       rp=$(realpath "$0")
@@ -2321,7 +2327,7 @@ main() { # utility_function
   output_mode=text
   output_mode_set=false
   prepend_name=false
-  prepend_set=false
+  prepend_name_set=false
   printer_set=false
   print_single='-m'
   printonly=false
@@ -2395,8 +2401,8 @@ main() { # utility_function
       M) mqtt_test=true ;;
       H) host_name=$OPTARG ; host_name_set=true ;;
       I) ink_topic=$OPTARG ; ink_topic_set=true ;;
-      n) prepend_name=true  ; prepend_set=true ;;
-      N) prepend_name=false ; prepend_set=true ;;
+      n) prepend_name=true  ; prepend_name_set=true ;;
+      N) prepend_name=false ; prepend_name_set=true ;;
 
       # Catch everything else
       *) usage ;;
@@ -2449,7 +2455,7 @@ main() { # utility_function
     (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[-1]}
 
     rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
-    [[ ${rcvalue[@]} -gt 0 && ${rcvalue[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcvalue[-1]}
+    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[-1]} =~ ^[0-9]+$ ]] && docker_seconds=${rcvalue[-1]}
 
     rcvalue=() ; ! $printer_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" printer)
     (( ${#rcvalue[@]} > 0 )) && PRINTER=${rcvalue[-1]}
@@ -2466,7 +2472,6 @@ main() { # utility_function
       done
     fi
 
-    local rcmqtt_server=() rcmqtt_username=() rcmqtt_password=()
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt server)
     (( ${#rcvalue[@]} > 0 )) && mqtt_server=${rcvalue[-1]}
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt username)
@@ -2727,7 +2732,7 @@ main() { # utility_function
       log -d "Reading ${list//\\/\\\\} config settings: output_file='$output_file' output_mode='$output_mode'"
 
       # prepend_name
-      rcvalue=() ; ! $prepend_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" prepend_name)
+      rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"${list//\\/\\\\}" prepend_name)
       (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[-1]}
 
       # include_invalid
@@ -2781,11 +2786,11 @@ main() { # utility_function
       all)
         log -d "Applying 'all' specific settings"
         [[ "${sw_list[*]}" == "all" ]] && log -e "'list' property not defined in [$PROGNAME:all] section of RCFILE" && exit 1
-        ! $prepend_set && prepend_name=true
+        ! $prepend_name_set && prepend_name=true
         ;;
       latest)
         log -d "Applying 'latest' specific settings"
-        ! $prepend_set && prepend_name=false
+        ! $prepend_name_set && prepend_name=false
         sw_list=("${latest_list[@]}" "${latest_alias_list[@]}" "${sw_list[@]}")
         ;;
     esac
@@ -2855,7 +2860,7 @@ main() { # utility_function
           *) ;;
         esac
       done
-      sw_project=${sw_name%/$sw_tag}
+      sw_project=${sw_name%/"$sw_tag"}
       ! $sw_check_set && tmp_name=$sw_project
       sw_name=$tmp_name
 
@@ -2892,7 +2897,7 @@ main() { # utility_function
         log -d "Reading $sw_name config settings: output_file='$output_file' output_mode='$output_mode'"
 
         # prepend_name
-        rcvalue=() ; ! $prepend_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" prepend_name)
+        rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" prepend_name)
         (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[-1]}
 
         rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME":"$sw_name" compose_file)
@@ -3082,14 +3087,14 @@ main() { # utility_function
         local mqtt_output
         check_prog mosquitto_pub || continue
         log -d -d "Publishing MQTT version info for ${listname:+$listname:}$sw_name"
-        printf -v mqtt_output '{ "$version": "%s" }' "$version"
+        printf -v mqtt_output '{ "version": "%s" }' "$version"
         [[ "$sw" == "printer_ink_check" ]] && mqtt_output=$version
 
-        if ! $prepend_set && [[ "$sw" == *"_latest" || " ${remote_list[*]} " == *" $sw "* ]]; then
+        if ! $prepend_name_set && [[ "$sw" == *"_latest" || " ${remote_list[*]} " == *" $sw "* ]]; then
           prepend_name=false
         fi
 
-        if ! $prepend_set && [[ " ${app_list[*]} " == *" $sw "* ]]; then
+        if ! $prepend_name_set && [[ " ${app_list[*]} " == *" $sw "* ]]; then
           prepend_name=true
         fi
 
@@ -3099,7 +3104,7 @@ main() { # utility_function
         else
           topic="software_versions/$sw_name"
         fi
-        [[ "$sw" == "printer_ink_check" ]] && topic="$ink_topic/$printer"
+        [[ "$sw" == "printer_ink_check" ]] && topic="$ink_topic/$PRINTER"
 
         log -d -d "$sw_name = $mqtt_output"
         if $mqtt_test; then
