@@ -31,7 +31,7 @@ VER_YMD='(?P<year>[0-9]{4})[\._-](?P<month>[01]?[0-9])[\._-](?P<day>[0123]?[0-9]
 LSVER='(?:-(?P<lsver>ls[0-9]+))?'
 SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 
-AUTO_CHECKS='(aur_latest|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|gitlab_latest|pacman)'
+AUTO_CHECKS='(aur_latest|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|github_tags|github_tags_latest|gitlab_latest|pacman)'
 
 # Handle temp files
 TEMPDIR=$(mktemp -d)
@@ -618,6 +618,7 @@ _auto_check() { # helper_function
     flatpak_latest) out=$(_flatpak_appstream "$project") ;;
     forgejo|forgejo_latest) out=$(_codeberg_project -f "$project") ;;
     github|github_latest) out=$(_github_project "$project") ;;
+    github_tags|github_tags_latest) out=$(github_tags "${search[@]}" "$project") ;;
     gitlab|gitlab_latest) out=$(_gitlab_project "$project") ;;
     pacman)
       check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
@@ -840,9 +841,15 @@ _docker_container_search() { # helper_function
   local docker_ps out
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}')
   log -d -d -d "docker ps output=$docker_ps"
+
   out=$(awk -F '|' -v s="$1" '$2 ~ s {print $1;exit}' <<< "$docker_ps")
-  log -d -d "awk output=$out"
+  log -d -d "awk output searching image field=$out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+
+  out=$(awk -F '|' -v s="$1" '$1 ~ s {print $1;exit}' <<< "$docker_ps")
+  log -d -d "awk output search name field=$out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+
   return 1
 }
 
@@ -1533,10 +1540,6 @@ fcgiwrap_alpine_latest() {
   alpine_repo_package fcgiwrap
 }
 
-fcgiwrap_latest() { # no_auto
-  github_tags -r '^v' gnosek/fcgiwrap
-}
-
 ffprobe_latest() { # no_auto
   curl -s "https://johnvansickle.com/ffmpeg/" | awk '/<th>release: [0-9]/{gsub(/<.*$/,"",$2);print $2;exit}'
 }
@@ -1619,10 +1622,6 @@ jellyfin_vue_docker() {
   echo "$jsb" | awk -F'["`'"'"']' -v v="$version" '$1 ~ v " ?= ?"{print $2;exit}'
 }
 
-jellyfin_vue_latest() { # no_auto
-  github_tags jellyfin/jellyfin-vue
-}
-
 jellystat_docker() {
   check_prog jq || return 1
   docker_compose_exec wget -qO- "http://127.0.0.1:3000/auth/isconfigured" | jq -r '.version' 2> /dev/null
@@ -1691,10 +1690,6 @@ memcached_docker() {
   docker_compose_exec memcached --version | awk '{print $2;exit}'
 }
 
-memcached_latest() { # no_auto
-  github_tags -s '^v?[0-9][0-9.]+$' memcached/memcached
-}
-
 molly_guard_latest() {
   check_prog xmllint || return 1
   curl -s "https://salsa.debian.org/debian/molly-guard/-/tags?format=atom" | \
@@ -1706,16 +1701,8 @@ mollysocket_docker() {
   docker_compose_exec mollysocket -V | awk '{print $2;exit}'
 }
 
-mosquitto_latest() { # no_auto
-  github_tags eclipse-mosquitto/mosquitto
-}
-
 mysql_docker() {
   docker_compose_exec mysqld -V | awk '{print $3;exit}'
-}
-
-mysql_latest() { # no_auto
-  github_tags -s '^mysql-[0-9][0-9.]+' mysql/mysql-server | sed 's/^mysql--//'
 }
 
 naemon_docker() {
@@ -1798,14 +1785,6 @@ openregex_docker() {
       }'
 }
 
-openregex_latest() { # no_auto
-  github_tags SunneV/OpenRegex
-}
-
-open_webui_latest() { # no_auto
-  github_tags open-webui/open-webui
-}
-
 opnsense_device() {
   check_prog jq || return 1
   local out
@@ -1815,17 +1794,9 @@ opnsense_device() {
   [[ -n "$out" ]] && printf '%s' "$out" | awk '/OPNsense/{sub(/-[a-z].*$/,"",$2);print $2}'
 }
 
-opnsense_latest() {
-  github_tags -s '^[0-9][0-9.]+$' opnsense/core
-}
-
 owncloud_docker() {
   docker_compose_exec cat /var/www/owncloud/version.php | \
     awk -F "'" '/\$OC_VersionString[[:space:]]*=/{print $2;exit}'
-}
-
-owncloud_latest() { # no_auto
-  github_tags -s '^v[0-9][0-9.]+$' owncloud/core
 }
 
 pagefind_docker() {
@@ -1985,15 +1956,6 @@ rsyslog_docker() {
   docker_compose_exec rsyslogd -v | awk '{print $2;exit}'
 }
 
-rsyslog_latest() { # no_auto
-  github_tags rsyslog/rsyslog
-}
-
-seafile_latest() { # no_auto
-  github_tags -s '^v?[0-9][0-9.]+-server$' haiwen/seafile-server | \
-    sed 's/^v//;s/-server$//'
-}
-
 seafile_client_appimage() {
   realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
     sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
@@ -2079,11 +2041,6 @@ smtpd_docker() {
     awk -F'[ -]' '/^version: OpenSMTPD [0-9]/ {print $3;exit}'
 }
 
-smtpd_latest() {
-  github_tags -r '^opensmtpd-[0-9]' -s '^v?[0-9][0-9.]+' OpenSMTPD/OpenSMTPD | \
-    sed -r 's/p[0-9]+$//'
-}
-
 splunk() {
   if [[ -x /opt/splunk/bin/splunk ]]; then
     awk -F= '/^VERSION/{print $2;exit}' /opt/splunk/etc/splunk.version
@@ -2127,10 +2084,6 @@ tasmobackup() {
   /usr/bin/curl -s "http://127.0.0.1:8259" | awk '/>TasmoBackup .+ by Dan Medhurst</ {print $6;exit}'
 }
 
-tasmobackup_latest() { # no_auto
-  github_tags -r '^(list|v)' danmed/TasmoBackupV1
-}
-
 tasmota_device() { # remote_host
   check_prog jq || return 1
   local out
@@ -2147,10 +2100,6 @@ tautulli_docker() {
 
 thruk_docker() {
   docker_compose_exec thruk --version | awk '{print $NF;exit}'
-}
-
-thruk_latest() {
-  github_tags sni/thruk
 }
 
 tmux() {

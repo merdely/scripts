@@ -302,6 +302,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 # octoprint: octoprint/octoprint/github_latest
 # ollama: ollama/ollama/github_latest
 # opencloud: opencloud-eu/opencloud/github_latest
+# opensmtpd: OpenSMTPD/OpenSMTPD/github_latest
 # pagefind: Pagefind/pagefind/github_latest
 # pihole: pi-hole/pi-hole/github_latest
 # portainer: portainer/portainer/github_latest
@@ -442,3 +443,19 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 # - unpackerr
 # - vchord-postgres
 # - whoami
+
+## Github Tags
+# fcgiwrap - remove=^v/gnosek/fcgiwrap/github_tags
+# jellyfin-vue - jellyfin/jellyfin-vue/github_tags
+# memcached - search=^[0-9]+(\.[0-9]+){2,3}$/memcached/memcached/github_tags
+# mosquitto - eclipse-mosquitto/mosquitto/github_tags
+# mysql - search=^mysql-[0-9]+(\.[0-9]+){2,3}$/mysql/mysql-server/github_tags
+# openregex - SunneV/OpenRegex/github_tags
+# open-webui - open-webui/open-webui/github_tags
+# opnsense - search=^[0-9]+(\.[0-9]+){2,3}$/opnsense/core/github_tags
+# owncloud - search=^v[0-9]+(\.[0-9]+){2,3}$/owncloud/core/github_tags
+# rsyslog - rsyslog/rsyslog/github_tags
+# seafile - postsed=#-server$##/search=^v[0-9]+(\.[0-9]+){2,3}-server$/haiwen/seafile-server/github_tags
+# opensmtpd - postsed=#p[0-9]+$##/search=^[0-9]+(\.[0-9]+){2,3}(p[0-9]+)?$/OpenSMTPD/OpenSMTPD/github_tags
+# tasmobackup - danmed/TasmoBackupV1/github_tags
+# thruk - sni/thruk/github_tags
