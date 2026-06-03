@@ -1,8 +1,13 @@
-# AUR Checks
+## AUR Checks
+
+```
 [vcheck:librewolf-bin_aur_latest]
 check: postsed=#^[0-9]:##/librewolf-bin/aur_latest
+```
 
-# Latest Checks
+## Latest Checks
+
+```
 [vcheck:audiobookshelf_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/advplyr/audiobookshelf/docker_tags_latest
 
@@ -246,216 +251,227 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/ghcr.io/unpoller/unpoller/docker_tags_la
 
 [vcheck:unpackerr_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_latest
+```
 
 ## Source Projects to get latest version
-# adguardhome: AdguardTeam/AdGuardHome/github_latest
-# audiobookshelf: advplyr/audiobookshelf/github_latest
-# authelia: authelia/authelia/github_latest
-# bazarr: morpheus65535/bazarr/github_latest
-# booklore: booklore-app/booklore/github_latest
-# bookstack: bookstackapp/bookstack/github_latest
-# calibre: kovidgoyal/calibre/github_latest
-# calibre_ls: linuxserver/docker-calibre/github_latest
-# calibre-web: janeczku/calibre-web/github_latest
-# calibre-web_ls: linuxserver/docker-calibre-web/github_latest
-# chezmoi: twpayne/chezmoi/github_latest
-# chronograf: influxdata/chronograf/github_latest
-# decode-config: tasmota/decode-config/github_latest
-# docker-compose: docker/compose/github_latest
-# dockhand: finsys/dockhand/github_latest
-# etherpad: ether/etherpad/github_latest
-# feishin: jeffvli/feishin/github_latest
-# https://raw.githubusercontent.com/21hsmw/flaresolverr/refs/heads/nodriver-support/changelog.md
-# flaresolverr: flaresolverr/flaresolverr/github_latest
-# flip-2-dnd: robinsrk/flip_2_dnd/github_latest
-# forgejo: forgejo/forgejo/codeberg_latest
-# forgejo-runner: forgejo/runner/forgejo_latest
-# frigate: blakeblackshear/frigate/github_latest
-# giftmanager: icbestca/giftmanager/github_latest
-# gitea: go-gitea/gitea/github_latest
-# grafana: grafana/grafana/github_latest
-# hawser: finsys/hawser/github_latest
-# immichframe: immichframe/immichframe/github_latest
-# immich: immich-app/immich/github_latest
-# influxdb: influxdata/influxdb/github_latest
-# jackett: linuxserver/docker-jackett/github_latest
-# jellyfin: jellyfin/jellyfin/github_latest
-# jellystat: cyfershepard/jellystat/github_latest
-# jitsi-excalidraw: jitsi/excalidraw-backend/github_latest
-# jitsi-meet: jitsi/jitsi-meet/github_latest
-# joplin: laurent22/joplin/github_latest
-# kapacitor: influxdata/kapacitor/github_latest
-# librespeed: librespeed/speedtest/github_latest
-# librewolf: librewolf/source/codeberg_latest
-# librewolf_ls: linuxserver/docker-librewolf/github_latest
-# linkding: sissbruecker/linkding/github_latest
-# linkwarden: linkwarden/linkwarden/github_latest
-# lldap: lldap/lldap/github_latest
-# mariadb: mariadb/server/github_latest
-# meilisearch: meilisearch/meilisearch/github_latest
-# mollysocket: mollyim/mollysocket/github_latest
-# naemon: naemon/naemon-core/github_latest
-# nagios: nagiosenterprises/nagioscore/github_latest
-# navidrome: navidrome/navidrome/github_latest
-# nginx: nginx/nginx/github_latest
-# ntfy: binwiederhier/ntfy/github_latest
-# octoprint: octoprint/octoprint/github_latest
-# ollama: ollama/ollama/github_latest
-# opencloud: opencloud-eu/opencloud/github_latest
-# opensmtpd: OpenSMTPD/OpenSMTPD/github_latest
-# pagefind: Pagefind/pagefind/github_latest
-# pihole: pi-hole/pi-hole/github_latest
-# portainer: portainer/portainer/github_latest
-# pot-provider: Brainicism/bgutil-ytdlp-pot-provider/github_latest
-# privatebin: privatebin/privatebin/github_latest
-# proton-ge: gloriouseggroll/proton-ge-custom/github_latest
-# prowlarr: linuxserver/docker-prowlarr/github_latest
-# putty-cac: nomorefood/putty-cac/github_latest
-# qbittorrent: linuxserver/docker-qbittorrent/github_latest
-# qui: autobrr/qui/github_latest
-# radarr: linuxserver/docker-radarr/github_latest
-# rclone: rclone/rclone/github_latest
-# redis: redis/redis/github_latest
-# registry: distribution/distribution/github_latest
-# restic: restic/restic/github_latest
-# restic-rest-server: restic/rest-server/github_latest
-# restreamer: datarhei/restreamer/github_latest
-# rofi-rbw: fdw/rofi-rbw/github_latest
-# seerr: seerr-team/seerr/github_latest
-# shlink: shlinkio/shlink/github_latest
-# shlink-web: shlinkio/shlink/github_latest
-# snapcast: snapcast/snapcast/github_latest
-# sonarr: linuxserver/docker-sonarr/github_latest
-# splunk-unix-ta: merdely/TA-unix/github_latest
-# streamystats: fredrikburmester/streamystats/github_latest
-# syncthing: syncthing/syncthing/github_latest
-# tasmota: arendst/tasmota/github_latest
-# tautulli: tautulli/tautulli/github_latest
-# telegraf: influxdata/telegraf/github_latest
-# tmux: tmux/tmux/github_latest
-# traefik: traefik/traefik/github_latest
-# trilium: triliumnext/trilium/github_latest
-# unifi: linuxserver/docker-unifi-network-application/github_latest
-# unifi-poller: unpoller/unpoller/github_latest
-# unpackerr: unpackerr/unpackerr/github_latest
-# vscode-web: coder/code-server/github_latest
-# vscodium: vscodium/vscodium/github_latest
-# wleave: amnatty/wleave/github_latest
-# yourls: yourls/yourls/github_latest
-# zigbee2mqtt: koenkk/zigbee2mqtt/github_latest
-# zwave-js: zwave-js/zwave-js-ui/github_latest
+
+- adguardhome: AdguardTeam/AdGuardHome/github_latest
+- audiobookshelf: advplyr/audiobookshelf/github_latest
+- authelia: authelia/authelia/github_latest
+- bazarr: morpheus65535/bazarr/github_latest
+- booklore: booklore-app/booklore/github_latest
+- bookstack: bookstackapp/bookstack/github_latest
+- calibre: kovidgoyal/calibre/github_latest
+- calibre_ls: linuxserver/docker-calibre/github_latest
+- calibre-web: janeczku/calibre-web/github_latest
+- calibre-web_ls: linuxserver/docker-calibre-web/github_latest
+- chezmoi: twpayne/chezmoi/github_latest
+- chronograf: influxdata/chronograf/github_latest
+- decode-config: tasmota/decode-config/github_latest
+- docker-compose: docker/compose/github_latest
+- dockhand: finsys/dockhand/github_latest
+- etherpad: ether/etherpad/github_latest
+- feishin: jeffvli/feishin/github_latest
+- https://raw.githubusercontent.com/21hsmw/flaresolverr/refs/heads/nodriver-support/changelog.md
+- flaresolverr: flaresolverr/flaresolverr/github_latest
+- flip-2-dnd: robinsrk/flip_2_dnd/github_latest
+- forgejo: forgejo/forgejo/codeberg_latest
+- forgejo-runner: forgejo/runner/forgejo_latest
+- frigate: blakeblackshear/frigate/github_latest
+- giftmanager: icbestca/giftmanager/github_latest
+- gitea: go-gitea/gitea/github_latest
+- grafana: grafana/grafana/github_latest
+- hawser: finsys/hawser/github_latest
+- immichframe: immichframe/immichframe/github_latest
+- immich: immich-app/immich/github_latest
+- influxdb: influxdata/influxdb/github_latest
+- jackett: linuxserver/docker-jackett/github_latest
+- jellyfin: jellyfin/jellyfin/github_latest
+- jellystat: cyfershepard/jellystat/github_latest
+- jitsi-excalidraw: jitsi/excalidraw-backend/github_latest
+- jitsi-meet: jitsi/jitsi-meet/github_latest
+- joplin: laurent22/joplin/github_latest
+- kapacitor: influxdata/kapacitor/github_latest
+- librespeed: librespeed/speedtest/github_latest
+- librewolf: librewolf/source/codeberg_latest
+- librewolf_ls: linuxserver/docker-librewolf/github_latest
+- linkding: sissbruecker/linkding/github_latest
+- linkwarden: linkwarden/linkwarden/github_latest
+- lldap: lldap/lldap/github_latest
+- mariadb: mariadb/server/github_latest
+- meilisearch: meilisearch/meilisearch/github_latest
+- mollysocket: mollyim/mollysocket/github_latest
+- naemon: naemon/naemon-core/github_latest
+- nagios: nagiosenterprises/nagioscore/github_latest
+- navidrome: navidrome/navidrome/github_latest
+- nginx: nginx/nginx/github_latest
+- ntfy: binwiederhier/ntfy/github_latest
+- octoprint: octoprint/octoprint/github_latest
+- ollama: ollama/ollama/github_latest
+- opencloud: opencloud-eu/opencloud/github_latest
+- opensmtpd: OpenSMTPD/OpenSMTPD/github_latest
+- pagefind: Pagefind/pagefind/github_latest
+- pihole: pi-hole/pi-hole/github_latest
+- portainer: portainer/portainer/github_latest
+- pot-provider: Brainicism/bgutil-ytdlp-pot-provider/github_latest
+- privatebin: privatebin/privatebin/github_latest
+- proton-ge: gloriouseggroll/proton-ge-custom/github_latest
+- prowlarr: linuxserver/docker-prowlarr/github_latest
+- putty-cac: nomorefood/putty-cac/github_latest
+- qbittorrent: linuxserver/docker-qbittorrent/github_latest
+- qui: autobrr/qui/github_latest
+- radarr: linuxserver/docker-radarr/github_latest
+- rclone: rclone/rclone/github_latest
+- redis: redis/redis/github_latest
+- registry: distribution/distribution/github_latest
+- restic: restic/restic/github_latest
+- restic-rest-server: restic/rest-server/github_latest
+- restreamer: datarhei/restreamer/github_latest
+- rofi-rbw: fdw/rofi-rbw/github_latest
+- seerr: seerr-team/seerr/github_latest
+- shlink: shlinkio/shlink/github_latest
+- shlink-web: shlinkio/shlink/github_latest
+- snapcast: snapcast/snapcast/github_latest
+- sonarr: linuxserver/docker-sonarr/github_latest
+- splunk-unix-ta: merdely/TA-unix/github_latest
+- streamystats: fredrikburmester/streamystats/github_latest
+- syncthing: syncthing/syncthing/github_latest
+- tasmota: arendst/tasmota/github_latest
+- tautulli: tautulli/tautulli/github_latest
+- telegraf: influxdata/telegraf/github_latest
+- tmux: tmux/tmux/github_latest
+- traefik: traefik/traefik/github_latest
+- trilium: triliumnext/trilium/github_latest
+- unifi: linuxserver/docker-unifi-network-application/github_latest
+- unifi-poller: unpoller/unpoller/github_latest
+- unpackerr: unpackerr/unpackerr/github_latest
+- vscode-web: coder/code-server/github_latest
+- vscodium: vscodium/vscodium/github_latest
+- wleave: amnatty/wleave/github_latest
+- yourls: yourls/yourls/github_latest
+- zigbee2mqtt: koenkk/zigbee2mqtt/github_latest
+- zwave-js: zwave-js/zwave-js-ui/github_latest
 
 ## Command Checks are defined then as ${package}_command
-# decode-config
-# chezmoi
-# forgejo-runner
-# rclone
-# rofi-rbw
-# snapclient
-# snapserver
 
-# Pacman Package Checks are defined then as ${package}_pacman
-# archiso-systemd-boot
-# c++utilities
-# dbeaver-ce-bin
-# electron28-bin
-# grayjay-bin
-# libpam-pwdfile-rs-bin
-# libratbag-git
-# librewolf
-# librewolf-bin
-# lisgd
-# logseq-desktop-bin
-# molly-guard-git
-# mqtt5-explorer-bin
-# ntfysh-bin
-# oscar
-# pinta
-# pipeline-gtk
-# piper-git
-# qtforkawesome-qt6
-# qtutilities-qt6
-# syncthingtray-qt6
-# ungoogled-chromium-bin
-# waybar-updates
-# wleave
-# zoom
+- decode-config
+- chezmoi
+- forgejo-runner
+- rclone
+- rofi-rbw
+- snapclient
+- snapserver
+
+## Pacman Package Checks are defined then as ${package}_pacman
+
+- archiso-systemd-boot
+- c++utilities
+- dbeaver-ce-bin
+- electron28-bin
+- grayjay-bin
+- libpam-pwdfile-rs-bin
+- libratbag-git
+- librewolf
+- librewolf-bin
+- lisgd
+- logseq-desktop-bin
+- molly-guard-git
+- mqtt5-explorer-bin
+- ntfysh-bin
+- oscar
+- pinta
+- pipeline-gtk
+- piper-git
+- qtforkawesome-qt6
+- qtutilities-qt6
+- syncthingtray-qt6
+- ungoogled-chromium-bin
+- waybar-updates
+- wleave
+- zoom
 
 # AUR Checks
-# librewolf-bin : postsed=#^[0-9]:##/librewolf-bin/aur_latest
+
+- librewolf-bin : postsed=#^[0-9]:##/librewolf-bin/aur_latest
 
 ## Docker printenv checks: <container>/<variable>/docker_printenv
-# chronograf/CHRONOGRAF_VERSION
-# influxdb/INFLUXDB_VERSION
-# kapacitor/KAPACITOR_VERSION
-# mosquitto/VERSION
-# nextcloud/NEXTCLOUD_VERSION
-# postgres/PG_VERSION
-# seafile/SEAFILE_VERSION
-# telegraf/TELEGRAF_VERSION
 
-# docker_inspect checks : run like <container_project>/docker_inspect
-# projects:
-# - audiobookshelf
-# - authelia
-# - bazarr
-# - booklore
-# - bookstack
-# - calibre
-# - calibre-web
-# - collabora
-# - etherpad
-# - fcgiwrap
-# - feishin
-# - flaresolverr
-# - forgejo
-# - forgejo-runner
-# - hawser
-# - immich-kiosk
-# - immichframe
-# - immich-server
-# - jackett
-# - jellyfin
-# - jitsi-excalidraw (jitsi/excalidraw-backend/docker_inspect)
-# - jitsi-meet  (postsed=#^stable-##/jitsi/web/docker_inspect)
-# - librewolf
-# - linkwarden
-# - lldap
-# - localai
-# - mariadb
-# - meilisearch
-# - navidrome
-# - naemon
-# - nginx
-# - php-fpm
-# - prowlarr
-# - qbittorrent
-# - qui
-# - radarr
-# - seerr
-# - shlink
-# - shlink-web-client
-# - sonarr
-# - syncthing
-# - traefik
-# - trilium
-# - unifi-poller
-# - unpackerr
-# - vchord-postgres
-# - whoami
+- chronograf/CHRONOGRAF_VERSION
+- influxdb/INFLUXDB_VERSION
+- kapacitor/KAPACITOR_VERSION
+- mosquitto/VERSION
+- nextcloud/NEXTCLOUD_VERSION
+- postgres/PG_VERSION
+- seafile/SEAFILE_VERSION
+- telegraf/TELEGRAF_VERSION
+
+## docker_inspect checks : run like <container_project>/docker_inspect projects:
+
+- audiobookshelf
+- authelia
+- bazarr
+- booklore
+- bookstack
+- calibre
+- calibre-web
+- collabora
+- etherpad
+- fcgiwrap
+- feishin
+- flaresolverr
+- forgejo
+- forgejo-runner
+- hawser
+- immich-kiosk
+- immichframe
+- immich-server
+- jackett
+- jellyfin
+- jitsi-excalidraw (jitsi/excalidraw-backend/docker_inspect)
+- jitsi-meet  (postsed=#^stable-##/jitsi/web/docker_inspect)
+- librewolf
+- linkwarden
+- lldap
+- localai
+- mariadb
+- meilisearch
+- navidrome
+- naemon
+- nginx
+- php-fpm
+- prowlarr
+- qbittorrent
+- qui
+- radarr
+- seerr
+- shlink
+- shlink-web-client
+- sonarr
+- syncthing
+- traefik
+- trilium
+- unifi-poller
+- unpackerr
+- vchord-postgres
+- whoami
 
 ## Github Tags
-# fcgiwrap - remove=^v/gnosek/fcgiwrap/github_tags
-# jellyfin-vue - jellyfin/jellyfin-vue/github_tags
-# memcached - search=^[0-9]+(\.[0-9]+){2,3}$/memcached/memcached/github_tags
-# mosquitto - eclipse-mosquitto/mosquitto/github_tags
-# mysql - search=^mysql-[0-9]+(\.[0-9]+){2,3}$/mysql/mysql-server/github_tags
-# openregex - SunneV/OpenRegex/github_tags
-# open-webui - open-webui/open-webui/github_tags
-# opnsense - search=^[0-9]+(\.[0-9]+){2,3}$/opnsense/core/github_tags
-# owncloud - search=^v[0-9]+(\.[0-9]+){2,3}$/owncloud/core/github_tags
-# rsyslog - rsyslog/rsyslog/github_tags
-# seafile - postsed=#-server$##/search=^v[0-9]+(\.[0-9]+){2,3}-server$/haiwen/seafile-server/github_tags
-# opensmtpd - postsed=#p[0-9]+$##/search=^[0-9]+(\.[0-9]+){2,3}(p[0-9]+)?$/OpenSMTPD/OpenSMTPD/github_tags
-# tasmobackup - danmed/TasmoBackupV1/github_tags
-# thruk - sni/thruk/github_tags
+
+- fcgiwrap - remove=^v/gnosek/fcgiwrap/github_tags
+- jellyfin-vue - jellyfin/jellyfin-vue/github_tags
+- memcached - search=^[0-9]+(\.[0-9]+){2,3}$/memcached/memcached/github_tags
+- mosquitto - eclipse-mosquitto/mosquitto/github_tags
+- mysql - search=^mysql-[0-9]+(\.[0-9]+){2,3}$/mysql/mysql-server/github_tags
+- openregex - SunneV/OpenRegex/github_tags
+- open-webui - open-webui/open-webui/github_tags
+- opnsense - search=^[0-9]+(\.[0-9]+){2,3}$/opnsense/core/github_tags
+- owncloud - search=^v[0-9]+(\.[0-9]+){2,3}$/owncloud/core/github_tags
+- rsyslog - rsyslog/rsyslog/github_tags
+- seafile - postsed=#-server$##/search=^v[0-9]+(\.[0-9]+){2,3}-server$/haiwen/seafile-server/github_tags
+- opensmtpd - postsed=#p[0-9]+$##/search=^[0-9]+(\.[0-9]+){2,3}(p[0-9]+)?$/OpenSMTPD/OpenSMTPD/github_tags
+- tasmobackup - danmed/TasmoBackupV1/github_tags
+- thruk - sni/thruk/github_tags
+
+## Docker Exec Checks
+
+- open-webui: jq=.version/open-webui/cat /app/package.json/docker_exec
