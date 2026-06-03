@@ -35,7 +35,7 @@ LSVER='(?:-(?P<lsver>ls[0-9]+))?'
 SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 export SEMVER_REGEX
 
-AUTO_CHECKS='(alpine_repo|aur|cat|codeberg|command|curl|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|github|gitlab|github_tags|gitlab|pacman)(_latest)?'
+AUTO_CHECKS='(alpine_repo|aur|cat|codeberg|command|curl|curlapi|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|github|gitlab|github_tags|gitlab|pacman)(_latest)?'
 export AUTO_CHECKS
 
 # Handle temp files
@@ -614,6 +614,7 @@ _auto_check() { # helper_function
   tag=${tag%_latest}
   [[ "$tag" =~ (aur|command|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
+  local proto=https
   case "$tag" in
     # alpine_docker) out=$(alpine_docker_package "$project") ;;
     alpine_repo) out=$(_alpine_repo_package "$project") ;;
@@ -621,7 +622,16 @@ _auto_check() { # helper_function
     cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ;;
     codeberg) out=$(_codeberg_project "$project") ;;
     command) out=$(_command_check "$project") ;;
-    curl) out=$(_curl_api "$project") ;;
+    curl) if [[ "$project" =~ ^proto=[^/]+/ ]]; then
+            proto=${project%%/*}
+            proto=${proto#proto=}
+            project=${project#*/}
+          fi
+          project=${project#https://}
+          project=${project#http://}
+          log -d -d "Running: curl -L $proto://$project"
+          out=$(curl -L "$proto://$project") ;;
+    curlapi) out=$(_curl_api "$project") ;;
     docker_exec) out=$(_docker_exec "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
@@ -1487,10 +1497,6 @@ empiretech_camera_latest() {
   check_prog xmllint || return 1
   curl -s "https://empiretech01.com/pages/download-firmwares" | \
     xmllint --html --xpath "//div[@class='firmwares_content_container']/div[1][contains(text(), 'IPC-Color4K-T-S2')]/following-sibling::div[2]/text()" - 2> /dev/null
-}
-
-ffprobe_latest() { # no_auto
-  curl -s "https://johnvansickle.com/ffmpeg/" | awk '/<th>release: [0-9]/{gsub(/<.*$/,"",$2);print $2;exit}'
 }
 
 filestash_latest() { # no_auto
