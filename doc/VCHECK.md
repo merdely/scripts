@@ -476,18 +476,18 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 
 ## Docker Exec Checks
 
-- open-webui: jq=.version/open-webui//usr/bin/cat /app/package.json/docker_exec
+- open-webui: `jq=.version/open-webui//usr/bin/cat /app/package.json/docker_exec`
     The /usr/bin/ part of the above check is only to demonstrate how to use a full path
-- php_fpm_docker: search=^php85-common/php-fpm/apk list --installed/docker_exec
-- portainer_docker: portainer//portainer --version/docker_exec
-- pot-provider: jq=.version/pot-provider/cat /app/package.json/docker_exec
-- rsyslog_docker: rsyslog/rsyslogd -v/docker_exec
-- seerr: jq=.version/seerr/cat /app/package.json/docker_exec
-- streamystats: jq=.version/streamystats/cat /app/package.json/docker_exec
-- tautulli: search=PLEXPY_RELEASE_VERSION/tautulli/cat /plexpy/version.py/docker_exec
-- thruk: thruk/thruk --version/docker_exec
-- unifi: unifi/cat /usr/lib/unifi/data/db/version/docker_exec
-- upmpdcli: upmpdcli/upmpdcli -v/docker_exec
+- php_fpm_docker: `search=^php85-common/php-fpm/apk list --installed/docker_exec`
+- portainer_docker: `portainer//portainer --version/docker_exec`
+- pot-provider: `jq=.version/pot-provider/cat /app/package.json/docker_exec`
+- rsyslog_docker: `rsyslog/rsyslogd -v/docker_exec`
+- seerr: `jq=.version/seerr/cat /app/package.json/docker_exec`
+- streamystats: `jq=.version/streamystats/cat /app/package.json/docker_exec`
+- tautulli: `search=PLEXPY_RELEASE_VERSION/tautulli/cat /plexpy/version.py/docker_exec`
+- thruk: `thruk/thruk --version/docker_exec`
+- unifi: `unifi/cat /usr/lib/unifi/data/db/version/docker_exec`
+- upmpdcli: `upmpdcli/upmpdcli -v/docker_exec`
 
 ## Cat file Checks
 
