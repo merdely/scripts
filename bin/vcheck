@@ -667,6 +667,9 @@ _auto_check() { # helper_function
     log -d -d -d "remove grep output: $out"
   fi
 
+  # Trim trailing linefeeds
+  [[ -n "$out" ]] && out=$(echo "$out" | tr -d '\r')
+
   # Sort output
   [[ -n "$out" ]] && out=$(sort -V <<< "$out")
 
