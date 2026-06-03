@@ -479,4 +479,5 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 ## Cat file Checks
 
 - example: /path/to/file.txt/cat
+- using progdata: $PROGDATA/file.txt/cat
 
