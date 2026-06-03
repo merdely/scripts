@@ -590,7 +590,7 @@ _auto_check() { # helper_function
       j) jqfilter=$OPTARG ;;       # Uses last one given
       r) remove+=("$OPTARG") ;;
       s) search+=("$OPTARG") ;;
-      S) sedstrings=+("$OPTARG") ;;      # Uses last one given
+      S) sedstrings+=("$OPTARG") ;;      # Uses last one given
       v) skipverfilter=true ;;
       V) skipverfilter=false ;;
       *) log -w "Invalid flag ($OPTARG)" ;;
