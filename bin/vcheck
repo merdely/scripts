@@ -423,6 +423,7 @@ sudo_exec() { # utility_function
     [[ "$arg" == "SUDO_EXEC_DEBUG="* ]] && { local_debug=${SUDO_EXEC_DEBUG#*=} ; continue ; }
     args+=("$arg")
   done
+  debug=$local_debug
   set -- "${args[@]}"
 
   cd /
@@ -434,7 +435,7 @@ sudo_exec() { # utility_function
   log -d "Executing 'debug=$local_debug $1 ${*:2} ${dflags[*]}' as $(id -un)"
 
   # Execute check function
-  debug=$local_debug "$1" "${@:2}"
+  "$1" "${@:2}"
 }
 
 # Function to fold the usage lines
@@ -1338,7 +1339,7 @@ _use_sudo_exec() { # helper_function
   $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 2 ; }
   log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
 
-  local regex rp out
+  local regex rp out SUDO_EXEC_DEBUG=0
   for regex in "${sudo_regexes[@]}"; do
     if [[ "${FUNCNAME[1]}" =~ $regex ]]; then
       log -v -v "Using sudo as $sudo_user to ${FUNCNAME[1]}"
