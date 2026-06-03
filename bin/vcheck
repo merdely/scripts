@@ -676,9 +676,9 @@ _auto_check() { # helper_function
 
   # Apply sedstring, if set
   [[ -n "$out" ]] && for sedstring in "${sedstrings[@]}"; do
-    log -d -d -d "Using sed -r '$sedstring'"
+    log -d "Using sed -r '$sedstring'"
     out=$(sed -r "$sedstring" <<< "$out")
-    log -d -d -d "sed output: $out"
+    log -d -d "sed output: $out"
   done
 
   # Apply versionfilter if $skipverfilter is false
