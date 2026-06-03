@@ -393,18 +393,18 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 
 # AUR Checks
 
-- librewolf-bin : postsed=#^[0-9]:##/librewolf-bin/aur_latest
+- librewolf-bin : `postsed=#^[0-9]:##/librewolf-bin/aur_latest`
 
 ## Docker printenv checks: <container>/<variable>/docker_printenv
 
-- chronograf/CHRONOGRAF_VERSION
-- influxdb/INFLUXDB_VERSION
-- kapacitor/KAPACITOR_VERSION
-- mosquitto/VERSION
-- nextcloud/NEXTCLOUD_VERSION
-- postgres/PG_VERSION
-- seafile/SEAFILE_VERSION
-- telegraf/TELEGRAF_VERSION
+- `chronograf/CHRONOGRAF_VERSION`
+- `influxdb/INFLUXDB_VERSION`
+- `kapacitor/KAPACITOR_VERSION`
+- `mosquitto/VERSION`
+- `nextcloud/NEXTCLOUD_VERSION`
+- `postgres/PG_VERSION`
+- `seafile/SEAFILE_VERSION`
+- `telegraf/TELEGRAF_VERSION`
 
 ## docker_inspect checks : run like <container_project>/docker_inspect projects:
 
@@ -428,8 +428,8 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 - immich-server
 - jackett
 - jellyfin
-- jitsi-excalidraw (jitsi/excalidraw-backend/docker_inspect)
-- jitsi-meet  (postsed=#^stable-##/jitsi/web/docker_inspect)
+- jitsi-excalidraw (`jitsi/excalidraw-backend/docker_inspect`)
+- jitsi-meet  (`postsed=#^stable-##/jitsi/web/docker_inspect`)
 - librewolf
 - linkwarden
 - lldap
@@ -458,26 +458,26 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 
 ## Github Tags
 
-- fcgiwrap - remove=^v/gnosek/fcgiwrap/github_tags
-- jellyfin-vue - jellyfin/jellyfin-vue/github_tags
-- memcached - search=^[0-9]+(\.[0-9]+){2,3}$/memcached/memcached/github_tags
-- mosquitto - eclipse-mosquitto/mosquitto/github_tags
-- mysql - search=^mysql-[0-9]+(\.[0-9]+){2,3}$/mysql/mysql-server/github_tags
-- openregex - SunneV/OpenRegex/github_tags
-- open-webui - open-webui/open-webui/github_tags
-- opnsense - search=^[0-9]+(\.[0-9]+){2,3}$/opnsense/core/github_tags
-- owncloud - search=^v[0-9]+(\.[0-9]+){2,3}$/owncloud/core/github_tags
-- postgres - postsed=#_#.#g/search=^REL_[0-9]+_[0-9]+$/postgres/postgres/github_tags
-- rsyslog - rsyslog/rsyslog/github_tags
-- seafile - postsed=#-server$##/search=^v[0-9]+(\.[0-9]+){2,3}-server$/haiwen/seafile-server/github_tags
-- opensmtpd - postsed=#p[0-9]+$##/search=^[0-9]+(\.[0-9]+){2,3}(p[0-9]+)?$/OpenSMTPD/OpenSMTPD/github_tags
-- tasmobackup - danmed/TasmoBackupV1/github_tags
-- thruk - sni/thruk/github_tags
+- fcgiwrap - `remove=^v/gnosek/fcgiwrap/github_tags`
+- jellyfin-vue - `jellyfin/jellyfin-vue/github_tags`
+- memcached - `search=^[0-9]+(\.[0-9]+){2,3}$/memcached/memcached/github_tags`
+- mosquitto - `eclipse-mosquitto/mosquitto/github_tags`
+- mysql - `search=^mysql-[0-9]+(\.[0-9]+){2,3}$/mysql/mysql-server/github_tags`
+- openregex - `SunneV/OpenRegex/github_tags`
+- open-webui - `open-webui/open-webui/github_tags`
+- opnsense - `search=^[0-9]+(\.[0-9]+){2,3}$/opnsense/core/github_tags`
+- owncloud - `search=^v[0-9]+(\.[0-9]+){2,3}$/owncloud/core/github_tags`
+- postgres - `postsed=#_#.#g/search=^REL_[0-9]+_[0-9]+$/postgres/postgres/github_tags`
+- rsyslog - `rsyslog/rsyslog/github_tags`
+- seafile - `postsed=#-server$##/search=^v[0-9]+(\.[0-9]+){2,3}-server$/haiwen/seafile-server/github_tags`
+- opensmtpd - `postsed=#p[0-9]+$##/search=^[0-9]+(\.[0-9]+){2,3}(p[0-9]+)?$/OpenSMTPD/OpenSMTPD/github_tags`
+- tasmobackup - `danmed/TasmoBackupV1/github_tags`
+- thruk - `sni/thruk/github_tags`
 
 ## Docker Exec Checks
 
-- open-webui: `jq=.version/open-webui//usr/bin/cat /app/package.json/docker_exec`
- The /usr/bin/ part of the above check is only to demonstrate how to use a full path
+- open-webui: `jq=.version/open-webui//usr/bin/cat /app/package.json/docker_exec`  
+  The '/usr/bin/' part of the above check is only to demonstrate how to use a full path
 - php_fpm_docker: `search=^php85-common/php-fpm/apk list --installed/docker_exec`
 - portainer_docker: `portainer//portainer --version/docker_exec`
 - pot-provider: `jq=.version/pot-provider/cat /app/package.json/docker_exec`
