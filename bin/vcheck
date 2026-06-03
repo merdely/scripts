@@ -35,7 +35,7 @@ LSVER='(?:-(?P<lsver>ls[0-9]+))?'
 SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 export SEMVER_REGEX
 
-AUTO_CHECKS='(aur_latest|cat|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|github_tags|github_tags_latest|gitlab_latest|pacman)'
+AUTO_CHECKS='(alpine_docker|alpine_docker_latest|alpine_repo|alpine_repo_latest|aur_latest|cat|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|github_tags|github_tags_latest|gitlab_latest|pacman)'
 export AUTO_CHECKS
 
 # Handle temp files
@@ -514,7 +514,7 @@ alpine_docker_package() { # helper_function
   [[ -n "$out" ]] && awk -v p="$package" '$0 ~ "^" p {sub("^" p "-?","",$1);print $1;exit}' 2>/dev/null <<< "$out"
 }
 
-alpine_repo_package() { # helper_function
+_alpine_repo_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog xmllint "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
@@ -584,15 +584,15 @@ _auto_check() { # helper_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
 
-  local search=() project tmp jqfilter sedstring skipverfilter=false
+  local remove=() search=() project tmp jqfilter sedstring skipverfilter=false
   local opt OPTARG OPTIND=1
   while getopts ":p:t:j:r:s:S:vV" opt; do
     case "$opt" in
       p) project=$OPTARG ;;
       t) tag=$OPTARG ;;
       j) jqfilter=$OPTARG ;;       # Uses last one given
-      r) search+=(-r "$OPTARG") ;;
-      s) search+=(-s "$OPTARG") ;;
+      r) remove+=("$OPTARG") ;;
+      s) search+=("$OPTARG") ;;
       S) sedstring=$OPTARG ;;      # Uses last one given
       v) skipverfilter=true ;;
       V) skipverfilter=false ;;
@@ -614,6 +614,8 @@ _auto_check() { # helper_function
   [[ "$tag" =~ (aur_latest|command|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
   case "$tag" in
+    alpine_docker|alpine_docker_latest) out=$(alpine_docker_package "$project") ;;
+    alpine_repo|alpine_repo_latest) out=$(_alpine_repo_package "$project") ;;
     aur_latest) out=$(_aur_package "$project") ;;
     cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ;;
     codeberg|codeberg_latest) out=$(_codeberg_project "$project") ;;
@@ -621,12 +623,14 @@ _auto_check() { # helper_function
     docker_exec) out=$(_docker_exec "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
-    docker_tags|docker_tags_latest) out=$(_docker_tags "${search[@]}" "$project") ;;
+    # docker_tags|docker_tags_latest) out=$(_docker_tags "${search[@]}" "$project") ;;
+    docker_tags|docker_tags_latest) out=$(_docker_tags "$project") ;;
     flatpak) out=$(_flatpak_version "$project") ;;
     flatpak_latest) out=$(_flatpak_appstream "$project") ;;
     forgejo|forgejo_latest) out=$(_codeberg_project -f "$project") ;;
     github|github_latest) out=$(_github_project "$project") ;;
-    github_tags|github_tags_latest) out=$(_github_tags "${search[@]}" "$project") ;;
+    # github_tags|github_tags_latest) out=$(_github_tags "${search[@]}" "$project") ;;
+    github_tags|github_tags_latest) out=$(_github_tags "$project") ;;
     gitlab|gitlab_latest) out=$(_gitlab_project "$project") ;;
     pacman)
       check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
@@ -640,12 +644,33 @@ _auto_check() { # helper_function
       return 1 ;;
   esac
 
+  # Apply search grep filter
+  if (( ${#search[@]} > 0 )); then
+    log -d "Searching for '$(IFS='|'; echo "${search[*]}")'"
+    out=$(grep -E -- "($(IFS='|'; echo "${search[*]}"))" <<< "$out")
+    log -d -d -d "search grep output: $out"
+  fi
+
+  # Apply remove grep filter
+  if (( ${#remove[@]} > 0 )); then
+    log -d "Searching for '$(IFS='|'; echo "${remove[*]}")'"
+    out=$(echo "$out" | grep -Ev -- "($(IFS='|'; echo "${remove[*]}"))")
+    log -d -d -d "remove grep output: $out"
+  fi
+
   # Apply jq filter, if set
   if [[ -n "$out" && -n "$jqfilter" ]]; then
     log -d -d -d "Using jq -rn --argjson j '\$out' '$jqfilter'"
     out=$(jq -rn --argjson j "$out" "\$j | $jqfilter")
     log -d -d -d "jq output: $out"
   fi
+
+  # Sort output
+  [[ -n "$out" ]] && out=$(sort -V <<< "$out")
+
+  # Grab the last line of output
+  [[ -n "$out" ]] && out=$(tail -n1 <<< "$out")
+  log -d -d "tail -n1 output = '$out'"
 
   # Apply sedstring, if set
   if [[ -n "$out" && -n "$sedstring" ]]; then
@@ -994,23 +1019,7 @@ _docker_tags() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
-  local OPTIND=1 OPTARG opt dosort=true removegrep searchgrep useskopeo=true
-  while getopts ":r:R:p:s:S" opt; do
-    case "$opt" in
-      #  remove matchings strings from output, can be used more than once
-      r) removegrep="$removegrep|$OPTARG" && removegrep="${removegrep#|}" ;;
-      #  remove matchings strings from output using perl/grep, can be used more than once
-      R) removegrep="$removegrep|$OPTARG" && removegrep="${removegrep#|}" ;;
-      #  search for matching strings in output, can be used more than once
-      s) searchgrep="$searchgrep|$OPTARG" && searchgrep="${searchgrep#|}" ;;
-      # search for matching strings in output using perl/grep, can be used more than once
-      p) searchperl="$searchperl|$OPTARG" && searchperl="${searchperl#|}" ;;
-      #  Do not perform version sort
-      S) dosort=false ;;
-      *) log -w "Invalid flag ($OPTARG)" ;;
-    esac
-  done
-  shift $(( OPTIND - 1 ))
+  local useskopeo=true
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   local parts site org repo
@@ -1185,32 +1194,10 @@ _docker_tags() { # helper_function
     done
     out=$(printf '%s\n' "${results[@]}")
   fi
-
   log -d -d -d "Jq output: $out"
-  if [[ -n "$out" ]] && [[ -n "$searchgrep" ]]; then
-    log -d "Searching for '${searchgrep#|}'"
-    out=$(grep -E -- "(${searchgrep#|})" <<< "$out")
-    log -d -d -d "searchgrep output: $out"
-  fi
-  if [[ -n "$out" ]] && [[ -n "$searchperl" ]]; then
-    log -d "Searching for '${searchperl#|}'"
-    out=$(grep -P -- "(${searchperl#|})" <<< "$out")
-    log -d -d -d "searchperl output: $out"
-  fi
-  if [[ -n "$out" ]] && [[ -n "$removegrep" ]]; then
-    log -d "Searching for '${removegrep#|}'"
-    out=$(grep -Ev -- "(${removegrep#|})" <<< "$out")
-    log -d -d -d "removegrep output: $out"
-  fi
-  if [[ -n "$out" ]] && [[ -n "$removeperl" ]]; then
-    log -d "Searching for '${removeperl#|}'"
-    out=$(grep -Pv -- "(${removeperl#|})" <<< "$out")
-    log -d -d -d "removeperl output: $out"
-  fi
 
-  [[ -n "$out" ]] && $dosort && { log -d -d -d "Sorting" ; out=$(sort -V <<< "$out") ; }
-  log -d -d -d "Grabbing the last line of output"
-  tail -n1 <<< "$out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
 }
 
 _flatpak_appstream() { # helper_function
@@ -1288,30 +1275,8 @@ _github_tags() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   local version_sort=true output err out
-
-  # aruments are processed this way to handle arguments with a leading dash
-  while (( $# > 0 )); do
-    case $1 in
-      # remove matchings strings from output, can be specified more than once
-      -r) [[ -n "$2" ]] && remove_grep="$remove_grep|$2" && shift 2 ;;
-      # search for matching strings in output, can be specified more than once
-      -s) [[ -n "$2" ]] && search_grep="$search_grep|$2" && shift 2 ;;
-      # Do not perform version sort
-      -S) version_sort=false && shift ;;
-      -h|--help) log "usage: github_tags project/repo" && return 0 ;;
-      -*)        log -e "Unknown option $1" && return 1 ;;
-      *) # This should be the project_name
-         if [[ -z "$project_name" ]]; then
-           project_name=$1
-         else
-           log -e "Multiple project names provided"
-           exit 1
-         fi
-         shift
-         ;;
-    esac
-  done
-  [[ -z "$project_name" ]] && { log -e "You must supply project/repo" ; return 1 ; }
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  project_name=$1
 
   local authstring=()
   mapfile -t authstring < <(gen_authstring github)
@@ -1327,16 +1292,9 @@ _github_tags() { # helper_function
     [[ ! -s "$out" || "$(jq 'length' 2> /dev/null "$out")" -eq 0 ]] && done=true && break
     out=$(jq -r '.[].name' "$out" 2> /dev/null)
     log -d -d -d "Jq output: $out"
-    [[ -n "$search_grep" ]] && out=$(grep -E -- "(${search_grep#|})" <<< "$out")
-    log -d -d -d "search grep output: $out"
-    [[ -n "$remove_grep" ]] && out=$(grep -Ev -- "(${remove_grep#|})" <<< "$out")
-    log -d -d -d "remove grep output: $out"
     output="${output# } $out"
   done
   [[ -z "${output# }" ]] && { log -e "Could not find github tags data for $project_name" ; return 1 ; }
-
-  $version_sort && output=$(sort -V <<< "${output# }")
-  output=$(tail -n1 <<< "${output# }")
 
   errmsg=$(cat "$err")
   [[ -n "$errmsg" ]] && log -d "$1: $errmsg"
@@ -1512,11 +1470,6 @@ adguardhome_server() { # remote_host
   [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j.version' 2> /dev/null
 }
 
-bookshelf_docker() {
-  docker_compose_exec /app/readarr/bin/Readarr /? | \
-    awk '/Readarr - Version /{print $NF;exit}'
-}
-
 codium() {
   if command -v rpm > /dev/null 2>&1; then
     /usr/bin/rpm -q --queryformat '%{VERSION}' codium
@@ -1544,10 +1497,6 @@ empiretech_camera_latest() {
   check_prog xmllint || return 1
   curl -s "https://empiretech01.com/pages/download-firmwares" | \
     xmllint --html --xpath "//div[@class='firmwares_content_container']/div[1][contains(text(), 'IPC-Color4K-T-S2')]/following-sibling::div[2]/text()" - 2> /dev/null
-}
-
-fcgiwrap_alpine_latest() {
-  alpine_repo_package fcgiwrap
 }
 
 ffprobe_latest() { # no_auto
@@ -1741,10 +1690,6 @@ nginx_docker() {
     awk '/^nginx version: /{sub(/^.*nginx\//,"");print;exit}'
 }
 
-nginx_alpine_latest() {
-  alpine_repo_package nginx
-}
-
 nginx_docker_mainline_latest() { # no_auto
   curl -s "https://hub.docker.com/_/nginx" | \
     awk -F '[><]' '
@@ -1819,24 +1764,6 @@ pagefind_docker() {
   docker run --rm pagefind pagefind --version | awk '{print $NF;exit}'
 }
 
-php_fpm_docker() {
-  if docker_compose_exec test -f /etc/alpine-release; then
-    alpine_docker_package "php[0-9]+-fpm"
-  else
-    docker_compose_exec php-fpm -v | awk '/^PHP [0-9]/ {print "php-" $2;exit}'
-  fi
-}
-
-php_fpm_alpine_latest() {
-  if [[ -z "$minver" ]]; then
-    alpine_repo_package 'php*-common'
-  else
-    local M=${minver%%.*}
-    local m=${minver##*.}
-    alpine_repo_package "php$M$m-common"
-  fi
-}
-
 php_latest() { # no_auto
   curl -s "https://www.php.net/downloads.php?usage=web&os=linux&osvariant=linux-debian&version=default&source=Y" | \
     awk -F '["/]' '/<a href="\/distributions\/php-[^"]+\.tar\.gz">/{gsub(/\.tar\.gz/,"",$4);print $4;exit}'
@@ -1878,22 +1805,9 @@ plex_latest() { # no_auto
     awk -F- '{print $1;exit}'
 }
 
-portainer_docker() {
-  docker_compose_exec /portainer --version 2>&1
-}
-
 portainer_agent_docker() {
   docker_compose_exec wget --no-check-certificate -qSO- "https://127.0.0.1:9001/ping" 2>&1 | \
     awk '/Portainer-Agent: /{print $2;exit}'
-}
-
-postgres_latest() { # no_auto
-  curl -s "https://www.postgresql.org/" | \
-    awk -F'[><]' '/<li class=".*\/docs\/[0-9]+\/release-/{print $5;exit}'
-}
-
-pot_provider_docker() {
-  docker_compose_exec cat /app/package.json | jq -r '.version' 2> /dev/null
 }
 
 privatebin() {
@@ -1917,10 +1831,6 @@ putty_latest() { # no_auto
     tail -n1
 }
 
-redis_docker() {
-  docker_compose_exec redis-server --version | sed -r 's/^.*v=(\S+) .*$/\1/'
-}
-
 registry_docker() {
   docker_logs registry 2>&1 | \
     awk '
@@ -1931,10 +1841,6 @@ registry_docker() {
         gsub(/[ \t]+/,"", v)
         print v
       }'
-}
-
-restic_rest_server_docker() {
-  docker_compose_exec rest-server --version | awk '{print $4;exit}'
 }
 
 restreamer_docker() {
@@ -1958,10 +1864,6 @@ routeros_device() { # remote_host
   jq -rn --argjson j "$out" --arg app routeros '$j.[] | select(.name == $app) | .version' 2> /dev/null
 }
 
-rsyslog_docker() {
-  docker_compose_exec rsyslogd -v | awk '{print $2;exit}'
-}
-
 seafile_client_appimage() {
   realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
     sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
@@ -1972,11 +1874,6 @@ seafile_client_appimage_latest() { # no_auto
   curl -s "https://www.seafile.com/en/download/" | \
     xmllint --html --xpath 'string(//h3[contains(text(), "Client for Linux")]/following-sibling::p/following-sibling::a[contains(@href, "Seafile-x86_64-")]/@href)' - 2>/dev/null | \
     sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
-}
-
-seerr_docker() {
-  check_prog jq || return 1
-  docker_compose_exec cat /app/package.json | jq -r '.version' 2> /dev/null
 }
 
 slzb_core() { # remote_host
@@ -2042,11 +1939,6 @@ slzb_radio_latest() {
     tail -n1
 }
 
-smtpd_docker() {
-  docker_compose_exec smtpd -h 2>&1 | \
-    awk -F'[ -]' '/^version: OpenSMTPD [0-9]/ {print $3;exit}'
-}
-
 splunk() {
   if [[ -x /opt/splunk/bin/splunk ]]; then
     awk -F= '/^VERSION/{print $2;exit}' /opt/splunk/etc/splunk.version
@@ -2081,11 +1973,6 @@ splunk_unix_ta_latest() {
     jq -r '.props.pageProps.appDetails.release.name' 2> /dev/null
 }
 
-streamystats_docker() {
-  check_prog jq || return 1
-  docker_compose_exec cat /app/package.json | jq -r '.version' 2> /dev/null
-}
-
 tasmobackup() {
   /usr/bin/curl -s "http://127.0.0.1:8259" | awk '/>TasmoBackup .+ by Dan Medhurst</ {print $6;exit}'
 }
@@ -2099,25 +1986,6 @@ tasmota_device() { # remote_host
   [[ -n "$out" ]] && sed -r 's/\([^)]+\)//' <<< "$out"
 }
 
-tautulli_docker() {
-  docker_compose_exec cat /app/plexpy/version.py | \
-    awk -F'"' '/PLEXPY_RELEASE_VERSION/{print $2;exit}'
-}
-
-thruk_docker() {
-  docker_compose_exec thruk --version | awk '{print $NF;exit}'
-}
-
-tmux() {
-  if [[ -x /usr/local/bin/tmux ]]; then
-    /usr/local/bin/tmux -V | awk '{ print $2;exit}'
-  elif [[ -x /usr/bin/tmux ]]; then
-    /usr/bin/tmux -V | awk '{ print $2;exit}'
-  else
-    tmux -V | awk '{ print $2;exit}'
-  fi
-}
-
 truenas_latest() { # no_auto
   check_prog jq || return 1
   curl -sL "https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1" | \
@@ -2129,15 +1997,6 @@ truenas_server() { # remote_host
   local out
   out=$(curl_api)
   [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j' 2> /dev/null
-}
-
-unifi_docker() {
-  docker_compose_exec cat /usr/lib/unifi/data/db/version | \
-    awk '{print $1; exit}'
-}
-
-upmpdcli_docker() {
-  docker_compose_exec upmpdcli -v | awk '{print $2;exit}'
 }
 
 vscode_docker() {

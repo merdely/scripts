@@ -352,7 +352,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 - zigbee2mqtt: koenkk/zigbee2mqtt/github_latest
 - zwave-js: zwave-js/zwave-js-ui/github_latest
 
-## Command Checks are defined then as ${package}_command
+## Command Checks are defined then as ${package}_command (or /usr/local/bin/program/command
 
 - decode-config
 - chezmoi
@@ -361,6 +361,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 - rofi-rbw
 - snapclient
 - snapserver
+- tmux
 
 ## Pacman Package Checks are defined then as ${package}_pacman
 
@@ -466,6 +467,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 - open-webui - open-webui/open-webui/github_tags
 - opnsense - search=^[0-9]+(\.[0-9]+){2,3}$/opnsense/core/github_tags
 - owncloud - search=^v[0-9]+(\.[0-9]+){2,3}$/owncloud/core/github_tags
+- postgres - postsed=#_#.#g/search=^REL_[0-9]+_[0-9]+$/postgres/postgres/github_tags
 - rsyslog - rsyslog/rsyslog/github_tags
 - seafile - postsed=#-server$##/search=^v[0-9]+(\.[0-9]+){2,3}-server$/haiwen/seafile-server/github_tags
 - opensmtpd - postsed=#p[0-9]+$##/search=^[0-9]+(\.[0-9]+){2,3}(p[0-9]+)?$/OpenSMTPD/OpenSMTPD/github_tags
@@ -474,10 +476,27 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 
 ## Docker Exec Checks
 
-- open-webui: jq=.version/open-webui/cat /app/package.json/docker_exec
+- open-webui: jq=.version/open-webui//usr/bin/cat /app/package.json/docker_exec
+    The /usr/bin/ part of the above check is only to demonstrate how to use a full path
+- php_fpm_docker: search=^php85-common/php-fpm/apk list --installed/docker_exec
+- portainer_docker: portainer//portainer --version/docker_exec
+- pot-provider: jq=.version/pot-provider/cat /app/package.json/docker_exec
+- rsyslog_docker: rsyslog/rsyslogd -v/docker_exec
+- seerr: jq=.version/seerr/cat /app/package.json/docker_exec
+- streamystats: jq=.version/streamystats/cat /app/package.json/docker_exec
+- tautulli: search=PLEXPY_RELEASE_VERSION/tautulli/cat /plexpy/version.py/docker_exec
+- thruk: thruk/thruk --version/docker_exec
+- unifi: unifi/cat /usr/lib/unifi/data/db/version/docker_exec
+- upmpdcli: upmpdcli/upmpdcli -v/docker_exec
 
 ## Cat file Checks
 
 - example: /path/to/file.txt/cat
 - using progdata: $PROGDATA/file.txt/cat
+
+## Alpine Repo Package
+
+- fcgiwrap - fcgiwrap/alpine_repo_latest
+- nginx - nginx/alpine_repo_latest
+- php - php85-common/alpine_repo_latest
 
