@@ -272,8 +272,8 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 - dockhand: finsys/dockhand/github_latest
 - etherpad: ether/etherpad/github_latest
 - feishin: jeffvli/feishin/github_latest
-- https://raw.githubusercontent.com/21hsmw/flaresolverr/refs/heads/nodriver-support/changelog.md
-- flaresolverr: flaresolverr/flaresolverr/github_latest
+- [flaresolverr](https://raw.githubusercontent.com/21hsmw/flaresolverr/refs/heads/nodriver-support/changelog.md):
+  flaresolverr/flaresolverr/github_latest
 - flip-2-dnd: robinsrk/flip_2_dnd/github_latest
 - forgejo: forgejo/forgejo/codeberg_latest
 - forgejo-runner: forgejo/runner/forgejo_latest
