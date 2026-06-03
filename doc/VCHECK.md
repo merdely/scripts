@@ -491,12 +491,13 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 
 ## Cat file Checks
 
-- example: /path/to/file.txt/cat
-- using progdata: $PROGDATA/file.txt/cat
+- example: `/path/to/file.txt/cat`
+- using progdata: `$PROGDATA/file.txt/cat`
+- zwave_js: `postsed=#.*Version: ##/search=INFO.* .*(APP|STORE).*: Version://var/log/zwave.out/cat`
 
 ## Alpine Repo Package
 
-- fcgiwrap - fcgiwrap/alpine_repo_latest
-- nginx - nginx/alpine_repo_latest
-- php - php85-common/alpine_repo_latest
+- fcgiwrap - `fcgiwrap/alpine_repo_latest`
+- nginx - `nginx/alpine_repo_latest`
+- php - `php85-common/alpine_repo_latest`
 
