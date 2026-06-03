@@ -991,9 +991,9 @@ _docker_printenv() { # helper_function
 
   local image image_search variable out
   if (( $# == 1 )); then
-    if [[ "$1" == */* ]]; then
-      image_search=${1%%/*}
-      variable=${1##*/}
+    if [[ "$1" == *!!* ]]; then
+      image_search=${1%%!!*}
+      variable=${1##*!!}
     else
       image_search=$1
     fi
