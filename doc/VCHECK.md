@@ -477,7 +477,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 ## Docker Exec Checks
 
 - open-webui: `jq=.version/open-webui//usr/bin/cat /app/package.json/docker_exec`
-    The /usr/bin/ part of the above check is only to demonstrate how to use a full path
+The /usr/bin/ part of the above check is only to demonstrate how to use a full path
 - php_fpm_docker: `search=^php85-common/php-fpm/apk list --installed/docker_exec`
 - portainer_docker: `portainer//portainer --version/docker_exec`
 - pot-provider: `jq=.version/pot-provider/cat /app/package.json/docker_exec`
