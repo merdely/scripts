@@ -618,7 +618,7 @@ _auto_check() { # helper_function
     flatpak_latest) out=$(_flatpak_appstream "$project") ;;
     forgejo|forgejo_latest) out=$(_codeberg_project -f "$project") ;;
     github|github_latest) out=$(_github_project "$project") ;;
-    github_tags|github_tags_latest) out=$(github_tags "${search[@]}" "$project") ;;
+    github_tags|github_tags_latest) out=$(_github_tags "${search[@]}" "$project") ;;
     gitlab|gitlab_latest) out=$(_gitlab_project "$project") ;;
     pacman)
       check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
@@ -1270,7 +1270,7 @@ _gitlab_project() { # helper_function
   echo "$out"
 }
 
-github_tags() { # helper_function
+_github_tags() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   local version_sort=true output err out
