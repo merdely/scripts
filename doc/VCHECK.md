@@ -501,3 +501,11 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$/docker.io/golift/unpackerr/docker_tags_l
 - nginx - `nginx/alpine_repo_latest`
 - php - `php85-common/alpine_repo_latest`
 
+## Curl Checks
+- adguardhome_server - `jq=.version/adguardhome_server/curl`
+- local flip_2_dnd_pro mirror - `jq=.[].tag_name/flip_2_dnd_pro/curl`
+- opnsense_device - `postsed=#-[a-z][a-z0-9]+$##/search=^OPNsense/jq=.versions[]/opnsense_device/curl`
+- routeros_device - `jq=.[] | select(.name=="routeros")|.version/routeros_device/curl`
+- slzb_core - `jq=.Info.sw_version/slzb_core/curl`
+- slzb_radio - `skip_version_filter/jq=.Info.zb_version/slzb_radio/curl`
+- tasmota_device - `jq=.StatusFWR.Version/tasmota_device/curl`

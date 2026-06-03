@@ -35,7 +35,7 @@ LSVER='(?:-(?P<lsver>ls[0-9]+))?'
 SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 export SEMVER_REGEX
 
-AUTO_CHECKS='(alpine_docker|alpine_docker_latest|alpine_repo|alpine_repo_latest|aur_latest|cat|codeberg|codeberg_latest|command|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|docker_tags_latest|flatpak|flatpak_latest|forgejo|forgejo_latest|github|github_latest|gitlab|github_tags|github_tags_latest|gitlab_latest|pacman)'
+AUTO_CHECKS='(alpine_repo|aur|cat|codeberg|command|curl|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|github|gitlab|github_tags|gitlab|pacman)(_latest)?'
 export AUTO_CHECKS
 
 # Handle temp files
@@ -611,27 +611,31 @@ _auto_check() { # helper_function
   log -d -d "sedstring=$sedstring"
   log -d -d "skip=$skipverfilter"
 
-  [[ "$tag" =~ (aur_latest|command|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
+  local latest=false
+  [[ "$tag" == *_latest ]] && latest=true
+  tag=${tag%_latest}
+  [[ "$tag" =~ (aur|command|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
   case "$tag" in
-    alpine_docker|alpine_docker_latest) out=$(alpine_docker_package "$project") ;;
-    alpine_repo|alpine_repo_latest) out=$(_alpine_repo_package "$project") ;;
-    aur_latest) out=$(_aur_package "$project") ;;
+    # alpine_docker) out=$(alpine_docker_package "$project") ;;
+    alpine_repo) out=$(_alpine_repo_package "$project") ;;
+    aur) out=$(_aur_package "$project") ;;
     cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ;;
-    codeberg|codeberg_latest) out=$(_codeberg_project "$project") ;;
+    codeberg) out=$(_codeberg_project "$project") ;;
     command) out=$(_command_check "$project") ;;
+    curl) out=$(_curl_api "$project") ;;
     docker_exec) out=$(_docker_exec "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
     # docker_tags|docker_tags_latest) out=$(_docker_tags "${search[@]}" "$project") ;;
-    docker_tags|docker_tags_latest) out=$(_docker_tags "$project") ;;
+    docker_tags) out=$(_docker_tags "$project") ;;
     flatpak) out=$(_flatpak_version "$project") ;;
-    flatpak_latest) out=$(_flatpak_appstream "$project") ;;
-    forgejo|forgejo_latest) out=$(_codeberg_project -f "$project") ;;
-    github|github_latest) out=$(_github_project "$project") ;;
+    flatpak_appstream) out=$(_flatpak_appstream "$project") ;;
+    forgejo) out=$(_codeberg_project -f "$project") ;;
+    github) out=$(_github_project "$project") ;;
     # github_tags|github_tags_latest) out=$(_github_tags "${search[@]}" "$project") ;;
-    github_tags|github_tags_latest) out=$(_github_tags "$project") ;;
-    gitlab|gitlab_latest) out=$(_gitlab_project "$project") ;;
+    github_tags) out=$(_github_tags "$project") ;;
+    gitlab) out=$(_gitlab_project "$project") ;;
     pacman)
       check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
       out=$(pacman -Q "$project" 2> /dev/null)
@@ -643,6 +647,13 @@ _auto_check() { # helper_function
       log -e "Unknown package check: $tag"
       return 1 ;;
   esac
+
+  # Apply jq filter, if set
+  if [[ -n "$out" && -n "$jqfilter" ]]; then
+    log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $jqfilter'"
+    out=$(jq -rn --argjson j "$out" "\$j | $jqfilter")
+    log -d -d -d "jq output: $out"
+  fi
 
   # Apply search grep filter
   if (( ${#search[@]} > 0 )); then
@@ -656,13 +667,6 @@ _auto_check() { # helper_function
     log -d "Searching for '$(IFS='|'; echo "${remove[*]}")'"
     out=$(echo "$out" | grep -Ev -- "($(IFS='|'; echo "${remove[*]}"))")
     log -d -d -d "remove grep output: $out"
-  fi
-
-  # Apply jq filter, if set
-  if [[ -n "$out" && -n "$jqfilter" ]]; then
-    log -d -d -d "Using jq -rn --argjson j '\$out' '$jqfilter'"
-    out=$(jq -rn --argjson j "$out" "\$j | $jqfilter")
-    log -d -d -d "jq output: $out"
   fi
 
   # Sort output
@@ -762,28 +766,31 @@ _codeberg_project() { # helper_function
 }
 
 # To use this function, there must be a section in $rcfile
-# The section should be named after the check using curl_api
+# The section should be named after the check using _curl_api
 # The section must include url and optionally username & password or apikey
-curl_api() { # helper_function
+_curl_api() { # helper_function
   log -d "Running ${FUNCNAME[0]} for ${FUNCNAME[1]}"
   local url username password apikey out
 
+  local check_name=$1
+  [[ -z "$1" ]] && check_name=${FUNCNAME[1]}
+
   # shellcheck disable=SC2154
-  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[1]}" ; return 1; }
-  mapfile -t url      < <(get_config_value "$rcfile" "${FUNCNAME[1]}" url)
-  mapfile -t username < <(get_config_value "$rcfile" "${FUNCNAME[1]}" username)
-  mapfile -t password < <(get_config_value "$rcfile" "${FUNCNAME[1]}" password)
-  mapfile -t apikey   < <(get_config_value "$rcfile" "${FUNCNAME[1]}" apikey)
+  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for $check_name" ; return 1; }
+  mapfile -t url      < <(get_config_value "$rcfile" "$check_name" url)
+  mapfile -t username < <(get_config_value "$rcfile" "$check_name" username)
+  mapfile -t password < <(get_config_value "$rcfile" "$check_name" password)
+  mapfile -t apikey   < <(get_config_value "$rcfile" "$check_name" apikey)
 
   out=$(maketemp)
-  (( ${#url[@]} == 0 ))      && { log -e "Could not read ${FUNCNAME[1]} URL from $rcfile" ; return 1 ; }
+  (( ${#url[@]} == 0 ))      && { log -e "Could not read $check_name URL from $rcfile" ; return 1 ; }
   if (( ${#apikey[@]} > 0 )); then
     curl -sLo "$out" -X GET -H \
       "Authorization: Bearer ${apikey[-1]}" \
       "${url[-1]}"
   elif (( ${#username[@]} > 0 || ${#password[@]} > 0 )); then
-    (( ${#username[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[1]} Username from $rcfile" ; return 1 ; }
-    (( ${#password[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[1]} Password from $rcfile" ; return 1 ; }
+    (( ${#username[@]} == 0 )) && { log -e "Could not read $check_name Username from $rcfile" ; return 1 ; }
+    (( ${#password[@]} == 0 )) && { log -e "Could not read $check_name Password from $rcfile" ; return 1 ; }
 
     curl -sLo "$out" -X GET -H \
       "Authorization: Basic $(printf '%s:%s' "${username[-1]}" "${password[-1]}"|base64|tr -d '\n')" \
@@ -1301,7 +1308,7 @@ _github_tags() { # helper_function
   echo "$output"
 }
 
-# This function cannot use curl_api because of the dynamic URL with $1
+# This function cannot use _curl_api because of the dynamic URL with $1
 myaur_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Package name required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1463,13 +1470,6 @@ printer_ink_check() { # remote_host
   jq -rn --argjson j "$inkdata" '$j' 2> /dev/null
 }
 
-adguardhome_server() { # remote_host
-  check_prog jq || return 1
-  local out
-  out=$(curl_api)
-  [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j.version' 2> /dev/null
-}
-
 codium() {
   if command -v rpm > /dev/null 2>&1; then
     /usr/bin/rpm -q --queryformat '%{VERSION}' codium
@@ -1516,14 +1516,6 @@ filestash_latest() { # no_auto
   build_date=$(echo "$build_date" | \
     awk -F'[-T]' '/^[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}T/{print "." $1 $2 $3;exit}')
   echo "$app_version$build_date"
-}
-
-flip_2_dnd_pro() {
-  local out
-  out=$(curl_api)
-  [[ "$out" ]] && jq -rn --argjson j "$out" '$j[].tag_name' 2> /dev/null | \
-    sort -V | \
-    tail -n1
 }
 
 frigate_docker() {
@@ -1593,7 +1585,7 @@ joplin_desktop() {
 }
 
 joplin_server() {
-  out=$(curl_api)
+  out=$(_curl_api)
   [[ -n "$out" ]] && awk '/Joplin Server [0-9]/{gsub(/,$/,"",$3);print "server-v" $3;exit}' <<< "$out"
 }
 
@@ -1740,15 +1732,6 @@ openregex_docker() {
       }'
 }
 
-opnsense_device() {
-  check_prog jq || return 1
-  local out
-  out=$(curl_api)
-  [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.versions[]' 2> /dev/null)
-  log -d -d "jq output: $out"
-  [[ -n "$out" ]] && printf '%s' "$out" | awk '/OPNsense/{sub(/-[a-z].*$/,"",$2);print $2}'
-}
-
 owncloud_docker() {
   docker_compose_exec cat /var/www/owncloud/version.php | \
     awk -F "'" '/\$OC_VersionString[[:space:]]*=/{print $2;exit}'
@@ -1783,7 +1766,7 @@ piper_git_latest() { # no_auto
 
 plex_docker() {
   local out
-  out=$(curl_api)
+  out=$(_curl_api)
   [[ -n "$out" ]] && \
   awk '
     /^<MediaContainer/ {
@@ -1812,7 +1795,7 @@ portainer_agent_docker() {
 
 privatebin() {
   local out
-  out=$(curl_api)
+  out=$(_curl_api)
   [[ -n "$out" ]] && \
     awk -F '[><]' '/<p class="col-md-1 col-xs-4 text-center">[^<]+<\/p>/{print $3;exit}' <<< "$out"
 }
@@ -1857,13 +1840,6 @@ routeros_latest() {
     xmllint --xpath "string(/rss/channel/item/link)" - 2> /dev/null | sed -r 's#^https?://.*mikrotik\.com/download\?v=##'
 }
 
-routeros_device() { # remote_host
-  check_prog jq || return 1
-  local out
-  out=$(curl_api)
-  jq -rn --argjson j "$out" --arg app routeros '$j.[] | select(.name == $app) | .version' 2> /dev/null
-}
-
 seafile_client_appimage() {
   realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
     sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
@@ -1874,13 +1850,6 @@ seafile_client_appimage_latest() { # no_auto
   curl -s "https://www.seafile.com/en/download/" | \
     xmllint --html --xpath 'string(//h3[contains(text(), "Client for Linux")]/following-sibling::p/following-sibling::a[contains(@href, "Seafile-x86_64-")]/@href)' - 2>/dev/null | \
     sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
-}
-
-slzb_core() { # remote_host
-  check_prog jq || return 1
-  local out
-  out=$(curl_api)
-  jq -rn --argjson j "$out" '$j.Info.sw_version' 2> /dev/null
 }
 
 slzb_core_latest() {
@@ -1907,13 +1876,6 @@ slzb_core_latest() {
   log -d -d "Sed Output: $out"
   [[ -n "$out" ]] && sort -V <<< "$out" | \
     tail -n1
-}
-
-slzb_radio() { # remote_host
-  check_prog jq || return 1
-  local out
-  out=$(curl_api)
-  jq -rn --argjson j "$out" '$j.Info.zb_version' 2> /dev/null
 }
 
 slzb_radio_latest() {
@@ -1977,26 +1939,10 @@ tasmobackup() {
   /usr/bin/curl -s "http://127.0.0.1:8259" | awk '/>TasmoBackup .+ by Dan Medhurst</ {print $6;exit}'
 }
 
-tasmota_device() { # remote_host
-  check_prog jq || return 1
-  local out
-  out=$(curl_api)
-  [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.StatusFWR.Version' 2> /dev/null)
-  log -d "Jq output: $out"
-  [[ -n "$out" ]] && sed -r 's/\([^)]+\)//' <<< "$out"
-}
-
 truenas_latest() { # no_auto
   check_prog jq || return 1
   curl -sL "https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1" | \
     jq -r '.version' 2> /dev/null
-}
-
-truenas_server() { # remote_host
-  check_prog jq || return 1
-  local out
-  out=$(curl_api)
-  [[ -n "$out" ]] && jq -rn --argjson j "$out" '$j' 2> /dev/null
 }
 
 vscode_docker() {
@@ -2011,7 +1957,7 @@ yourls() {
   # require_once( dirname(__FILE__).'/includes/load-yourls.php' );
   # print("{\n  \"version\": \"" . YOURLS_VERSION . "\"\n}\n");
   # ?>
-  curl_api
+  _curl_api
 }
 
 zigbee2mqtt() {
@@ -2030,10 +1976,6 @@ zigbee2mqtt_tcp() {
     jq -r '.version' 2> /dev/null
 }
 
-zwave_js() {
-  /usr/bin/head /var/log/zwave.out | \
-    awk '/INFO.* .*(APP|STORE).*: Version:/{print $NF;exit}'
-}
 ## END CHECK FUNCTIONS
 
 usage() { # utility_function
