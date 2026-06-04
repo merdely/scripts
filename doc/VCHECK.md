@@ -485,6 +485,12 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - grafana: `search=Version [0-9]!!grafana!!grafana-server -v!!docker_exec`
 - jellyfin: `sed=s#Jellyfin\.Server ##!!sed=s#\.[0-9]$##!!jellyfin!!/jellyfin/jellyfin --version!!docker_exec`
 - jellystat: `jq=.version!!jellystat!!wget -qO- http://127.0.0.1:3000/auth/isconfigured!!docker_exec`
+- linkding: `linkding!!cat /etc/linkding/version.txt!!docker_exec`
+- localai: `localai!!/local-ai --version!!docker_exec`
+- mariadb: `sed=s#-MariaDB.*$##!!mariadb!!mariadbd -V!!docker_exec`
+- meilisearch: `meilisearch!!meilisearch -V!!docker_exec`
+- memcached: `memcached!!memcached --version!!docker_exec`
+- molly_guard_latest: `search=<title>debian!!presed=s#^.*<title>debian/##!!presed=s#</title>##!!https://salsa.debian.org/debian/molly-guard/-/tags?format=atom!!curl`
 - open-webui: `jq=.version!!open-webui!!cat /app/package.json!!docker_exec`  
 - php_fpm_docker: `search=^php85-common!!php-fpm!!apk list --installed!!docker_exec`
 - portainer_docker: `portainer!!/portainer --version!!docker_exec`
@@ -525,6 +531,7 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 
 - ffprobe_latest: `search=<th>release:!!https://johnvansickle.com/ffmpeg/!!curl`
 - filestash_latest: `search=APP_VERSION!!https://raw.githubusercontent.com/mickael-kerjean/filestash/refs/heads/master/server/common/constants.go!!curl`
+- librewolf_homebrew: `check: search=Current version:!!sed=s#^.*<a .*">##!!sed=s#,([0-9]+)#-\1#!!https://formulae.brew.sh/cask/librewolf#default!!curl`
 - splunk_enterprise: `search=<span class="version">!!https://www.splunk.com/en_us/download/splunk-enterprise.html!!curl`
 - splunk_forwarder: `search=<span class="version">!!https://www.splunk.com/en_us/download/universal-forwarder.html!!curl`
 
