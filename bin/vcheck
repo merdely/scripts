@@ -36,7 +36,7 @@ LSVER='(-(ls[0-9]+))?'
 SEMVER_REGEX="($SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 export SEMVER_REGEX
 
-AUTO_CHECKS='(alpine_repo|aur|cat|codeberg|command|curl|curlapi|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
+AUTO_CHECKS='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
 export AUTO_CHECKS
 
 # Handle temp files
@@ -542,6 +542,15 @@ _alpine_repo_package() { # helper_function
     | tail -n1
 }
 
+_appimage_check() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  local app=$1
+  compgen -G "$appimage_path/$1*.AppImage" | \
+    sed -r "s#^.*$1-(.*)\.AppImage#\1#"
+}
+
 _aur_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -582,13 +591,14 @@ _auto_check() { # helper_function
   log -d "Running: ${FUNCNAME[0]} $*"
 
   local remove=() search=() presed=() postsed=() skipverfilter=false
-  local project tmp jqfilter xmlfilter sedstring
+  local project tmp prejqfilter postjqfilter xmlfilter sedstring
   local opt OPTARG OPTIND=1
-  while getopts ":p:t:j:x:r:s:P:S:vV" opt; do
+  while getopts ":p:t:J:j:x:r:s:P:S:vV" opt; do
     case "$opt" in
       p) project=$OPTARG ;;
       t) tag=$OPTARG ;;
-      j) jqfilter=$OPTARG ;;       # Uses last one given
+      J) prejqfilter=$OPTARG ;;    # Uses last one given
+      j) postjqfilter=$OPTARG ;;   # Uses last one given
       x) xmlfilter=$OPTARG ;;      # Uses last one given
       r) remove+=("$OPTARG") ;;
       s) search+=("$OPTARG") ;;
@@ -607,8 +617,13 @@ _auto_check() { # helper_function
   log -d -d "check=$check"
   log -d -d "tag=$tag"
   log -d -d "project=$project"
+  log -d -d "xmlfilter=$xmlfilter"
+  log -d -d "prejq=$prejqfilter"
+  log -d -d "presed=${presed[*]}"
   log -d -d "search=${search[*]}"
-  log -d -d "sedstring=${postsed[*]}"
+  log -d -d "remove=${remove[*]}"
+  log -d -d "postjq=$postjqfilter"
+  log -d -d "postsed=${postsed[*]}"
   log -d -d "skip=$skipverfilter"
 
   local latest=false
@@ -619,12 +634,14 @@ _auto_check() { # helper_function
   case "$tag" in
     # alpine_docker) out=$(alpine_docker_package "$project") ;;
     alpine_repo) out=$(_alpine_repo_package "$project") ;;
+    appimage) out=$(_appimage_check "$project") ;;
     aur) out=$(_aur_package "$project") ;;
     cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ;;
     codeberg) out=$(_codeberg_project "$project") ;;
     command) out=$(_command_check "$project") ;;
     curl) out=$(curl --no-progress-meter -L "$project") ;;
     curlapi) out=$(_curl_api "$project") ;;
+    docker_copy) out=$(_docker_copy "$project") ;;
     docker_exec) out=$(_docker_exec "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
@@ -658,13 +675,20 @@ _auto_check() { # helper_function
     log -d -d -d "xmllint output: $out"
   fi
 
-  # Apply jq filter, if set
-  if [[ -n "$out" && -n "$jqfilter" ]]; then
+  # Apply pre-jq filter, if set
+  if [[ -n "$out" && -n "$prejqfilter" ]]; then
     check_prog jq || return 1
-    log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $jqfilter'"
-    out=$(jq -rn --argjson j "$out" "\$j | $jqfilter")
+    log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $prejqfilter'"
+    out=$(jq -rn --argjson j "$out" "\$j | $prejqfilter")
     log -d -d -d "jq output: $out"
   fi
+
+  # Apply presed, if set
+  [[ -n "$out" ]] && for sedstring in "${presed[@]}"; do
+    log -d "Applying presed: sed -r '$sedstring'"
+    out=$(sed -r "$sedstring" <<< "$out")
+    log -d -d "sed output: $out"
+  done
 
   # Apply search grep filter
   if (( ${#search[@]} > 0 )); then
@@ -680,12 +704,13 @@ _auto_check() { # helper_function
     log -d -d -d "remove grep output: $out"
   fi
 
-  # Apply presed, if set
-  [[ -n "$out" ]] && for sedstring in "${presed[@]}"; do
-    log -d "Applying presed: sed -r '$sedstring'"
-    out=$(sed -r "$sedstring" <<< "$out")
-    log -d -d "sed output: $out"
-  done
+  # Apply post-jq filter, if set
+  if [[ -n "$out" && -n "$postjqfilter" ]]; then
+    check_prog jq || return 1
+    log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $postjqfilter'"
+    out=$(jq -rn --argjson j "$out" "\$j | $postjqfilter")
+    log -d -d -d "jq output: $out"
+  fi
 
   # Trim trailing linefeeds
   [[ -n "$out" ]] && out=$(echo "$out" | tr -d '\r')
@@ -854,6 +879,54 @@ _docker_exec() { # helper_function
   # shellcheck disable=SC2048,SC2086
   out=$(docker exec -t -u nobody "$container" ${command[*]})
   log -d -d "docker exec output = $out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
+}
+
+_docker_copy() {
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
+
+  local image image_search srcfiles catfiles out
+  if (( $# == 1 )); then
+    if [[ "$1" == *!!*!!* ]]; then
+      image_search=${1%%!!*}
+      catfiles=${1##*!!}
+      srcfiles=${1#$image_search!!}
+      srcfiles=${srcfiles%!!$catfiles}
+    fi
+  else
+    image_search=$1
+    srcfiles=$2
+    catfiles=$3
+  fi
+
+  log -d "image_search=$image_search"
+  log -d "srcfiles=$srcfiles"
+  log -d "catfiles=$catfiles"
+
+  container=$(_docker_container_search "$image_search")
+  log -d -d "container=$container"
+  [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
+
+  local tmp
+  tmp=$(maketemp -d)
+  log -d -d "Running: docker cp -q $container:$srcfiles $tmp"
+  if ! out=$(docker cp -q "$container":"$srcfiles" "$tmp" 2>&1); then
+    log -e "'docker cp $container:$srcfiles $tmp' failed with $?"
+    return 1
+  fi
+
+  log -d -d "cat input: $(compgen -G "$tmp/$catfiles")"
+
+  log -d -d "Running: cat $(compgen -G "$tmp/$catfiles")"
+  out=$(cat $(compgen -G "$tmp/$catfiles"))
+  log -d -d -d -d "cat output: $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
   return 1
 }
@@ -1062,7 +1135,7 @@ _docker_tags() { # helper_function
   esac
 
   local token authfile
-  local maxpages=200 jqfilter='.results[].name'
+  local maxpages=200
   [[ "$site" == "quay.io" ]] && site=docker.io
   case "$site" in
     code.forgejo.org)
@@ -1567,18 +1640,6 @@ printer_ink_check() { # remote_host
 
 ## BEGIN CHECK FUNCTIONS
 
-# APPIMAGE CHECKS
-joplin_desktop() {
-  realpath "$HOME"/.local/bin/joplin-desktop | \
-    sed -r 's/^.*Joplin-(.*)\.AppImage/\1/' | \
-    awk '{print $0;exit}'
-}
-
-seafile_client_appimage() {
-  realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
-    sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
-}
-
 # MISC CHECKS
 proton_ge() {
   find "$HOME"/.local/share/Steam/compatibilitytools.d -maxdepth 1 -type d -iname "*proton*ge*"
@@ -1810,6 +1871,7 @@ main() { # utility_function
   debug=0
   verbose=0
   quiet=0
+  appimage_path=$HOME/Applications
   cache_lifetime_set=false
   compose_file_set=false
   docker_seconds=30
@@ -1971,6 +2033,9 @@ main() { # utility_function
         sudo_regexes+=("$rcsudo_regex")
       done
     fi
+
+    rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" appimage_path)
+    (( ${#rcvalue[@]} > 0 )) && appimage_path=${rcvalue[0]}
 
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt server)
     (( ${#rcvalue[@]} > 0 )) && mqtt_server=${rcvalue[0]}
@@ -2167,7 +2232,7 @@ main() { # utility_function
   saved_docker_seconds=$docker_seconds
   saved_compose_file=$compose_file
 
-  local tmpstring sw_skip_vflag=() sw_jq=() sw_xml=() sw_search=() sw_presed=() sw_postsed=()
+  local tmpstring sw_skip_vflag=() sw_auto_flags=()
   local sw_name sw_check_set tmp_name sw_orig sw_tag sw_project
 
   # TODO: Turn into function?
@@ -2307,12 +2372,8 @@ main() { # utility_function
     for sw in "${sw_list[@]}"; do
       [[ -z "$sw" ]] && continue
       sw_check_set=false
+      sw_auto_flags=()
       sw_skip_vflag=(-V)
-      sw_search=()
-      sw_jq=()
-      sw_xml=()
-      sw_presed=()
-      sw_postsed=()
 
       log -d "Starting $sw"
       listname=$list
@@ -2328,37 +2389,42 @@ main() { # utility_function
       sw_name=$sw
       # sw_tag=$(grep -Po "(?<=!!)$AUTO_CHECKS$" <<< "$sw_name")
       sw_tag=$(sed -r "s/^.*"'!!'"$AUTO_CHECKS$/\1/" <<< "$sw_name")
-      while [[ "$sw_name" =~ ^(jq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
+      while [[ "$sw_name" =~ ^(prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
         case "$sw_name" in
-          jq=*)
+          prejq=*)
             tmpstring=${sw_name%%!!*}
-            sw_name=${sw_name#jq=*!!}
-            sw_jq+=(-j "${tmpstring#jq=}")       # The last one will be used
+            sw_name=${sw_name#prejq=*!!}
+            sw_auto_flags+=(-J "${tmpstring#prejq=}")   # The last one will be used
+            ;;
+          postjq=*)
+            tmpstring=${sw_name%%!!*}
+            sw_name=${sw_name#postjq=*!!}
+            sw_auto_flags+=(-j "${tmpstring#postjq=}")  # The last one will be used
             ;;
           xml=*)
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#xml=*!!}
-            sw_xml+=(-x "${tmpstring#xml=}")      # The last one will be used
+            sw_auto_flags+=(-x "${tmpstring#xml=}")     # The last one will be used
             ;;
           presed=*)
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#presed=*!!}
-            sw_presed+=(-P "${tmpstring#presed=}")
+            sw_auto_flags+=(-P "${tmpstring#presed=}")
             ;;
           postsed=*)
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#postsed=*!!}
-            sw_postsed+=(-S "${tmpstring#postsed=}")
+            sw_auto_flags+=(-S "${tmpstring#postsed=}")
             ;;
           remove=*)
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#remove=*!!}
-            sw_search+=(-r "${tmpstring#remove=}")
+            sw_auto_flags+=(-r "${tmpstring#remove=}")
             ;;
           search=*)
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#search=*!!}
-            sw_search+=(-s "${tmpstring#search=}")
+            sw_auto_flags+=(-s "${tmpstring#search=}")
             ;;
           noskip_version_filter*)
             sw_name=${sw_name#noskip_version_filter!!}
@@ -2383,11 +2449,7 @@ main() { # utility_function
       log -d -d "sw_tag=$sw_tag"
       log -d -d "sw_project=$sw_project"
       log -d -d "sw_skip_vflag=${sw_skip_vflag[*]}"
-      log -d -d "sw_jq=${sw_jq[*]}"
-      log -d -d "sw_xml=${sw_xml[*]}"
-      log -d -d "sw_search=${sw_search[*]}"
-      log -d -d "sw_presed=${sw_presed[*]}"
-      log -d -d "sw_postsed=${sw_postsed[*]}"
+      log -d -d "sw_auto_flags=${sw_auto_flags[*]}"
       log -d -d "sw_orig=$sw_orig"
 
       log -d "Processing $sw_name${listname:+ for "$listname"}"
@@ -2437,7 +2499,7 @@ main() { # utility_function
       ! $found && log -e "Invalid software: $sw" && continue
 
       # If software is "ink" but printer is not set, go to the next software
-      if [[ "$sw" == "printer_ink_check" && -z "$PRINTER" ]]; then
+      if [[ "$sw_name" == "printer_ink_check" && -z "$PRINTER" ]]; then
         log -e "No printer defined for $sw"
         continue
       fi
@@ -2488,13 +2550,20 @@ main() { # utility_function
         (( i > 0 )) && log -v "Retrying for $sw_name (try $i of $retries) after $delay wait" && sleep "$delay"
 
         unset ret version
-        [[ "$sw" == *"_latest" ]] && prepare_cache_dir "$cache_dir"
+        [[ "$sw_name" == *"_latest" ]] && prepare_cache_dir "$cache_dir"
 
+        log -d -d "Determining if using cache"
+        log -d -d "sw_name=$sw_name"
+        log -d -d "force_all=$force_all"
+        log -d -d "id -u=$(id -u)"
+        log -d -d "force_list=${force_list[*]}"
         # If -f and -F not used, user is not root, sw IS a latest check, and 
         # cache_file is readable, read the cache file if not stale
         if ! $force_all && [[ $(id -u) != 0 && \
           " ${force_list[*]} " != *" $sw_name "* && " ${force_list[*]} " != *" $sw "* && \
-            "$sw" == *"_latest" && -r "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}" ]]; then
+            "$sw_name" == *"_latest" && -r "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}" ]]; then
+
+          log -d "Using cache for $sw_name"
           stamp=$(stat -c "%Y" "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}")
           now=$(date +%s)
 
@@ -2513,7 +2582,7 @@ main() { # utility_function
           use_sudo=false
           # Loop through sudo_regexes to see if $sw_name matches a regex to use sudo
           for regex in "${sudo_regexes[@]}"; do
-            [[ "$sw" =~ $regex ]] && use_sudo=true
+            [[ "$sw_name" =~ $regex ]] && use_sudo=true
           done
           log -d -d "Checking to see if $sw should be run with sudo (use_sudo=$use_sudo)"
 
@@ -2531,15 +2600,15 @@ main() { # utility_function
             log -v -v "Using sudo as $sudo_user to check $sw_name version"
             rp=$(realpath "$0")
             log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $sw SUDO_EXEC_DEBUG=$debug'"
-            version=$(sudo -n -u "$sudo_user" "$rp" -X "$sw" SUDO_EXEC_DEBUG="$debug")
+            version=$(sudo -n -u "$sudo_user" "$rp" -X "$sw_name" SUDO_EXEC_DEBUG="$debug")
             ret=$?
             update_time=$(date +%s)
             (( ret != 0 )) && log -e "Could not get $sw_name version with sudo" && continue
           else
             if [[ "$sw" =~ !!$AUTO_CHECKS && " ${app_list[*]} ${app_alias_list[*]} " != *" $sw "* ]]; then
-              log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_jq[*]} ${sw_xml[*]} ${sw_search[*]} ${sw_presed[*]} ${sw_postsed[*]} $sw_name' to get version"
+              log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_auto_flags[*]}$sw_name' to get version"
               version=$(_auto_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" \
-                "${sw_jq[@]}" "${sw_xml[@]}" "${sw_search[@]}" "${sw_presed[@]}" "${sw_postsed[@]}" "$sw_name")
+                "${sw_auto_flags[@]}" "$sw_name")
             else
               log -d -d -d "Running $sw to get version"
               version=$($sw)
@@ -2549,7 +2618,7 @@ main() { # utility_function
           fi
 
           if [[ "$ret" != "0" || -z "$version" || "$version" == "null" ]]; then
-            if [[ "$sw" == "printer_ink_check" ]]; then
+            if [[ "$sw_name" == "printer_ink_check" ]]; then
               log -d "Could not get printer info for $sw, returning error json"
             else
               log -d "Could not get a version for $sw, returning '---'"
@@ -2560,7 +2629,7 @@ main() { # utility_function
             break
           fi
 
-          if [[ "$sw" == *"_latest" ]]; then
+          if [[ "$sw_name" == *"_latest" ]]; then
             log -d "Writing latest update for $sw_name to cache"
             echo "$version" > "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}"
             # shellcheck disable=SC2153
@@ -2584,9 +2653,9 @@ main() { # utility_function
 
       # Output text immediately and go to next software
       if (( quiet == 0 )) && [[ "$output_mode" == "text" || "$output_file" != "/dev/stdout" ]]; then
-        if [[ "$sw" == "printer_ink_check" ]]; then
+        if [[ "$sw_name" == "printer_ink_check" ]]; then
           # If cannot print using jq, use echo + some tr's
-          if ! jq -rn --arg n "$sw" --argjson j "$version" \
+          if ! jq -rn --arg n "$sw_name" --argjson j "$version" \
             '$j | "\($n): \(.printer) - cyan=\(.cyan) magenta=\(.magenta) yellow=\(.yellow) black=\(.black) photoblack=\(.photoblack 2> /dev/null)"'; then
             echo "$out" | tr -d '\n' | tr -s ' '
           fi
@@ -2600,9 +2669,9 @@ main() { # utility_function
         check_prog mosquitto_pub || continue
         log -d -d "Publishing MQTT version info for ${listname:+$listname:}$sw_name"
         printf -v mqtt_output '{ "version": "%s" }' "$version"
-        [[ "$sw" == "printer_ink_check" ]] && mqtt_output=$version
+        [[ "$sw_name" == "printer_ink_check" ]] && mqtt_output=$version
 
-        if ! $prepend_name_set && [[ "$sw" == *"_latest" || " ${remote_list[*]} " == *" $sw "* ]]; then
+        if ! $prepend_name_set && [[ "$sw_name" == *"_latest" || " ${remote_list[*]} " == *" $sw "* ]]; then
           prepend_name=false
         fi
 
@@ -2616,7 +2685,7 @@ main() { # utility_function
         else
           topic="software_versions/$sw_name"
         fi
-        [[ "$sw" == "printer_ink_check" ]] && topic="$ink_topic/$PRINTER"
+        [[ "$sw_name" == "printer_ink_check" ]] && topic="$ink_topic/$PRINTER"
 
         log -d -d "$sw_name = $mqtt_output"
         if $mqtt_test; then
@@ -2645,7 +2714,7 @@ main() { # utility_function
       fi
 
       # Save printer ink info to json string
-      if [[ "$sw" == "printer_ink_check" ]]; then
+      if [[ "$sw_name" == "printer_ink_check" ]]; then
         ! $include_invalid && grep -q '^[[:space:]]*"error":' <<< "$version" && continue
         tmpjson=$(jq -n --argjson j "$tmpjson" --argjson new "$version" '
           if $j | any(.[]; .name == $new.name and .ip == $new.ip)

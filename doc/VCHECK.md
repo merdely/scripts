@@ -488,7 +488,7 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - gitlab: `search=gitlab-ce!!gitlab!!cat /opt/gitlab/version-manifest.txt!!docker_exec`
 - grafana: `search=Version [0-9]!!grafana!!grafana-server -v!!docker_exec`
 - jellyfin: `postsed=s#Jellyfin\.Server ##!!postsed=s#\.[0-9]$##!!jellyfin!!/jellyfin/jellyfin --version!!docker_exec`
-- jellystat: `jq=.version!!jellystat!!wget -qO- http://127.0.0.1:3000/auth/isconfigured!!docker_exec`
+- jellystat: `prejq=.version!!jellystat!!wget -qO- http://127.0.0.1:3000/auth/isconfigured!!docker_exec`
 - linkding: `linkding!!cat /etc/linkding/version.txt!!docker_exec`
 - localai: `localai!!/local-ai --version!!docker_exec`
 - mariadb: `postsed=s#-MariaDB.*$##!!mariadb!!mariadbd -V!!docker_exec`
@@ -505,14 +505,14 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - opencloud: `search=^Version:!!opencloud!!opencloud version!!docker_exec`
 - openregex: `search=^## \[[0-9]!!remove=-dev\]!!openregex!!cat /app/CHANGELOG.md!!docker_exec`
 - owncloud: `search=\$OC_VersionString[[:space:]]*=!!owncloud!!cat /var/www/owncloud/version.php!!docker_exec`
-- open-webui: `jq=.version!!open-webui!!cat /app/package.json!!docker_exec`  
+- open-webui: `prejq=.version!!open-webui!!cat /app/package.json!!docker_exec`  
 - php_fpm_docker: `search=^php85-common!!php-fpm!!apk list --installed!!docker_exec`
 - portainer_docker: `portainer!!/portainer --version!!docker_exec`
 - portainer_agent_docker: `search=Portainer-Agent!!portainer_agent!!wget --no-check-certificate -qSO- https://127.0.0.1:9001/ping!!docker_exec`
-- pot-provider: `jq=.version!!pot-provider!!cat /app/package.json!!docker_exec`
+- pot-provider: `prejq=.version!!pot-provider!!cat /app/package.json!!docker_exec`
 - rsyslog_docker: `rsyslog!!rsyslogd -v!!docker_exec`
-- seerr: `jq=.version!!seerr!!cat /app/package.json!!docker_exec`
-- streamystats: `jq=.version!!streamystats!!cat /app/package.json!!docker_exec`
+- seerr: `prejq=.version!!seerr!!cat /app/package.json!!docker_exec`
+- streamystats: `prejq=.version!!streamystats!!cat /app/package.json!!docker_exec`
 - tautulli: `search=PLEXPY_RELEASE_VERSION!!tautulli!!cat /plexpy/version.py!!docker_exec`
 - thruk: `thruk!!thruk --version!!docker_exec`
 - unifi: `unifi!!cat /usr/lib/unifi/data/db/version!!docker_exec`
@@ -534,16 +534,16 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 
 ## Curl API Checks
 
-- adguardhome_server - `jq=.version!!adguardhome_server!!curlapi`
-- local flip_2_dnd_pro mirror - `jq=.[].tag_name!!flip_2_dnd_pro!!curlapi`
+- adguardhome_server - `prejq=.version!!adguardhome_server!!curlapi`
+- local flip_2_dnd_pro mirror - `prejq=.[].tag_name!!flip_2_dnd_pro!!curlapi`
 - joplin_server - `search=Joplin Server [0-9]!!postsed=s#^#server-v#!!joplin!!curlapi`
-- opnsense_device - `postsed=s#-[a-z][a-z0-9]+$##!!search=^OPNsense!!jq=.versions[]!!opnsense_device!!curlapi`
+- opnsense_device - `postsed=s#-[a-z][a-z0-9]+$##!!search=^OPNsense!!prejq=.versions[]!!opnsense_device!!curlapi`
 - plex_docker - `search=^<MediaContainer!!plex!!curlapi`  # untested
-- routeros_device - `jq=.[] | select(.name=="routeros")|.version!!routeros_device!!curlapi`
-- slzb_core - `jq=.Info.sw_version!!slzb_core!!curlapi`
-- slzb_radio - `skip_version_filter!!jq=.Info.zb_version!!slzb_radio!!curlapi`
-- tasmota_device - `jq=.StatusFWR.Version!!tasmota_device!!curlapi`
-- truenas_server - `jq=.!!truenas_server!!curlapi`
+- routeros_device - `prejq=.[] | select(.name=="routeros")|.version!!routeros_device!!curlapi`
+- slzb_core - `prejq=.Info.sw_version!!slzb_core!!curlapi`
+- slzb_radio - `skip_version_filter!!prejq=.Info.zb_version!!slzb_radio!!curlapi`
+- tasmota_device - `prejq=.StatusFWR.Version!!tasmota_device!!curlapi`
+- truenas_server - `prejq=.!!truenas_server!!curlapi`
 
 ## Curl Checks
 
@@ -553,19 +553,19 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - librewolf_homebrew: `check: search=Current version:!!postsed=s#^.*<a .*">##!!postsed=s#,([0-9]+)#-\1#!!https://formulae.brew.sh/cask/librewolf#default!!curl`
 - molly_guard_latest: `search=<title>debian!!presed=s#^.*<title>debian/##!!presed=s#</title>##!!https://salsa.debian.org/debian/molly-guard/-/tags?format=atom!!curl`
 - nextcloud: `search=/download\.nextcloud\.com/server/releases/nextcloud-.*\.tar\.bz2<!!presed=s#^.*>nextcloud-##!!presed=s#\.tar\.bz2.*##!!https://nextcloud.com/changelog/!!curl`
-- plex: `jq=.["computer"]["Linux"].version!!https://plex.tv/pms/downloads/5.json?channel=plexpass!!curl`
+- plex: `prejq=.["computer"]["Linux"].version!!https://plex.tv/pms/downloads/5.json?channel=plexpass!!curl`
 - privatebin: `search=<p class="col-md-1 col-xs-4 text-center">[^<]+</p>!!presed=s#^.*">##!!presed=s#</p>##!!https://privatebin.example.com!!curl`
 - routeros: `search=<title>RouterOS [0-9]!!https://cdn.mikrotik.com/routeros/latest-stable.rss!!curl`
 - seafile_client_appimage_latest: `search=Seafile-x86_64!!presed=s#^.*">##!!presed=s#</a>.*$##!!https://www.seafile.com/en/download/!!curl`
-- slzb_core_latest: `jq=.["fw"][]|select(.dev==false)|.ver!!remove=\.dev.*$!!https://updates.smlight.tech/services/api/slzb-06x-ota.php?type=ESP!!curl`  
+- slzb_core_latest: `prejq=.["fw"][]|select(.dev==false)|.ver!!remove=\.dev.*$!!https://updates.smlight.tech/services/api/slzb-06x-ota.php?type=ESP!!curl`  
   type=ESP (0=ESP vs ESPs3 for type>SLZB_06MR4[14])
-- slzb_radio_latest: `skip_version_filter!!jq=.[0][]|select(.type=="0")|.rev!!https://updates.smlight.tech/services/api/slzb-06x-ota.php?type=ZB&format=slzb!!curl`  
+- slzb_radio_latest: `skip_version_filter!!prejq=.[0][]|select(.type=="0")|.rev!!https://updates.smlight.tech/services/api/slzb-06x-ota.php?type=ZB&format=slzb!!curl`  
    chip=0 (slzb-06p10 (CC2652P), type=0 (coordinator)
 - splunk_enterprise: `search=<span class="version">!!https://www.splunk.com/en_us/download/splunk-enterprise.html!!curl`
 - splunk_forwarder: `search=<span class="version">!!https://www.splunk.com/en_us/download/universal-forwarder.html!!curl`
 - splunk_unix_ta: `search=">Latest Version[^<]+<!!presed=s#^.*<div [^>]+">Latest Version ##!!https://splunkbase.splunk.com/app/833!!curl`
 - tasmobackup: `search=>TasmoBackup .+ by Dan Medhurst<!!http://127.0.0.1:8259!!curl`
-- truenas: `jq=.version!!https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1!!curl`
+- truenas: `prejq=.version!!https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1!!curl`
 - yourls: `https://yourls.tld/ver.php!!curl`  
   Create a ver.php in the root of yourls with:
   ```
@@ -583,3 +583,8 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 ## Git Tags
 
 - putty: `search=^[0-9]+(\.[0-9]+){1,2}$!!https://git.tartarus.org/simon/putty.git!!gittags`
+
+## AppImage Checks
+
+- Joplin: `Joplin!!appimage`
+- Seafile: `Seafile!!appimage`
