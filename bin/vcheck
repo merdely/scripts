@@ -546,7 +546,6 @@ _appimage_check() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
-  local app=$1
   compgen -G "$appimage_path/$1*.AppImage" | \
     sed -r "s#^.*$1-(.*)\.AppImage#\1#"
 }
@@ -899,8 +898,8 @@ _docker_copy() {
     if [[ "$1" == *!!*!!* ]]; then
       image_search=${1%%!!*}
       catfiles=${1##*!!}
-      srcfiles=${1#$image_search!!}
-      srcfiles=${srcfiles%!!$catfiles}
+      srcfiles=${1#"$image_search"!!}
+      srcfiles=${srcfiles%!!"$catfiles"}
     fi
   else
     image_search=$1
@@ -924,9 +923,8 @@ _docker_copy() {
     return 1
   fi
 
-  log -d -d "cat input: $(compgen -G "$tmp/$catfiles")"
-
   log -d -d "Running: cat $(compgen -G "$tmp/$catfiles")"
+  # shellcheck disable=SC2046
   out=$(cat $(compgen -G "$tmp/$catfiles"))
   log -d -d -d -d "cat output: $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
@@ -1146,8 +1144,7 @@ _docker_tags() { # helper_function
     *) log -e "Invalid image name format ($1)" && return 1 ;;
   esac
 
-  local token authfile
-  local maxpages=200
+  local token authfile maxpages=200
   [[ "$site" == "quay.io" ]] && site=docker.io
   case "$site" in
     code.forgejo.org)
@@ -1171,7 +1168,6 @@ _docker_tags() { # helper_function
       site=ghcr.io
       mapfile -t username < <(get_config_value "$rcfile" github username)
       mapfile -t token    < <(get_config_value "$rcfile" github token)
-      jqfilter='.[].metadata.container.tags[] | select(. != "")'
       ;;
     *) log -e "Unknown site for skopeo ($site)" && return 1 ;;
   esac
@@ -1815,7 +1811,7 @@ main() { # utility_function
   sudo_user_set=false
   update=false
   unset compose_file sudo_user exec_user PRINTER minver print_opt update_list
-  while getopts ":hdvqc:u:p:1w:r:P:R:C:S:X:x:LD:V:f:Fo:OtjmiTMH:INn" opt; do
+  while getopts ":hdvqc:u:p:1w:r:P:R:C:S:X:x:L:D:V:f:Fo:OtjmiTMH:INn" opt; do
     case $opt in
       # Base options
       :) case $OPTARG in
@@ -2096,7 +2092,7 @@ main() { # utility_function
   fi
 
   # If -L was given and no software was listed, add 'docker' to software list
-  [[ -n "$update_list" ]] && (( $# == 0 )) && set -- "$update_list"
+  [[ -n "$update_list" ]] && (( $# == 0 )) && set -- "$update_list" && unset update_list
   (( $# == 0 )) && usage
 
   # Set up software list from command line arguments, substitute _ for -
@@ -2110,6 +2106,8 @@ main() { # utility_function
 
   # Print debug info
   if (( debug > 1 )); then
+    log -d "[GLOBAL SETTINGS] software list=${software[*]}"
+    log -d "[GLOBAL SETTINGS] update_list=$update_list"
     log -d "[GLOBAL SETTINGS] running as $(id -un)"
     log -d "[GLOBAL SETTINGS] rcfile=$rcfile"
     log -d "[GLOBAL SETTINGS] cache_dir=$cache_dir"
@@ -2119,7 +2117,6 @@ main() { # utility_function
     log -d -d "[GLOBAL SETTINGS] output_file_set=$output_file_set"
     log -d "[GLOBAL SETTINGS] output_mode=$output_mode"
     log -d -d "[GLOBAL SETTINGS] output_mode_set=$output_mode_set"
-    log -d "[GLOBAL SETTINGS] software=${software[*]}"
     log -d "[GLOBAL SETTINGS] compose_file=$compose_file"
     log -d "[GLOBAL SETTINGS] docker_seconds=$docker_seconds"
     log -d "[GLOBAL SETTINGS] retry_delay=$retry_delay"
