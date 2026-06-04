@@ -1356,14 +1356,11 @@ myaur_package() { # helper_function
 # shellcheck disable=SC2120
 _version_filter() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  set -x
   out=$(sed -r "s/^.*$SEMVER_REGEX.*$/\1/")
   if grep -Eq "^$SEMVER_REGEX$" <<< "$out"; then
     echo "$out" | head -n1
-    set +x
     return 0
   fi
-  set +x
   return 1
 }
 
