@@ -419,9 +419,13 @@ sudo_exec() { # utility_function
   # Check to see if this is called with -d
   for arg in "$@"; do
     [[ "$arg" == "SUDO_EXEC_DEBUG="* ]] && { debug=${arg#*=} ; continue ; }
+    [[ "$arg" == "DOCKER_SECONDS="* ]] && { docker_seconds=${arg#*=} ; continue ; }
+    [[ "$arg" == "DOCKER_FILTER="* ]] && { docker_filter=${arg#*=} ; continue ; }
     args+=("$arg")
   done
   [[ ! "$debug" =~ ^[0-9]+$ ]] && debug=${debug:-0}
+  [[ ! "$docker_seconds" =~ ^[0-9]+$ ]] && docker_seconds=${docker_seconds:-0}
+  [[ ! "$docker_filter" == true ]] && docker_filter=false
   set -- "${args[@]}"
 
   cd /
@@ -500,9 +504,12 @@ alpine_docker_package() { # helper_function
     return 1
   fi
   [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
-  local package=$1 containername out
-  log -d "Checking alpine_docker_package for $package"
-  containername=$(_docker_container_search "${FUNCNAME[1]%_docker}") || return 1
+  local package=$1 containername out ret=0
+  log -d "Checking ${FUNCNAME[0]} for $package"
+  containername=$(_docker_container_search "${FUNCNAME[1]%_docker}")
+  ret=$?
+  (( $ret == 19 )) && return 19
+  (( $ret != 0 )) && return 1
   [[ -z "$package" ]] && package=$containername
   log -d -d "Executing docker compose -f $COMPOSE_FILE exec -u nobody $containername apk list --installed"
   out=$(docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" apk list --installed 2>&1)
@@ -625,47 +632,49 @@ _auto_check() { # helper_function
   log -d -d "postsed=${postsed[*]}"
   log -d -d "skip=$skipverfilter"
 
-  local latest=false
+  local latest=false ret=0
   [[ "$tag" == *_latest ]] && latest=true
   tag=${tag%_latest}
   [[ "$tag" =~ (aur|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
   case "$tag" in
-    # alpine_docker) out=$(alpine_docker_package "$project") ;;
-    alpine_repo) out=$(_alpine_repo_package "$project") ;;
-    appimage) out=$(_appimage_check "$project") ;;
-    aur) out=$(_aur_package "$project") ;;
-    cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ;;
-    codeberg) out=$(_codeberg_project "$project") ;;
-    command) out=$(_command_check "$project") ;;
-    curl) out=$(curl --no-progress-meter -L "$project") ;;
-    curlapi) out=$(_curl_api "$project") ;;
-    docker_copy) out=$(_docker_copy "$project") ;;
-    docker_exec) out=$(_docker_exec "$project") ;;
-    docker_inspect) out=$(_docker_inspect "$project") ;;
-    docker_logs) out=$(_docker_logs "$project") ;;
-    docker_printenv) out=$(_docker_printenv "$project") ;;
-    docker_tags) out=$(_docker_tags "$project") ;;
-    flatpak) out=$(_flatpak_version "$project") ;;
-    flatpak_appstream) out=$(_flatpak_appstream "$project") ;;
-    forgejo) out=$(_codeberg_project -f "$project") ;;
-    gitdescribe) out=$(_git_checkout -d "$project") ;;
-    gittags) out=$(_git_checkout -t "$project") ;;
-    github) out=$(_github_project "$project") ;;
-    github_tags) out=$(_github_tags "$project") ;;
-    gitlab) out=$(_gitlab_project "$project") ;;
-    gitlab_tags) out=$(_gitlab_tags "$project") ;;
+    # alpine_docker) out=$(alpine_docker_package "$project") ; ret=$? ;;
+    alpine_repo) out=$(_alpine_repo_package "$project") ; ret=$? ;;
+    appimage) out=$(_appimage_check "$project") ; ret=$? ;;
+    aur) out=$(_aur_package "$project") ; ret=$? ;;
+    cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
+    codeberg) out=$(_codeberg_project "$project") ; ret=$? ;;
+    command) out=$(_command_check "$project") ; ret=$? ;;
+    curl) out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
+    curlapi) out=$(_curl_api "$project") ; ret=$? ;;
+    docker_copy) out=$(_docker_copy "$project") ; ret=$? ;;
+    docker_exec) out=$(_docker_exec "$project") ; ret=$? ;;
+    docker_inspect) out=$(_docker_inspect "$project") ; ret=$? ;;
+    docker_logs) out=$(_docker_logs "$project") ; ret=$? ;;
+    docker_printenv) out=$(_docker_printenv "$project") ; ret=$? ;;
+    docker_tags) out=$(_docker_tags "$project") ; ret=$? ;;
+    flatpak) out=$(_flatpak_version "$project") ; ret=$? ;;
+    flatpak_appstream) out=$(_flatpak_appstream "$project") ; ret=$? ;;
+    forgejo) out=$(_codeberg_project -f "$project") ; ret=$? ;;
+    gitdescribe) out=$(_git_checkout -d "$project") ; ret=$? ;;
+    gittags) out=$(_git_checkout -t "$project") ; ret=$? ;;
+    github) out=$(_github_project "$project") ; ret=$? ;;
+    github_tags) out=$(_github_tags "$project") ; ret=$? ;;
+    gitlab) out=$(_gitlab_project "$project") ; ret=$? ;;
+    gitlab_tags) out=$(_gitlab_tags "$project") ; ret=$? ;;
     pacman)
       check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
       out=$(pacman -Q "$project" 2> /dev/null)
       log -d -d -d "pacman output: $out"
       out=$(awk '{for (i = 2 ; i <= NF ; i++) o = o " " $i }END{sub(/^ /,"",o);printf "%s\n",o}' <<< "$out")
       log -d -d -d "awk output: $out"
-      ;;
+      ret=$? ;;
     *)
       log -e "Unknown package check: $tag"
       return 1 ;;
   esac
+
+  [[ "$tag" == docker* && "$ret" -eq 19 ]] && return 19
 
   # Apply xml filter, if set
   if [[ -n "$out" && -n "$xmlfilter" ]]; then
@@ -873,6 +882,7 @@ _docker_exec() { # helper_function
 
   log -d -d "Running _docker_container_search $image_search"
   container=$(_docker_container_search "$image_search")
+  (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
 
@@ -912,6 +922,7 @@ _docker_copy() {
   log -d "catfiles=$catfiles"
 
   container=$(_docker_container_search "$image_search")
+  (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
 
@@ -931,43 +942,6 @@ _docker_copy() {
   return 1
 }
 
-docker_compose_exec() { # helper_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  if [[ -z "$COMPOSE_FILE" ]]; then
-    log -e "${FUNCNAME[1]}: COMPOSE_FILE not set"
-    [[ -n "$SUDO_USER" ]] && log -e "Check sudoers: add COMPOSE_FILE to env_keep for $LOGNAME"
-    return 1
-  fi
-  [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
-  local copy_mode=false i=0 containername
-  [[ "$1" == "--copy" ]] && copy_mode=true && shift
-  (( $# == 0 )) && return 1
-  for (( i=1; i < ${#FUNCNAME[@]}; i++ )); do
-    [[ ! ${FUNCNAME[-$i]} =~ ^(main|sudo_exec) ]] && break
-  done
-  containername=$(_docker_container_search "${FUNCNAME[-$i]%_docker}") || return 1
-  log -d -d "containername = $containername"
-
-  if ! $copy_mode; then
-    log -d -d "Executing: docker compose -f $COMPOSE_FILE exec -u nobody $containername $*"
-    docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" "$@"
-    return "$?"
-  else
-    (( $# != 2 )) && echo "usage: ${FUNCNAME[1]} CONTAINER:SRC_PATH DEST_PATH" >&2 && return 1
-    log -d -d "Executing: docker compose -f $COMPOSE_FILE cp $containername:$1 $2"
-    out=$(docker compose -f "$COMPOSE_FILE" cp "$containername":"$1" "$2" 2>&1)
-    ret=$?
-    log -d -d -d "Docker compose output: $out"
-    return "$ret"
-  fi
-}
-
-docker_compose_cp() { # helper_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  docker_compose_exec --copy "$@"
-}
-
 _docker_container_search() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
@@ -977,19 +951,31 @@ _docker_container_search() { # helper_function
   out=$(_use_sudo_exec "$@") ; ret=$?
   case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
-  local docker_ps out
-  docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}')
+  local docker_ps out seconds
+  docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
   log -d -d -d "docker ps output=$docker_ps"
 
   log -d -d "Searching image field for $1"
-  out=$(awk -F '|' -v s="$1" '$2 ~ s {print $1;exit}' <<< "$docker_ps")
+  out=$(awk -F '|' -v s="$1" '$2 ~ s {print $1"|"$3;exit}' <<< "$docker_ps")
   log -d -d "awk output searching image field=$out"
-  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
-
+  if [[ -n "$out" ]]; then
+    seconds=$(calc_seconds "${out##*|}")
+    log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
+    log -d -d "Comparing ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2}"
+    (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
+    echo "${out%%|*}"
+    return 0
+  fi
   log -d -d "Searching name field for $1"
-  out=$(awk -F '|' -v s="$1" '$1 ~ s {print $1;exit}' <<< "$docker_ps")
+  out=$(awk -F '|' -v s="$1" '$1 ~ s {print $1"|"$3;exit}' <<< "$docker_ps")
   log -d -d "awk output search name field=$out"
-  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  if [[ -n "$out" ]]; then
+    seconds=$(calc_seconds "${out##*|}")
+    log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
+    (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
+    echo "${out%%|*}"
+    return 0
+  fi
 
   return 1
 }
@@ -1003,19 +989,31 @@ _docker_image_search() { # helper_function
   out=$(_use_sudo_exec "$@") ; ret=$?
   case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
-  local docker_ps out
-  docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}')
+  local docker_ps out seconds
+  docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
   log -d -d -d "docker ps output=$docker_ps"
 
   # Search for image by container name
-  out=$(awk -F '|' -v s="$1" '$1 == s {print $2;exit}' <<< "$docker_ps")
+  out=$(awk -F '|' -v s="$1" '$1 == s {print $2"|"$3;exit}' <<< "$docker_ps")
   log -d -d "awk output=$out"
-  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  if [[ -n "$out" ]]; then
+    seconds=$(calc_seconds "${out##*|}")
+    log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
+    (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
+    echo "${out%%|*}"
+    return 0
+  fi
 
   # Search for image by image string
-  out=$(awk -F '|' -v s="$1" '$2 ~ s {print $2;exit}' <<< "$docker_ps")
+  out=$(awk -F '|' -v s="$1" '$2 ~ s {print $2"|"$3;exit}' <<< "$docker_ps")
   log -d -d "awk output=$out"
-  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  if [[ -n "$out" ]]; then
+    seconds=$(calc_seconds "${out##*|}")
+    log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
+    (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
+    echo "${out%%|*}"
+    return 0
+  fi
 
   return 1
 }
@@ -1031,6 +1029,7 @@ _docker_inspect() { # helper_function
   case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
   container=$(_docker_container_search "$1")
+  (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
   log -d "Running: docker inspect --format='{{index .Config.Labels \"org.opencontainers.image.version\"}}' $container"
@@ -1043,6 +1042,7 @@ _docker_inspect() { # helper_function
   [[ -n "$out" ]] && grep -qE "$SEMVER_REGEX" <<< "$out" && { echo "$out" ; return 0 ; }
 
   out=$(_docker_image_search "$container")
+  (( $? == 19 )) && return 19
   log -d -d "image_search = $out"
   local tag=${out##*:}
   log -d -d "image tag = $tag"
@@ -1075,6 +1075,7 @@ _docker_logs() { # helper_function
   log -d "image_search=$image_search"
 
   container=$(_docker_container_search "$image_search")
+  (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
 
@@ -1106,6 +1107,7 @@ _docker_printenv() { # helper_function
     variable=$2
   fi
   image=$(_docker_image_search "$image_search")
+  (( $? == 19 )) && return 19
   log -d -d "image_search=$image_search"
   log -d -d "variable=$variable"
   log -d -d "docker image=$image"
@@ -1525,8 +1527,8 @@ _use_sudo_exec() { # helper_function
     if [[ "${FUNCNAME[1]}" =~ $regex ]]; then
       log -v -v "Using sudo as $sudo_user to ${FUNCNAME[1]}"
       rp=$(realpath "$0")
-      log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 SUDO_EXEC_DEBUG=$debug'"
-      out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" SUDO_EXEC_DEBUG="$debug")
+      log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 SUDO_EXEC_DEBUG=$debug DOCKER_FILTER=$docker_filter DOCKER_SECONDS=$docker_seconds'"
+      out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" SUDO_EXEC_DEBUG="$debug" DOCKER_FILTER="$docker_filter" DOCKER_SECONDS="$docker_seconds")
       log -d "sudo_exec ${FUNCNAME[1]} returned out='$out'"
       [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
       return 3
@@ -1785,6 +1787,7 @@ main() { # utility_function
   appimage_path=$HOME/Applications
   cache_lifetime_set=false
   compose_file_set=false
+  docker_filter=false
   docker_seconds=30
   docker_seconds_set=false
   force_all=false
@@ -1811,7 +1814,7 @@ main() { # utility_function
   sudo_user_set=false
   update=false
   unset compose_file sudo_user exec_user PRINTER minver print_opt update_list
-  while getopts ":hdvqc:u:p:1w:r:P:R:C:S:X:x:L:D:V:f:Fo:OtjmiTMH:INn" opt; do
+  while getopts ":hdvqc:u:p:1w:r:P:R:C:S:X:x:L:DV:f:Fo:OtjmiTMH:INn" opt; do
     case $opt in
       # Base options
       :) case $OPTARG in
@@ -1856,6 +1859,7 @@ main() { # utility_function
 
       # Check related options
       L) update_list=$OPTARG ; update=true ;;
+      D) docker_filter=true ;;
       V) if [[ $OPTARG =~ ^[0-9]+\.?[0-9]+$ ]]; then
            minver=$OPTARG
          fi ;;
@@ -2235,6 +2239,7 @@ main() { # utility_function
         # reverse check back for the check name and add it to the list
         container_list=()
         for sw_list_item in "${sw_list[@]}"; do
+          echo 'mapfile -t containers < <(image_search -C '"$sw_list_item"')' >&2
           mapfile -t containers < <(image_search -C "$sw_list_item")
 
           for container in "${containers[@]}"; do
@@ -2349,6 +2354,7 @@ main() { # utility_function
           *) ;;
         esac
       done
+      $docker_filter && [[ "$sw_name" != *_docker && ! "$sw_tag" =~ docker ]] && continue
       sw_project=${sw_name%!!"$sw_tag"}
       ! $sw_check_set && tmp_name=$sw_project
       sw_name=$tmp_name
@@ -2526,6 +2532,7 @@ main() { # utility_function
               version=$($sw)
             fi
             ret=$?
+            [[ $ret -eq 19 && "$sw_tag" == docker* ]] && continue 2
             update_time=$(date +%s)
           fi
 

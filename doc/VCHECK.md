@@ -551,7 +551,7 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - ffprobe_latest: `search=<th>release:!!https://johnvansickle.com/ffmpeg/!!curl`
 - filestash_latest: `search=APP_VERSION!!https://raw.githubusercontent.com/mickael-kerjean/filestash/refs/heads/master/server/common/constants.go!!curl`
 - librewolf_homebrew: `check: search=Current version:!!postsed=s#^.*<a .*">##!!postsed=s#,([0-9]+)#-\1#!!https://formulae.brew.sh/cask/librewolf#default!!curl`
-- molly_guard_latest: `search=<title>debian!!presed=s#^.*<title>debian/##!!presed=s#</title>##!!https://salsa.debian.org/debian/molly-guard/-/tags?format=atom!!curl`
+- molly_guard_latest: `xml=string(//feed/entry/title)!!https://salsa.debian.org/debian/molly-guard/-/tags?format=atom!!curl`
 - nextcloud: `search=/download\.nextcloud\.com/server/releases/nextcloud-.*\.tar\.bz2<!!presed=s#^.*>nextcloud-##!!presed=s#\.tar\.bz2.*##!!https://nextcloud.com/changelog/!!curl`
 - plex: `prejq=.["computer"]["Linux"].version!!https://plex.tv/pms/downloads/5.json?channel=plexpass!!curl`
 - privatebin: `search=<p class="col-md-1 col-xs-4 text-center">[^<]+</p>!!presed=s#^.*">##!!presed=s#</p>##!!https://privatebin.example.com!!curl`
@@ -563,7 +563,7 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
    chip=0 (slzb-06p10 (CC2652P), type=0 (coordinator)
 - splunk_enterprise: `search=<span class="version">!!https://www.splunk.com/en_us/download/splunk-enterprise.html!!curl`
 - splunk_forwarder: `search=<span class="version">!!https://www.splunk.com/en_us/download/universal-forwarder.html!!curl`
-- splunk_unix_ta: `search=">Latest Version[^<]+<!!presed=s#^.*<div [^>]+">Latest Version ##!!https://splunkbase.splunk.com/app/833!!curl`
+- splunk_unix_ta: `xml=string(//html/body/script[@id='__NEXT_DATA__'])!!prejq=.props.pageProps.appDetails.release.name!!https://splunkbase.splunk.com/app/833!!curl`
 - tasmobackup: `search=>TasmoBackup .+ by Dan Medhurst<!!http://127.0.0.1:8259!!curl`
 - truenas: `prejq=.version!!https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1!!curl`
 - yourls: `https://yourls.tld/ver.php!!curl`  
