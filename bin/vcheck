@@ -622,7 +622,6 @@ _auto_check() { # helper_function
   tag=${tag%_latest}
   [[ "$tag" =~ (aur|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
-  local proto=https
   case "$tag" in
     # alpine_docker) out=$(alpine_docker_package "$project") ;;
     alpine_repo) out=$(_alpine_repo_package "$project") ;;
@@ -713,22 +712,26 @@ _command_check() { # helper_function
   log -d "cmd=$cmd"
   if command -v "$cmd" &> /dev/null; then
     log -d -d "Attemping '$cmd --version'"
-    # shellcheck disable=SC2119
     out=$("$cmd" --version 2>&1)
+    ret=$?
     log -d -d -d "$cmd --version: $out"
-    [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+    [[ "$?" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
+
     log -d -d "Attemping '$cmd -V'"
-    # shellcheck disable=SC2119
     out=$("$cmd" -V 2>&1)
-    [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+    ret=$?
+    [[ "$?" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
+
     log -d -d "Attemping '$cmd version'"
-    # shellcheck disable=SC2119
     out=$("$cmd" version 2>&1)
-    [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+    ret=$?
+    [[ "$?" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
+
     log -d -d "Attemping '$cmd --help'"
-    # shellcheck disable=SC2119
     out=$("$cmd" --help 2>&1)
-    [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+    ret=$?
+    [[ "$?" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
+
     log -e "Could not determine version for $1"
     return 1
   else
@@ -1310,7 +1313,7 @@ _gitlab_tags() { # helper_function
 _github_tags() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  local version_sort=true output err out
+  local output err out
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   project_name=$1
 
@@ -1369,6 +1372,7 @@ _use_sudo_exec() { # helper_function
   $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 2 ; }
   log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
 
+  # shellcheck disable=SC2034
   local regex rp out SUDO_EXEC_DEBUG=0
   for regex in "${sudo_regexes[@]}"; do
     if [[ "${FUNCNAME[1]}" =~ $regex ]]; then
@@ -2481,24 +2485,24 @@ main() { # utility_function
     unset rcoutput_file rcoutput_mode
     if [[ -s "$rcfile" && "$list" != *!!* ]]; then
       # output_mode
-      rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}" output_mode)
+      rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_mode)
       (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[0]} && \
         case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
       # output_file
-      rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}" output_file)
+      rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_file)
       (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[0]} && output_mode=json
       log -d "Reading ${list//\\/\\\\} config settings: output_file='$output_file' output_mode='$output_mode'"
 
       # prepend_name
-      rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}" prepend_name)
+      rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" prepend_name)
       (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
 
       # include_invalid
-      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}t" include_invalid)
+      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}t" include_invalid)
       (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[0]}
 
-      rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${list//\\/\\\\}" compose_file)
+      rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" compose_file)
       (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[0]}
     fi
 
@@ -2507,7 +2511,7 @@ main() { # utility_function
     if $update && [[ "$list" == docker ]]; then
       docker_seconds_local=$docker_seconds
       if [[ -s "$rcfile" && "$list" != *!!* ]]; then
-        rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$list" docker_seconds)
+        rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" docker_seconds)
         (( ${#rcvalue[@]} > 0 )) && docker_seconds_local=${rcvalue[0]}
       fi
 
@@ -2577,7 +2581,7 @@ main() { # utility_function
       [[ "$listname" == "$sw" ]] && unset listname
       tmp_name=$sw
 
-      rcvalue=() ; [[ -s "$rcfile" && "$sw" != *!!* ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"${sw//\\/\\\\}" check)
+      rcvalue=() ; [[ -s "$rcfile" && "$sw" != *!!* ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${sw//\\/\\\\}" check)
       (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[0]} && sw_check_set=true && \
         log -d "Read check '$sw' for $tmp_name"
       sw_orig=$sw
@@ -2641,25 +2645,25 @@ main() { # utility_function
       unset rcoutput_file rcoutput_mode
       if [[ -s "$rcfile" ]]; then
         # See if check is defined
-        # rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$list" check)
+        # rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" check)
         # (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[0]} && \
         #   log -d "Read check '$sw' for $sw_name"
 
         # output_mode
-        rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" output_mode)
+        rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_mode)
         (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[0]} && \
           case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
         # output_file
-        rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" output_file)
+        rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_file)
         (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[0]} && output_mode=json
         log -d "Reading $sw_name config settings: output_file='$output_file' output_mode='$output_mode'"
 
         # prepend_name
-        rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" prepend_name)
+        rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" prepend_name)
         (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
 
-        rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" compose_file)
+        rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" compose_file)
         (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[0]}
       fi
 
@@ -2696,15 +2700,15 @@ main() { # utility_function
       if [[ -s "$rcfile" ]]; then
         log -d "Reading cache_lifetime retry_delay max_retries settings from config for $sw_name"
         # Check if this version check has a setting for cache_lifetime and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" cache_lifetime)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" cache_lifetime)
         (( ${#rcvalue[@]} > 0 )) && lifetime=${rcvalue[0]}
 
         # Check if this version check has a setting for retry_delay and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" retry_delay)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" retry_delay)
         (( ${#rcvalue[@]} > 0 )) && delay=${rcvalue[0]}
 
         # Check if this version check has a setting for max_retries and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" max_retries)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" max_retries)
         (( ${#rcvalue[@]} > 0 )) && retries=${rcvalue[0]}
       fi
 
@@ -2765,9 +2769,9 @@ main() { # utility_function
 
           if [[ -s "$rcfile" ]]; then
             # Read config file to see if there are specific settings for $sw
-            rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" use_sudo)
+            rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" use_sudo)
             (( ${#rcvalue[@]} > 0 )) && use_sudo=${rcvalue[0]}
-            rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME"::"$sw_name" sudo_user)
+            rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" sudo_user)
             (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
           fi
 
