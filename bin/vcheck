@@ -36,7 +36,7 @@ LSVER='(-(ls[0-9]+))?'
 SEMVER_REGEX="($SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 export SEMVER_REGEX
 
-AUTO_CHECKS='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
+AUTO_CHECKS='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
 export AUTO_CHECKS
 
 # Handle temp files
@@ -644,6 +644,7 @@ _auto_check() { # helper_function
     docker_copy) out=$(_docker_copy "$project") ;;
     docker_exec) out=$(_docker_exec "$project") ;;
     docker_inspect) out=$(_docker_inspect "$project") ;;
+    docker_logs) out=$(_docker_logs "$project") ;;
     docker_printenv) out=$(_docker_printenv "$project") ;;
     docker_tags) out=$(_docker_tags "$project") ;;
     flatpak) out=$(_flatpak_version "$project") ;;
@@ -1053,7 +1054,7 @@ _docker_inspect() { # helper_function
   return 1
 }
 
-docker_logs() { # helper_function
+_docker_logs() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   if [[ -z "$COMPOSE_FILE" ]]; then
@@ -1069,9 +1070,17 @@ docker_logs() { # helper_function
   out=$(_use_sudo_exec "$@") ; ret=$?
   case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
 
-  local name
-  name=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Name}}' "$1" 2> /dev/null)
-  docker logs "$name" 2> /dev/null
+  local image image_search=$1 out
+  log -d "image_search=$image_search"
+
+  container=$(_docker_container_search "$image_search")
+  log -d -d "container=$container"
+  [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
+
+  out=$(docker logs "$container" 2> /dev/null)
+  log -d -d -d "docker logs output: $out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
 }
 
 _docker_printenv() { # helper_function
@@ -1637,103 +1646,6 @@ printer_ink_check() { # remote_host
   [[ -z "$inkdata" ]] && printf '%s' "$errjson" && return 1
   jq -rn --argjson j "$inkdata" '$j' 2> /dev/null
 }
-
-## BEGIN CHECK FUNCTIONS
-
-# MISC CHECKS
-proton_ge() {
-  find "$HOME"/.local/share/Steam/compatibilitytools.d -maxdepth 1 -type d -iname "*proton*ge*"
-    sort -V | \
-    tail -n1
-}
-
-zigbee2mqtt_tcp() {
-  check_prog mosquitto_sub || return 1
-  # Requires mqtt user have read access to 'zigbee2mqtt_tcp/bridge/config
-  check_prog jq || return 1
-  mosquitto_sub -C 1 -h "${mqtt_server:?}" -u "${mqtt_username:?}" -P "${mqtt_password:?}" \
-    -i "$PROGNAME" -t zigbee2mqtt_tcp/bridge/config | \
-    jq -r '.version' 2> /dev/null
-}
-
-# COPY CHECKS
-dockhand_docker() {
-  check_prog jq || return 1
-  local tmp
-  tmp=$(maketemp -d)
-  docker_compose_cp /app/build/server/chunks "$tmp"
-  if [[ -d "$tmp"/chunks ]]; then
-    # shellcheck disable=SC2016
-    grep '^const [a-z][a-z0-9A-Z_]*=JSON.parse(`' "$tmp"/chunks/_server*.js | \
-      sed -r 's/^[^`]+`//;s/`[^`]+$//;s/\\\\/\\/g' | \
-      jq -r '.[].version' 2> /dev/null | \
-      sort -V | \
-      tail -n1
-  fi
-}
-
-jellyfin_vue_docker() {
-  check_prog js-beautify || return 1
-  local tmp
-  tmp=$(maketemp -d)
-
-  # Copy container files to temp directory
-  docker_compose_cp /usr/share/nginx/html/assets "$tmp"
-
-  # Get js-beautify'd output from the main-*.js file
-  local jsb
-  jsb=$(cat "$tmp"/assets/main-*.js | js-beautify 2>&1)
-  [[ -z "$jsb" ]] && log -e "Could not get js-beautify'd output for ${FUNCNAME[0]}" && return 1
-
-  # Get the version string for Jellyfin Vue
-  local version=
-  version=$(echo "$jsb" | \
-    awk '/name: ["`'"'"']Jellyfin Web.*Vue/{on=1}on==1&&$1=="version:"{print $2;exit}')
-  [[ -z "$version" ]] && log -e "Could not get version string for ${FUNCNAME[0]}" && return 1
-
-  # Get the version number from version string
-  echo "$jsb" | awk -F'["`'"'"']' -v v="$version" '$1 ~ v " ?= ?"{print $2;exit}'
-}
-
-restreamer_docker() {
-  local tmp
-  tmp=$(maketemp -d)
-  docker_compose_cp /core/ui/static/js "$tmp"
-  cat "$tmp"/js/main.*.js | \
-    grep restreamer-v | sed -r 's/^.*:"restreamer-(v[^"]+)".*$/\1/'
-}
-
-# DOCKER LOGS CHECKS
-pihole_docker() {
-  docker_logs pihole 2>&1 | awk '/Pi-hole version is v[0-9]/ { print $4;exit}'
-}
-
-registry_docker() {
-  docker_logs registry 2>&1 | \
-    awk '
-      /service=registry version=v/ {
-        v = substr($0, index($0, "service=registry version=v") + 26)
-      }
-      END {
-        gsub(/[ \t]+/,"", v)
-        print v
-      }'
-}
-
-vscode_docker() {
-  local containername
-  containername=$(_docker_container_search "${FUNCNAME[0]%_docker}") || return 1
-  docker_logs "${containername}" 2>&1 | awk '/] info  code-server [0-9]/{print $4; exit}'
-}
-
-zigbee2mqtt() {
-  local containername
-  containername=$(_docker_container_search "${FUNCNAME[0]%_docker}") || return 1
-  docker_logs "${containername}" 2>&1 | \
-    awk '/Starting Zigbee2MQTT version/ {print $8;exit}'
-}
-
-## END CHECK FUNCTIONS
 
 DEBUG_EXIT=5
 export DEBUG_EXIT

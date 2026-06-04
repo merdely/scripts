@@ -588,3 +588,15 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 
 - Joplin: `Joplin!!appimage`
 - Seafile: `Seafile!!appimage`
+
+## Docker Copy Checks
+
+- Dockhand: 'search=^const [a-z][a-z0-9A-Z_]*=JSON.parse\(`!!dockhand!!/app/build/server/chunks!!chunks/*.js!!docker_copy'
+- Restreamer: `search=restreamer-v!!postsed=s#^.*:"restreamer-(v[^"]+)".*$#\1#!!restreamer!!/core/ui/static/js!!js/main.*.js!!docker_copy`
+
+## Docker Logs Checks
+
+- pihole: `search=Pi-hole version is v[0-9]!!pihole!!docker_logs`
+- docker registry: `search=registry version=v!!presed=s#service=registry version=v##!!registry!!docker_logs`
+- vscode: `search=\] info code-server [0-9]!!vscode!!docker_logs`
+- zigbee2mqtt: `search=Starting Zigbee2MQTT version!!zigbee2mqtt!!docker_logs`
