@@ -715,22 +715,22 @@ _command_check() { # helper_function
     out=$("$cmd" --version 2>&1)
     ret=$?
     log -d -d -d "$cmd --version: $out"
-    [[ "$?" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
+    [[ "$ret" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
 
     log -d -d "Attemping '$cmd -V'"
     out=$("$cmd" -V 2>&1)
     ret=$?
-    [[ "$?" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
+    [[ "$ret" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
 
     log -d -d "Attemping '$cmd version'"
     out=$("$cmd" version 2>&1)
     ret=$?
-    [[ "$?" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
+    [[ "$ret" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
 
     log -d -d "Attemping '$cmd --help'"
     out=$("$cmd" --help 2>&1)
     ret=$?
-    [[ "$?" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
+    [[ "$ret" -eq 0 && -n "$out" ]] && { echo "$out" ; return 0 ; }
 
     log -e "Could not determine version for $1"
     return 1
