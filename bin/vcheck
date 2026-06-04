@@ -872,6 +872,7 @@ _docker_exec() { # helper_function
     command=("$@")
   fi
 
+  log -d -d "Running _docker_container_search $image_search"
   container=$(_docker_container_search "$image_search")
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
@@ -982,10 +983,12 @@ _docker_container_search() { # helper_function
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}')
   log -d -d -d "docker ps output=$docker_ps"
 
+  log -d -d "Searching image field for $1"
   out=$(awk -F '|' -v s="$1" '$2 ~ s {print $1;exit}' <<< "$docker_ps")
   log -d -d "awk output searching image field=$out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
 
+  log -d -d "Searching name field for $1"
   out=$(awk -F '|' -v s="$1" '$1 ~ s {print $1;exit}' <<< "$docker_ps")
   log -d -d "awk output search name field=$out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
@@ -2506,7 +2509,7 @@ main() { # utility_function
             (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
           fi
 
-          if $use_sudo && (( $(id -u) != 0 )); then
+          if $use_sudo && [[ -n "$sudo_user" ]] && (( $(id -u) != 0 )); then
             [[ -z "$sudo_user" ]] && log -e "Cannot use sudo for $sw_name: No sudo_user defined (-x username)" && exit 1
             unset dflags
             log -v -v "Using sudo as $sudo_user to check $sw_name version"
