@@ -23,16 +23,7 @@ export PATH
 # Define a SEMVER_REGEX to be used in functions to validate version strings
 # From https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
 # Their major, minor, patch, and prerelease groups break bookstack because of its leading 0
-# Changed 0|[1-9] to [0-9]
-# SEMVER_MAJOR='(?P<major>[0-9]\d*)'
-# SEMVER_MINOR='\.(?P<minor>[0-9]\d*)'
-# SEMVER_PATCH='(?:\.(?P<patch>[0-9]\d*))?'
-# SEMVER_PRERELEASE='(?:-(?P<prerelease>(?:[0-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:[0-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?'
-# SEMVER_BUILDMETA='(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?'
-# HOTFIX='(?:\.(?P<hotfix>[0-9]\d*))?'
-# VER_YMD='(?P<year>[0-9]{4})[\._-](?P<month>[01]?[0-9])[\._-](?P<day>[0123]?[0-9])'
-# LSVER='(?:-(?P<lsver>ls[0-9]+))?'
-# SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
+# Changed 0|[1-9] to [0-9] and removed the "?P<tag>" python-specific regex
 SEMVER_MAJOR='([0-9][0-9]*)'
 SEMVER_MINOR='\.([0-9][0-9]*)'
 SEMVER_PATCH='(\.([0-9][0-9]*))?'
@@ -44,7 +35,7 @@ LSVER='(-(ls[0-9]+))?'
 SEMVER_REGEX="($SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 export SEMVER_REGEX
 
-AUTO_CHECKS='(alpine_repo|aur|cat|codeberg|command|curl|curlapi|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
+AUTO_CHECKS='(alpine_repo|aur|cat|codeberg|command|curl|curlapi|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
 export AUTO_CHECKS
 
 # Handle temp files
@@ -640,6 +631,8 @@ _auto_check() { # helper_function
     flatpak) out=$(_flatpak_version "$project") ;;
     flatpak_appstream) out=$(_flatpak_appstream "$project") ;;
     forgejo) out=$(_codeberg_project -f "$project") ;;
+    gitdescribe) out=$(_git_checkout -d "$project") ;;
+    gittags) out=$(_git_checkout -t "$project") ;;
     github) out=$(_github_project "$project") ;;
     github_tags) out=$(_github_tags "$project") ;;
     gitlab) out=$(_gitlab_project "$project") ;;
@@ -1257,6 +1250,51 @@ _flatpak_version() { # helper_function
   [[ -n "$out" ]] && awk -v a="$1" '$1==a {print $NF;exit}' <<< "$out"
 }
 
+_git_checkout() { # helper_function
+  log -d -d -d "Running ${FUNCNAME[0]} $*"
+  check_prog git "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+
+  local mode=describe
+  local opt OPTARG OPTIND=1
+  while getopts ":dDt" opt; do
+    case "$opt" in
+      d) mode=describe ;;
+      D) mode=describe-tags ;;
+      t) mode=tags ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} [Options] project/repo" ; return 0 ; }
+  local dir
+  dir=$(maketemp -d)
+  log -d -d "Running: git clone -q --tags --mirror '$1' '$dir'"
+  git clone -q --tags --mirror "$1" "$dir"
+  [[ ! -e "$dir"/HEAD ]] && { log -e "Could not check out $1 " ; return 1 ; }
+  case "$mode" in
+    describe-tags)
+      log -d -d "Executing: git -C '$dir' describe --tags"
+      out=$(git -C "$dir" describe --tags)
+      log -d -d "git describe --tags output: $out"
+      ;;
+    describe)
+      log -d -d "Executing: git -C '$dir' describe"
+      out=$(git -C "$dir" describe)
+      log -d -d "git describe output: $out"
+      ;;
+    tags)
+      log -d -d "Executing: git -C '$dir' tag"
+      out=$(git -C "$dir" tag)
+      log -d -d "git tag output: $out"
+      ;;
+    *) echo "Unknown mode for ${FUNCNAME[*]}" ; return 1 ;;
+  esac
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
+}
+
 _github_project() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
@@ -1545,12 +1583,6 @@ dockhand_docker() {
   fi
 }
 
-empiretech_camera_latest() {
-  check_prog xmllint || return 1
-  curl --no-progress-meter "https://empiretech01.com/pages/download-firmwares" | \
-    xmllint --html --xpath "//div[@class='firmwares_content_container']/div[1][contains(text(), 'IPC-Color4K-T-S2')]/following-sibling::div[2]/text()" - 2> /dev/null
-}
-
 jellyfin_vue_docker() {
   check_prog js-beautify || return 1
   local tmp
@@ -1574,47 +1606,18 @@ jellyfin_vue_docker() {
   echo "$jsb" | awk -F'["`'"'"']' -v v="$version" '$1 ~ v " ?= ?"{print $2;exit}'
 }
 
-jellystat_docker() {
-  check_prog jq || return 1
-  docker_compose_exec wget -qO- "http://127.0.0.1:3000/auth/isconfigured" | jq -r '.version' 2> /dev/null
-}
-
 joplin_desktop() {
   realpath "$HOME"/.local/bin/joplin-desktop | \
     sed -r 's/^.*Joplin-(.*)\.AppImage/\1/' | \
     awk '{print $0;exit}'
 }
 
-libratbag_git_latest() { # no_auto
-  check_prog xmllint || return 1
-  curl --no-progress-meter "https://github.com/libratbag/libratbag/commits/master/" | \
-    xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
-    grep -iv "^All time$" | \
-    head -n1
-}
-
 pihole_docker() {
   docker_logs pihole 2>&1 | awk '/Pi-hole version is v[0-9]/ { print $4;exit}'
 }
 
-piper_git_latest() { # no_auto
-  check_prog xmllint || return 1
-  curl --no-progress-meter "https://github.com/libratbag/piper/commits/master/" | \
-    xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
-    grep -iv "^All time$" | \
-    head -n1
-}
-
 proton_ge() {
   find "$HOME"/.local/share/Steam/compatibilitytools.d -maxdepth 1 -type d -iname "*proton*ge*"
-    sort -V | \
-    tail -n1
-}
-
-putty_latest() { # no_auto
-  curl --no-progress-meter "https://git.tartarus.org/?p=simon/putty.git;a=tags" | \
-    xmllint --html --xpath '//table[@class="tags"]//td/a[@class="list name"]/text()' - 2>/dev/null | \
-    grep -E '^[0-9]+(\.[0-9]+)+$' | \
     sort -V | \
     tail -n1
 }
@@ -1642,22 +1645,6 @@ restreamer_docker() {
 seafile_client_appimage() {
   realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
     sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
-}
-
-splunk() {
-  if [[ -x /opt/splunk/bin/splunk ]]; then
-    awk -F= '/^VERSION/{print $2;exit}' /opt/splunk/etc/splunk.version
-  elif [[ -x /opt/splunkforwarder/bin/splunk ]]; then
-    awk -F= '/^VERSION/{print $2;exit}' /opt/splunkforwarder/etc/splunk.version
-  fi
-}
-
-splunk_forwarder() {
-  if [[ -x /opt/splunkforwarder/bin/splunk ]]; then
-    awk -F= '/^VERSION/{print $2;exit}' /opt/splunkforwarder/etc/splunk.version
-  elif [[ -x /Applications/splunkforwarder/bin/splunk ]]; then
-    awk -F= '/^VERSION/{print $2;exit}' /Applications/splunkforwarder/etc/splunk.version
-  fi
 }
 
 vscode_docker() {

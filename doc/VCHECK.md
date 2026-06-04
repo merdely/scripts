@@ -2,7 +2,7 @@
 
 ```
 [vcheck:librewolf-bin_aur_latest]
-check: sed=s#^[0-9]:##!!librewolf-bin!!aur_latest
+check: postsed=s#^[0-9]:##!!librewolf-bin!!aur_latest
 ```
 
 ## Latest Checks
@@ -33,7 +33,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$!!docker.io/linuxserver/calibre!
 check: remove=-ls1$!!search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$!!docker.io/linuxserver/calibre-web!!docker_tags_latest
 
 [vcheck:chronograf_docker_latest]
-check: sed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/chronograf!!docker_tags_latest
+check: postsed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/chronograf!!docker_tags_latest
 
 [vcheck:collabora_docker_latest]
 check: remove=(alpha|beta|rc)([0-9]+)?$!!search=^[0-9]+(\.[0-9]+){2,3}$!!docker.io/collabora/code!!docker_tags_latest
@@ -63,10 +63,10 @@ check: search=^[0-9]+(\.[0-9]+){2,3}$!!ghcr.io/blakeblackshear/frigate!!docker_t
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/icbest/giftmanager!!docker_tags_latest
 
 [vcheck:gitea_docker_latest]
-check: sed=s#-rootless##!!search=^v?[0-9]+(\.[0-9]+){2,3}-rootless$!!docker.gitea.com/gitea!!docker_tags_latest
+check: postsed=s#-rootless##!!search=^v?[0-9]+(\.[0-9]+){2,3}-rootless$!!docker.gitea.com/gitea!!docker_tags_latest
 
 [vcheck:gitlab_docker_latest]
-check: sed=s#-ce.*##!!search=^v?[0-9]+(\.[0-9]+){2,3}-ce!!docker.io/gitlab/gitlab-ce!!docker_tags_latest
+check: postsed=s#-ce.*##!!search=^v?[0-9]+(\.[0-9]+){2,3}-ce!!docker.io/gitlab/gitlab-ce!!docker_tags_latest
 
 [vcheck:grafana_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/grafana/grafana!!docker_tags_latest
@@ -81,7 +81,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!ghcr.io/immich-app/immich-server!!docke
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!ghcr.io/immichframe/immichframe!!docker_tags_latest
 
 [vcheck:influxdb_docker_latest]
-check: sed=s#-core##!!search=^v?[0-9]+(\.[0-9]+){2,3}-core$!!docker.io/influxdb!!docker_tags_latest
+check: postsed=s#-core##!!search=^v?[0-9]+(\.[0-9]+){2,3}-core$!!docker.io/influxdb!!docker_tags_latest
 
 [vcheck:jackett_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$!!docker.io/linuxserver/jackett!!docker_tags_latest
@@ -90,7 +90,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$!!docker.io/linuxserver/jackett!
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/jellyfin/jellyfin!!docker_tags_latest
 
 [vcheck:jellyfin-vue_docker_latest]
-check: sed=s#^stable-rc\.##!!search=^stable-rc.[0-9]+(\.[0-9]+){2,3}$!!docker.io/jellyfin/jellyfin-vue!!docker_tags_latest
+check: postsed=s#^stable-rc\.##!!search=^stable-rc.[0-9]+(\.[0-9]+){2,3}$!!docker.io/jellyfin/jellyfin-vue!!docker_tags_latest
 
 [vcheck:jellystat_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/cyfershepard/jellystat!!docker_tags_latest
@@ -99,7 +99,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/cyfershepard/jellystat!!docke
 check: search=^[0-9]{4}\.[0-9]+\.[0-9]+$!!docker.io/jitsi/excalidraw-backend!!docker_tags_latest
 
 [vcheck:jitsi-meet_docker_latest]
-check: skip_version_filter!!sed=s#^stable-##!!search=^stable-[0-9]+$!!docker.io/jitsi/web!!docker_tags_latest
+check: skip_version_filter!!postsed=s#^stable-##!!search=^stable-[0-9]+$!!docker.io/jitsi/web!!docker_tags_latest
 
 [vcheck:kapacitor_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/kapacitor!!docker_tags_latest
@@ -129,13 +129,13 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/mariadb!!docker_tags_latest
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/getmeili/meilisearch!!docker_tags_latest
 
 [vcheck:memcached_docker_latest]
-check: sed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$!!docker.io/memcached!!docker_tags_latest
+check: postsed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$!!docker.io/memcached!!docker_tags_latest
 
 [vcheck:mollysocket_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!ghcr.io/mollyim/mollysocket!!docker_tags_latest
 
 [vcheck:mosquitto_docker_latest]
-check: sed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$!!docker.io/eclipse-mosquitto!!docker_tags_latest
+check: postsed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$!!docker.io/eclipse-mosquitto!!docker_tags_latest
 
 [vcheck:mysql_docker_latest]
 check: search=^[0-9]+(\.[0-9]+){2,3}$!!docker.io/mysql/mysql-server!!docker_tags_latest
@@ -147,7 +147,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/deluan/navidrome!!docker_tags
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/nextcloud!!docker_tags_latest
 
 [vcheck:nginx_docker_latest]
-check: sed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$!!docker.io/nginx!!docker_tags_latest
+check: postsed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$!!docker.io/nginx!!docker_tags_latest
 
 [vcheck:nginx_docker_mainline_latest]
 check: search=>mainline<!!presed=s#^.*><code [^>]+">##!!presed=s#</code>,.*$##!!https://hub.docker.com/_/nginx!!curl
@@ -187,7 +187,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/portainer/agent!!docker_tags_
 check: search=^v?[0-9]+\.[0-9]+$!!docker.io/postgres!!docker_tags_latest
 
 [vcheck:vchord-postgres_docker_latest]
-check: sed=s#-(arm64|amd64)##!!search=^pg17-v0\.4\.3$!!docker.io/tensorchord/vchord-postgres!!docker_tags_latest
+check: postsed=s#-(arm64|amd64)##!!search=^pg17-v0\.4\.3$!!docker.io/tensorchord/vchord-postgres!!docker_tags_latest
 
 [vcheck:prowlarr_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}-ls[0-9]+$!!docker.io/linuxserver/prowlarr!!docker_tags_latest
@@ -398,7 +398,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/golift/unpackerr!!docker_tags
 
 # AUR Checks
 
-- librewolf-bin : `sed=s#^[0-9]:##!!librewolf-bin!!aur_latest`
+- librewolf-bin : `postsed=s#^[0-9]:##!!librewolf-bin!!aur_latest`
 
 ## Docker printenv checks: <container>!!<variable>!!docker_printenv
 
@@ -434,7 +434,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/golift/unpackerr!!docker_tags
 - jackett
 - jellyfin
 - jitsi-excalidraw (`jitsi/excalidraw-backend!!docker_inspect`)
-- jitsi-meet  (`sed=s#^stable-##!!jitsi/web!!docker_inspect`)
+- jitsi-meet  (`postsed=s#^stable-##!!jitsi/web!!docker_inspect`)
 - librewolf
 - linkwarden
 - lldap
@@ -472,26 +472,26 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/golift/unpackerr!!docker_tags
 - open-webui - `open-webui/open-webui!!github_tags`
 - opnsense - `search=^[0-9]+(\.[0-9]+){2,3}$!!opnsense/core!!github_tags`
 - owncloud - `search=^v[0-9]+(\.[0-9]+){2,3}$!!owncloud/core!!github_tags`
-- postgres - `sed=s#_#.#g!!search=^REL_[0-9]+_[0-9]+$!!postgres/postgres!!github_tags`
+- postgres - `postsed=s#_#.#g!!search=^REL_[0-9]+_[0-9]+$!!postgres/postgres!!github_tags`
 - rsyslog - `rsyslog/rsyslog!!github_tags`
-- seafile - `sed=s#-server$##!!search=^v[0-9]+(\.[0-9]+){2,3}-server$!!haiwen/seafile-server!!github_tags`
-- opensmtpd - `sed=s#p[0-9]+$##!!search=^[0-9]+(\.[0-9]+){2,3}(p[0-9]+)?$!!OpenSMTPD/OpenSMTPD!!github_tags`
+- seafile - `postsed=s#-server$##!!search=^v[0-9]+(\.[0-9]+){2,3}-server$!!haiwen/seafile-server!!github_tags`
+- opensmtpd - `postsed=s#p[0-9]+$##!!search=^[0-9]+(\.[0-9]+){2,3}(p[0-9]+)?$!!OpenSMTPD/OpenSMTPD!!github_tags`
 - tasmobackup - `danmed/TasmoBackupV1!!github_tags`
 - thruk - `sni/thruk!!github_tags`
 
 ## Docker Exec Checks
 
-- frigate: `sed=s#-[0-9a-zA-Z]+##!!frigate!!/usr/bin/cat /opt/frigate/frigate/version.py!!docker_exec`
+- frigate: `postsed=s#-[0-9a-zA-Z]+##!!frigate!!/usr/bin/cat /opt/frigate/frigate/version.py!!docker_exec`
 The '/usr/bin/' part of the above check is only to demonstrate how to use a full path
 - giftmanager: `search=app_version!!giftmanager!!cat /app/app.py!!docker_exec`
 - gitea: `gitea!!gitea --version!!docker_exec`
 - gitlab: `search=gitlab-ce!!gitlab!!cat /opt/gitlab/version-manifest.txt!!docker_exec`
 - grafana: `search=Version [0-9]!!grafana!!grafana-server -v!!docker_exec`
-- jellyfin: `sed=s#Jellyfin\.Server ##!!sed=s#\.[0-9]$##!!jellyfin!!/jellyfin/jellyfin --version!!docker_exec`
+- jellyfin: `postsed=s#Jellyfin\.Server ##!!postsed=s#\.[0-9]$##!!jellyfin!!/jellyfin/jellyfin --version!!docker_exec`
 - jellystat: `jq=.version!!jellystat!!wget -qO- http://127.0.0.1:3000/auth/isconfigured!!docker_exec`
 - linkding: `linkding!!cat /etc/linkding/version.txt!!docker_exec`
 - localai: `localai!!/local-ai --version!!docker_exec`
-- mariadb: `sed=s#-MariaDB.*$##!!mariadb!!mariadbd -V!!docker_exec`
+- mariadb: `postsed=s#-MariaDB.*$##!!mariadb!!mariadbd -V!!docker_exec`
 - meilisearch: `meilisearch!!meilisearch -V!!docker_exec`
 - memcached: `memcached!!memcached --version!!docker_exec`
 - mollysocket: `mollysocket!!mollysocket -V!!docker_exec`
@@ -522,7 +522,9 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 
 - example: `/path/to/file.txt/cat`
 - using progdata: `$PROGDATA/file.txt!!cat`
-- zwave_js: `sed=s#.*Version: ##!!search=INFO.* .*(APP|STORE).*: Version:!!/var/log/zwave.out!!cat`
+- splunk: `search=^VERSION!!/opt/splunk/etc/splunk.version!!cat`
+- splunk_forwarder: `search=^VERSION!!/opt/splunkforwarder/etc/splunk.version!!cat`
+- zwave_js: `postsed=s#.*Version: ##!!search=INFO.* .*(APP|STORE).*: Version:!!/var/log/zwave.out!!cat`
 
 ## Alpine Repo Package
 
@@ -534,8 +536,8 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 
 - adguardhome_server - `jq=.version!!adguardhome_server!!curlapi`
 - local flip_2_dnd_pro mirror - `jq=.[].tag_name!!flip_2_dnd_pro!!curlapi`
-- joplin_server - `search=Joplin Server [0-9]!!sed=s#^#server-v#!!joplin!!curlapi`
-- opnsense_device - `sed=s#-[a-z][a-z0-9]+$##!!search=^OPNsense!!jq=.versions[]!!opnsense_device!!curlapi`
+- joplin_server - `search=Joplin Server [0-9]!!postsed=s#^#server-v#!!joplin!!curlapi`
+- opnsense_device - `postsed=s#-[a-z][a-z0-9]+$##!!search=^OPNsense!!jq=.versions[]!!opnsense_device!!curlapi`
 - plex_docker - `search=^<MediaContainer!!plex!!curlapi`  # untested
 - routeros_device - `jq=.[] | select(.name=="routeros")|.version!!routeros_device!!curlapi`
 - slzb_core - `jq=.Info.sw_version!!slzb_core!!curlapi`
@@ -548,7 +550,7 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - empiretech_camera: `xml=//div[@class="firmwares_content_container"]/div[1][contains(text(), "IPC-Color4K-T-S2")]/following-sibling::div[2]/text()!!https://empiretech01.com/pages/download-firmwares!!curl`
 - ffprobe_latest: `search=<th>release:!!https://johnvansickle.com/ffmpeg/!!curl`
 - filestash_latest: `search=APP_VERSION!!https://raw.githubusercontent.com/mickael-kerjean/filestash/refs/heads/master/server/common/constants.go!!curl`
-- librewolf_homebrew: `check: search=Current version:!!sed=s#^.*<a .*">##!!sed=s#,([0-9]+)#-\1#!!https://formulae.brew.sh/cask/librewolf#default!!curl`
+- librewolf_homebrew: `check: search=Current version:!!postsed=s#^.*<a .*">##!!postsed=s#,([0-9]+)#-\1#!!https://formulae.brew.sh/cask/librewolf#default!!curl`
 - molly_guard_latest: `search=<title>debian!!presed=s#^.*<title>debian/##!!presed=s#</title>##!!https://salsa.debian.org/debian/molly-guard/-/tags?format=atom!!curl`
 - nextcloud: `search=/download\.nextcloud\.com/server/releases/nextcloud-.*\.tar\.bz2<!!presed=s#^.*>nextcloud-##!!presed=s#\.tar\.bz2.*##!!https://nextcloud.com/changelog/!!curl`
 - plex: `jq=.["computer"]["Linux"].version!!https://plex.tv/pms/downloads/5.json?channel=plexpass!!curl`
@@ -573,3 +575,11 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
   ?>
   ```
 
+## Git Describe
+
+- libratbag: `skip_version_filter!!https://github.com/libratbag/libratbag.git!!gitdescribe`
+- piper: `skip_version_filter!!postsed=s#([^-]*-g)#r\1#!!postsed=s#-#.#g!!https://github.com/libratbag/piper.git!!gitdescribe`
+
+## Git Tags
+
+- putty: `search=^[0-9]+(\.[0-9]+){1,2}$!!https://git.tartarus.org/simon/putty.git!!gittags`
