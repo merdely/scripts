@@ -267,7 +267,7 @@ function_exists() { # utility_function
   local flist=()
   flist+=("${function_list[@]}")
   flist+=("${function_alias_list[@]}")
-  (( debug >= 3 )) && set -x
+  (( debug >= 4 )) && set -x
   [[ ! " ${flist[*]} " == *" $1 "* ]] && { set +x ; return 1; }
   set +x
   return 0
@@ -1359,7 +1359,9 @@ myaur_package() { # helper_function
 # shellcheck disable=SC2120
 _version_filter() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  out=$(perl -ne 'print "$1\n" if /'"$SEMVER_REGEX"'/')
+  log -d -d -d "Executing: perl -ne 'print \"\$&\n\" if /$SEMVER_REGEX/'"
+  out=$(perl -ne 'print "$&\n" if /'"$SEMVER_REGEX"'/')
+  log -d -d -d 'perl output: $out'
   if grep -Eq "^$SEMVER_REGEX$" <<< "$out"; then
     echo "$out" | head -n1
     return 0
