@@ -6,7 +6,8 @@ PROGVER=1.1.0
 PROGDATA=/etc/"$PROGNAME"
 ALPINE_VER=""
 SUDO_EXEC=false
-export PROGNAME PROGVER PROGDATA ALPINE_VER SUDO_EXEC
+SOURCED_LIBS=("$0")
+export PROGNAME PROGVER PROGDATA ALPINE_VER SUDO_EXEC SOURCED_LIBS
 
 # Define check for this program
 eval "$PROGNAME() { echo \$PROGVER; }" # { # utility_function
@@ -1417,7 +1418,7 @@ _version_filter() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d -d -d "Executing: perl -ne 'print \"\$&\n\" if /$SEMVER_REGEX/'"
   out=$(perl -ne 'print "$&\n" if /'"$SEMVER_REGEX"'/')
-  log -d -d -d 'perl output: $out'
+  log -d -d -d "perl output: $out"
   if grep -Eq "^$SEMVER_REGEX$" <<< "$out"; then
     echo "$out" | head -n1
     return 0
@@ -1452,10 +1453,6 @@ _use_sudo_exec() { # helper_function
   done
   return 4
 }
-
-## BEGIN CHECK FUNCTIONS
-# Define image_search array for mapping checks to image strings
-SOURCED_LIBS=("$0")
 
 printer_ink_check() { # remote_host
   [[ -z "$PRINTER" ]] && { log -e "Printer not defined" ; usage 1 ; }
@@ -1568,6 +1565,37 @@ printer_ink_check() { # remote_host
   jq -rn --argjson j "$inkdata" '$j' 2> /dev/null
 }
 
+## BEGIN CHECK FUNCTIONS
+
+# APPIMAGE CHECKS
+joplin_desktop() {
+  realpath "$HOME"/.local/bin/joplin-desktop | \
+    sed -r 's/^.*Joplin-(.*)\.AppImage/\1/' | \
+    awk '{print $0;exit}'
+}
+
+seafile_client_appimage() {
+  realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
+    sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
+}
+
+# MISC CHECKS
+proton_ge() {
+  find "$HOME"/.local/share/Steam/compatibilitytools.d -maxdepth 1 -type d -iname "*proton*ge*"
+    sort -V | \
+    tail -n1
+}
+
+zigbee2mqtt_tcp() {
+  check_prog mosquitto_sub || return 1
+  # Requires mqtt user have read access to 'zigbee2mqtt_tcp/bridge/config
+  check_prog jq || return 1
+  mosquitto_sub -C 1 -h "${mqtt_server:?}" -u "${mqtt_username:?}" -P "${mqtt_password:?}" \
+    -i "$PROGNAME" -t zigbee2mqtt_tcp/bridge/config | \
+    jq -r '.version' 2> /dev/null
+}
+
+# COPY CHECKS
 dockhand_docker() {
   check_prog jq || return 1
   local tmp
@@ -1606,20 +1634,17 @@ jellyfin_vue_docker() {
   echo "$jsb" | awk -F'["`'"'"']' -v v="$version" '$1 ~ v " ?= ?"{print $2;exit}'
 }
 
-joplin_desktop() {
-  realpath "$HOME"/.local/bin/joplin-desktop | \
-    sed -r 's/^.*Joplin-(.*)\.AppImage/\1/' | \
-    awk '{print $0;exit}'
+restreamer_docker() {
+  local tmp
+  tmp=$(maketemp -d)
+  docker_compose_cp /core/ui/static/js "$tmp"
+  cat "$tmp"/js/main.*.js | \
+    grep restreamer-v | sed -r 's/^.*:"restreamer-(v[^"]+)".*$/\1/'
 }
 
+# DOCKER LOGS CHECKS
 pihole_docker() {
   docker_logs pihole 2>&1 | awk '/Pi-hole version is v[0-9]/ { print $4;exit}'
-}
-
-proton_ge() {
-  find "$HOME"/.local/share/Steam/compatibilitytools.d -maxdepth 1 -type d -iname "*proton*ge*"
-    sort -V | \
-    tail -n1
 }
 
 registry_docker() {
@@ -1634,19 +1659,6 @@ registry_docker() {
       }'
 }
 
-restreamer_docker() {
-  local tmp
-  tmp=$(maketemp -d)
-  docker_compose_cp /core/ui/static/js "$tmp"
-  cat "$tmp"/js/main.*.js | \
-    grep restreamer-v | sed -r 's/^.*:"restreamer-(v[^"]+)".*$/\1/'
-}
-
-seafile_client_appimage() {
-  realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
-    sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
-}
-
 vscode_docker() {
   local containername
   containername=$(_docker_container_search "${FUNCNAME[0]%_docker}") || return 1
@@ -1658,15 +1670,6 @@ zigbee2mqtt() {
   containername=$(_docker_container_search "${FUNCNAME[0]%_docker}") || return 1
   docker_logs "${containername}" 2>&1 | \
     awk '/Starting Zigbee2MQTT version/ {print $8;exit}'
-}
-
-zigbee2mqtt_tcp() {
-  check_prog mosquitto_sub || return 1
-  # Requires mqtt user have read access to 'zigbee2mqtt_tcp/bridge/config
-  check_prog jq || return 1
-  mosquitto_sub -C 1 -h "${mqtt_server:?}" -u "${mqtt_username:?}" -P "${mqtt_password:?}" \
-    -i "$PROGNAME" -t zigbee2mqtt_tcp/bridge/config | \
-    jq -r '.version' 2> /dev/null
 }
 
 ## END CHECK FUNCTIONS
