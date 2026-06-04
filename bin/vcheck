@@ -620,7 +620,7 @@ _auto_check() { # helper_function
   local latest=false
   [[ "$tag" == *_latest ]] && latest=true
   tag=${tag%_latest}
-  [[ "$tag" =~ (aur|command|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
+  [[ "$tag" =~ (aur|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
   local proto=https
   case "$tag" in
