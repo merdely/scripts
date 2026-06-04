@@ -2515,7 +2515,7 @@ main() { # utility_function
             version=$(sudo -n -u "$sudo_user" "$rp" -X "$sw" SUDO_EXEC_DEBUG="$debug")
             ret=$?
             update_time=$(date +%s)
-            (( ret != 0 )) && log -e "Could not get $sw version with sudo" && continue
+            (( ret != 0 )) && log -e "Could not get $sw version with sudo" && continue 2
           else
             if [[ "$sw" =~ !!$AUTO_CHECKS && " ${app_list[*]} ${app_alias_list[*]} " != *" $sw "* ]]; then
               log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_auto_flags[*]}$sw_name' to get version"
