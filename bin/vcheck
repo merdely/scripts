@@ -589,14 +589,15 @@ _auto_check() { # helper_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
 
-  local remove=() search=() presed=() postsed=() project tmp jqfilter sedstring
-  local skipverfilter=false
+  local remove=() search=() presed=() postsed=() skipverfilter=false
+  local project tmp jqfilter xmlfilter sedstring
   local opt OPTARG OPTIND=1
-  while getopts ":p:t:j:r:s:P:S:vV" opt; do
+  while getopts ":p:t:j:x:r:s:P:S:vV" opt; do
     case "$opt" in
       p) project=$OPTARG ;;
       t) tag=$OPTARG ;;
       j) jqfilter=$OPTARG ;;       # Uses last one given
+      x) xmlfilter=$OPTARG ;;      # Uses last one given
       r) remove+=("$OPTARG") ;;
       s) search+=("$OPTARG") ;;
       P) presed+=("$OPTARG") ;;
@@ -655,8 +656,17 @@ _auto_check() { # helper_function
       return 1 ;;
   esac
 
+  # Apply xml filter, if set
+  if [[ -n "$out" && -n "$xmlfilter" ]]; then
+    check_prog xmllint || return 1
+    log -d -d -d "Using xmllint --html --xpath '$xmlfilter' - 2> /dev/null"
+    out=$(xmllint --html --xpath "$xmlfilter" - 2> /dev/null <<< "$out")
+    log -d -d -d "xmllint output: $out"
+  fi
+
   # Apply jq filter, if set
   if [[ -n "$out" && -n "$jqfilter" ]]; then
+    check_prog jq || return 1
     log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $jqfilter'"
     out=$(jq -rn --argjson j "$out" "\$j | $jqfilter")
     log -d -d -d "jq output: $out"
@@ -1378,7 +1388,14 @@ _version_filter() { # helper_function
 }
 
 # Function to determine if function should be run with sudo_exec and do it if so
+# Return Codes:
+#   0: success -- process output
+#   2: non-error -- do not process output
+#   4: non-error -- no sudo_regex matches
+#   3: error -- sudo_regex matched but sudo_exec returned an error
+#   *: error -- do not process output
 _use_sudo_exec() { # helper_function
+  [[ -z "$sudo_user" ]] && { log -d "sudo_user not defined" ; return 2 ; }
   $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 2 ; }
   log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
 
@@ -1576,110 +1593,6 @@ libratbag_git_latest() { # no_auto
     head -n1
 }
 
-mollysocket_docker() {
-  docker_compose_exec mollysocket -V | awk '{print $2;exit}'
-}
-
-mysql_docker() {
-  docker_compose_exec mysqld -V | awk '{print $3;exit}'
-}
-
-naemon_docker() {
-  docker_compose_exec naemon --version | \
-    awk '{if (match($NF, /^[0-9][0-9.]+/,a)){gsub(/\.$/,"",a[0]);print a[0]}else print $NF;exit}'
-}
-
-nagios_docker() {
-  docker_compose_exec cat /etc/versions/nagios.txt
-}
-
-nextcloud_latest() { # no_auto
-  curl --no-progress-meter "https://nextcloud.com/changelog/" | \
-    awk -F'[/"]' '
-      /\/download\.nextcloud\.com\/server\/releases\/nextcloud-.*\.tar\.bz2/ {
-        gsub(/^nextcloud-/, "", $9)
-        gsub(/\.tar\..*$/,"",$9)
-        print $9
-        exit
-      }'
-}
-
-# To handle multiple different nginx types running, additional functions will have to be made
-nginx_docker() {
-  docker_compose_exec nginx -V 2>&1 | \
-    awk '/^nginx version: /{sub(/^.*nginx\//,"");print;exit}'
-}
-
-nginx_docker_mainline_latest() { # no_auto
-  curl --no-progress-meter "https://hub.docker.com/_/nginx" | \
-    awk -F '[><]' '
-      />mainline</ {
-        for (i=1; i<NF; i++)
-          if ($i !~ /(^$|^(a|p|code|span|svg|path) |^\/[a-z]|^(, |[^[:alnum:]])$)/) {
-            printf "release-%s", $i
-            exit
-          }
-      }'
-}
-
-ntfy_docker() {
-  docker_compose_exec ntfy --help | awk '/^ntfy [0-9]/{print $2;exit}'
-}
-
-octoprint_docker() {
-  docker_compose_exec octoprint --version | awk '{print $NF;exit}'
-}
-
-ollama_docker() {
-  docker_compose_exec ollama -v | awk '{print $4;exit}'
-}
-
-ollama_ipex_llm_docker() {
-  docker_compose_exec cat /ollama/portable_version.txt | \
-    sed -r 's/^ollama-ipex-llm-(.*)-ubuntu.tgz$/\1/'
-}
-
-ollama_ipex_llm_latest() { # no_auto
-  check_prog jq || return 1
-  curl --no-progress-meter "https://api.github.com/repos/ipex-llm/ipex-llm/releases" | \
-    jq -r '.[] | select(.tag_name=="v2.3.0-nightly") | .assets[] | .name' 2> /dev/null | \
-    grep -E "^ollama-.*-ubuntu\.tgz" | sort -V | tail -n1 | \
-    sed -r 's/^ollama-ipex-llm-(.*)-ubuntu.tgz$/\1/'
-}
-
-opencloud_docker() {
-  docker_compose_exec opencloud version | awk '/^Version:/{sub(/^Version: /,"");print;exit}'
-}
-
-openregex_docker() {
-  docker_compose_exec cat /app/CHANGELOG.md | \
-    awk -F '[][]' '
-      /^## \[([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9_]+)?)] - ([0-9]{4}-[0-9]{2}-[0-9]{2})/ {
-        print $2
-        exit
-      }'
-}
-
-owncloud_docker() {
-  docker_compose_exec cat /var/www/owncloud/version.php | \
-    awk -F "'" '/\$OC_VersionString[[:space:]]*=/{print $2;exit}'
-}
-
-pagefind_docker() {
-  check_prog docker || return 1
-
-  # Run through sudo exec if necessary
-  out=$(_use_sudo_exec "$@") ; ret=$?
-  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
-
-  docker run --rm pagefind pagefind --version | awk '{print $NF;exit}'
-}
-
-php_latest() { # no_auto
-  curl --no-progress-meter "https://www.php.net/downloads.php?usage=web&os=linux&osvariant=linux-debian&version=default&source=Y" | \
-    awk -F '["/]' '/<a href="\/distributions\/php-[^"]+\.tar\.gz">/{gsub(/\.tar\.gz/,"",$4);print $4;exit}'
-}
-
 pihole_docker() {
   docker_logs pihole 2>&1 | awk '/Pi-hole version is v[0-9]/ { print $4;exit}'
 }
@@ -1690,42 +1603,6 @@ piper_git_latest() { # no_auto
     xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
     grep -iv "^All time$" | \
     head -n1
-}
-
-plex_docker() {
-  local out
-  out=$(_curl_api)
-  [[ -n "$out" ]] && \
-  awk '
-    /^<MediaContainer/ {
-      for (i = 2; i < NF; i++) {
-        split($i, a, "=")
-        if (a[1] == "version") {
-          split(substr(a[2], 2, length(a[2]) - 2), v, "-")
-          print v[1]
-        }
-      }
-      exit
-    }' <<< "$out"
-}
-
-plex_latest() { # no_auto
-  check_prog jq || return 1
-  curl --no-progress-meter "https://plex.tv/pms/downloads/5.json?channel=plexpass" | \
-    jq -r '.["computer"]["Linux"].version' 2> /dev/null | \
-    awk -F- '{print $1;exit}'
-}
-
-portainer_agent_docker() {
-  docker_compose_exec wget --no-check-certificate -qSO- "https://127.0.0.1:9001/ping" 2>&1 | \
-    awk '/Portainer-Agent: /{print $2;exit}'
-}
-
-privatebin() {
-  local out
-  out=$(_curl_api)
-  [[ -n "$out" ]] && \
-    awk -F '[><]' '/<p class="col-md-1 col-xs-4 text-center">[^<]+<\/p>/{print $3;exit}' <<< "$out"
 }
 
 proton_ge() {
@@ -1762,71 +1639,9 @@ restreamer_docker() {
     grep restreamer-v | sed -r 's/^.*:"restreamer-(v[^"]+)".*$/\1/'
 }
 
-routeros_latest() {
-  check_prog xmllint || return 1
-  curl --no-progress-meter -L "https://cdn.mikrotik.com/routeros/latest-stable.rss" | \
-    xmllint --xpath "string(/rss/channel/item/link)" - 2> /dev/null | sed -r 's#^https?://.*mikrotik\.com/download\?v=##'
-}
-
 seafile_client_appimage() {
   realpath "$HOME"/.local/share/AppImage/Seafile-x86_64.AppImage | \
     sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
-}
-
-seafile_client_appimage_latest() { # no_auto
-  check_prog xmllint || return 1
-  curl --no-progress-meter "https://www.seafile.com/en/download/" | \
-    xmllint --html --xpath 'string(//h3[contains(text(), "Client for Linux")]/following-sibling::p/following-sibling::a[contains(@href, "Seafile-x86_64-")]/@href)' - 2>/dev/null | \
-    sed -r 's#^.*/Seafile-[^-]+-(.*)\.AppImage#\1#'
-}
-
-slzb_core_latest() {
-  check_prog jq || return 1
-
-  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[0]}" ; return 1; }
-  local url esptype out
-  mapfile -t url     < <(get_config_value "$rcfile" "${FUNCNAME[0]}" url)
-  mapfile -t esptype < <(get_config_value "$rcfile" "${FUNCNAME[0]}" esp_type)
-  (( ${#url[@]} == 0 ))     && { log -e "Could not read ${FUNCNAME[0]} URL from $rcfile" ; return 1 ; }
-  (( ${#esptype[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} EspType from $rcfile" ; return 1 ; }
-
-  local fw_url
-  fw_url=$(curl --no-progress-meter --compressed "${url[0]}" 2>&1 | \
-    awk -F"'" '/^const espFwInfoUrl[[:space:]]*=/{print $2;exit}')
-  log -d -d "fw_url = $fw_url"
-  [[ ! $fw_url =~ ^https?:// ]] && { log -e "Could not get firmware url from ${url[0]}" ; return 1 ; }
-  log -d -d "fw_url=${fw_url}${esptype[0]}" >&2
-  out=$(curl --no-progress-meter "${fw_url}${esptype[0]}")
-  log -d -d "Curl Output: $out"
-  [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.["fw"][] | select(.dev == false) | .ver' 2> /dev/null)
-  log -d -d "Jq Output: $out"
-  [[ -n "$out" ]] && out=$(grep -vP "\.dev.+$" <<< "$out")
-  log -d -d "Sed Output: $out"
-  [[ -n "$out" ]] && sort -V <<< "$out" | \
-    tail -n1
-}
-
-slzb_radio_latest() {
-  check_prog jq || return 1
-
-  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[0]}" ; return 1; }
-  local url chip type
-  mapfile -t url  < <(get_config_value "$rcfile" "${FUNCNAME[0]}" url)
-  mapfile -t chip < <(get_config_value "$rcfile" "${FUNCNAME[0]}" chip)
-  mapfile -t type < <(get_config_value "$rcfile" "${FUNCNAME[0]}" "type")
-  (( ${#url[@]} == 0 ))  && { log -e "Could not read ${FUNCNAME[0]} URL from $rcfile" ; return 1 ; }
-  (( ${#chip[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} Chip from $rcfile" ; return 1 ; }
-  (( ${#type[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} Type from $rcfile" ; return 1 ; }
-
-  local fw_url
-  fw_url=$(curl --no-progress-meter --compressed "${url[0]}" 2>&1 | \
-    awk -F"'" '/^const zbFwInfoUrl[[:space:]]*=/{print $2;exit}')
-  [[ ! $fw_url =~ ^https?:// ]] && return 1
-  curl --no-progress-meter "$fw_url" | \
-    jq -r --arg chip "${chip[0]}" --arg type "${type[0]}" \
-      '.[$chip][] | select(.type == $type) | .rev' 2> /dev/null| \
-    sort -V | \
-    tail -n1
 }
 
 splunk() {
@@ -1845,38 +1660,10 @@ splunk_forwarder() {
   fi
 }
 
-splunk_unix_ta_latest() {
-  check_prog jq || return 1
-  check_prog xmllint || return 1
-  curl --no-progress-meter -L "https://splunkbase.splunk.com/app/833" | \
-    xmllint --html --xpath "string(//html/body/script[@id='__NEXT_DATA__'])" - 2> /dev/null | \
-    jq -r '.props.pageProps.appDetails.release.name' 2> /dev/null
-}
-
-tasmobackup() {
-  /usr/bin/curl --no-progress-meter "http://127.0.0.1:8259" | \
-    awk '/>TasmoBackup .+ by Dan Medhurst</ {print $6;exit}'
-}
-
-truenas_latest() { # no_auto
-  check_prog jq || return 1
-  curl --no-progress-meter -L "https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1" | \
-    jq -r '.version' 2> /dev/null
-}
-
 vscode_docker() {
   local containername
   containername=$(_docker_container_search "${FUNCNAME[0]%_docker}") || return 1
   docker_logs "${containername}" 2>&1 | awk '/] info  code-server [0-9]/{print $4; exit}'
-}
-
-yourls() {
-  # Create a ver.php in the root of the yourls directory:
-  # <?php
-  # require_once( dirname(__FILE__).'/includes/load-yourls.php' );
-  # print("{\n  \"version\": \"" . YOURLS_VERSION . "\"\n}\n");
-  # ?>
-  _curl_api
 }
 
 zigbee2mqtt() {
@@ -2390,7 +2177,7 @@ main() { # utility_function
   saved_docker_seconds=$docker_seconds
   saved_compose_file=$compose_file
 
-  local tmpstring sw_skip_vflag=() sw_jq=() sw_search=() sw_presed=() sw_postsed=()
+  local tmpstring sw_skip_vflag=() sw_jq=() sw_xml=() sw_search=() sw_presed=() sw_postsed=()
   local sw_name sw_check_set tmp_name sw_orig sw_tag sw_project
 
   # TODO: Turn into function?
@@ -2533,6 +2320,7 @@ main() { # utility_function
       sw_skip_vflag=(-V)
       sw_search=()
       sw_jq=()
+      sw_xml=()
       sw_presed=()
       sw_postsed=()
 
@@ -2550,12 +2338,17 @@ main() { # utility_function
       sw_name=$sw
       # sw_tag=$(grep -Po "(?<=!!)$AUTO_CHECKS$" <<< "$sw_name")
       sw_tag=$(sed -r "s/^.*"'!!'"$AUTO_CHECKS$/\1/" <<< "$sw_name")
-      while [[ "$sw_name" =~ ^(jq=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
+      while [[ "$sw_name" =~ ^(jq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
         case "$sw_name" in
           jq=*)
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#jq=*!!}
             sw_jq+=(-j "${tmpstring#jq=}")       # The last one will be used
+            ;;
+          xml=*)
+            tmpstring=${sw_name%%!!*}
+            sw_name=${sw_name#xml=*!!}
+            sw_xml+=(-x "${tmpstring#xml=}")      # The last one will be used
             ;;
           presed=*)
             tmpstring=${sw_name%%!!*}
@@ -2601,6 +2394,7 @@ main() { # utility_function
       log -d -d "sw_project=$sw_project"
       log -d -d "sw_skip_vflag=${sw_skip_vflag[*]}"
       log -d -d "sw_jq=${sw_jq[*]}"
+      log -d -d "sw_xml=${sw_xml[*]}"
       log -d -d "sw_search=${sw_search[*]}"
       log -d -d "sw_presed=${sw_presed[*]}"
       log -d -d "sw_postsed=${sw_postsed[*]}"
@@ -2753,9 +2547,9 @@ main() { # utility_function
             (( ret != 0 )) && log -e "Could not get $sw_name version with sudo" && continue
           else
             if [[ "$sw" =~ !!$AUTO_CHECKS && " ${app_list[*]} ${app_alias_list[*]} " != *" $sw "* ]]; then
-              log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_jq[*]} ${sw_search[*]} ${sw_presed[*]} ${sw_postsed[*]} $sw_name' to get version"
+              log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_jq[*]} ${sw_xml[*]} ${sw_search[*]} ${sw_presed[*]} ${sw_postsed[*]} $sw_name' to get version"
               version=$(_auto_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" \
-                "${sw_jq[@]}" "${sw_search[@]}" "${sw_presed[@]}" "${sw_postsed[@]}" "$sw_name")
+                "${sw_jq[@]}" "${sw_xml[@]}" "${sw_search[@]}" "${sw_presed[@]}" "${sw_postsed[@]}" "$sw_name")
             else
               log -d -d -d "Running $sw to get version"
               version=$($sw)

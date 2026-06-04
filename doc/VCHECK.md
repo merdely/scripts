@@ -149,6 +149,9 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/nextcloud!!docker_tags_latest
 [vcheck:nginx_docker_latest]
 check: sed=s#-alpine##!!search=^v?[0-9]+(\.[0-9]+){2,3}-alpine$!!docker.io/nginx!!docker_tags_latest
 
+[vcheck:nginx_docker_mainline_latest]
+check: search=>mainline<!!presed=s#^.*><code [^>]+">##!!presed=s#</code>,.*$##!!https://hub.docker.com/_/nginx!!curl
+
 [vcheck:ntfy_docker_latest]
 check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/binwiederhier/ntfy!!docker_tags_latest
 
@@ -311,6 +314,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/golift/unpackerr!!docker_tags
 - opencloud: opencloud-eu/opencloud!!github_latest
 - opensmtpd: OpenSMTPD/OpenSMTPD!!github_latest
 - pagefind: Pagefind/pagefind!!github_latest
+- php: php/php-src!!github_latest
 - pihole: pi-hole/pi-hole!!github_latest
 - portainer: portainer/portainer!!github_latest
 - pot-provider: Brainicism/bgutil-ytdlp-pot-provider!!github_latest
@@ -490,10 +494,21 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - mariadb: `sed=s#-MariaDB.*$##!!mariadb!!mariadbd -V!!docker_exec`
 - meilisearch: `meilisearch!!meilisearch -V!!docker_exec`
 - memcached: `memcached!!memcached --version!!docker_exec`
-- molly_guard_latest: `search=<title>debian!!presed=s#^.*<title>debian/##!!presed=s#</title>##!!https://salsa.debian.org/debian/molly-guard/-/tags?format=atom!!curl`
+- mollysocket: `mollysocket!!mollysocket -V!!docker_exec`
+- mysql: `mysql!!mysqld -V!!docker_exec`
+- naemon: `naemon!!naemon --version!!docker_exec`
+- my_nagios_docker: `nagios!!cat /etc/versions/nagios.txt!!docker_exec`
+- nginx: `nginx!!nginx -V!!docker_exec`
+- ntfy: `search=^ntfy [0-9]!!ntfy!!ntfy --help!!docker_exec`
+- octoprint: `octoprint!!octoprint --version!!docker_exec`
+- ollama: `ollama!!ollama --version!!docker_exec`
+- opencloud: `search=^Version:!!opencloud!!opencloud version!!docker_exec`
+- openregex: `search=^## \[[0-9]!!remove=-dev\]!!openregex!!cat /app/CHANGELOG.md!!docker_exec`
+- owncloud: `search=\$OC_VersionString[[:space:]]*=!!owncloud!!cat /var/www/owncloud/version.php!!docker_exec`
 - open-webui: `jq=.version!!open-webui!!cat /app/package.json!!docker_exec`  
 - php_fpm_docker: `search=^php85-common!!php-fpm!!apk list --installed!!docker_exec`
 - portainer_docker: `portainer!!/portainer --version!!docker_exec`
+- portainer_agent_docker: `search=Portainer-Agent!!portainer_agent!!wget --no-check-certificate -qSO- https://127.0.0.1:9001/ping!!docker_exec`
 - pot-provider: `jq=.version!!pot-provider!!cat /app/package.json!!docker_exec`
 - rsyslog_docker: `rsyslog!!rsyslogd -v!!docker_exec`
 - seerr: `jq=.version!!seerr!!cat /app/package.json!!docker_exec`
@@ -521,6 +536,7 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - local flip_2_dnd_pro mirror - `jq=.[].tag_name!!flip_2_dnd_pro!!curlapi`
 - joplin_server - `search=Joplin Server [0-9]!!sed=s#^#server-v#!!joplin!!curlapi`
 - opnsense_device - `sed=s#-[a-z][a-z0-9]+$##!!search=^OPNsense!!jq=.versions[]!!opnsense_device!!curlapi`
+- plex_docker - `search=^<MediaContainer!!plex!!curlapi`  # untested
 - routeros_device - `jq=.[] | select(.name=="routeros")|.version!!routeros_device!!curlapi`
 - slzb_core - `jq=.Info.sw_version!!slzb_core!!curlapi`
 - slzb_radio - `skip_version_filter!!jq=.Info.zb_version!!slzb_radio!!curlapi`
@@ -529,9 +545,31 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 
 ## Curl Checks
 
+- empiretech_camera: `xml=//div[@class="firmwares_content_container"]/div[1][contains(text(), "IPC-Color4K-T-S2")]/following-sibling::div[2]/text()!!https://empiretech01.com/pages/download-firmwares!!curl`
 - ffprobe_latest: `search=<th>release:!!https://johnvansickle.com/ffmpeg/!!curl`
 - filestash_latest: `search=APP_VERSION!!https://raw.githubusercontent.com/mickael-kerjean/filestash/refs/heads/master/server/common/constants.go!!curl`
 - librewolf_homebrew: `check: search=Current version:!!sed=s#^.*<a .*">##!!sed=s#,([0-9]+)#-\1#!!https://formulae.brew.sh/cask/librewolf#default!!curl`
+- molly_guard_latest: `search=<title>debian!!presed=s#^.*<title>debian/##!!presed=s#</title>##!!https://salsa.debian.org/debian/molly-guard/-/tags?format=atom!!curl`
+- nextcloud: `search=/download\.nextcloud\.com/server/releases/nextcloud-.*\.tar\.bz2<!!presed=s#^.*>nextcloud-##!!presed=s#\.tar\.bz2.*##!!https://nextcloud.com/changelog/!!curl`
+- plex: `jq=.["computer"]["Linux"].version!!https://plex.tv/pms/downloads/5.json?channel=plexpass!!curl`
+- privatebin: `search=<p class="col-md-1 col-xs-4 text-center">[^<]+</p>!!presed=s#^.*">##!!presed=s#</p>##!!https://privatebin.example.com!!curl`
+- routeros: `search=<title>RouterOS [0-9]!!https://cdn.mikrotik.com/routeros/latest-stable.rss!!curl`
+- seafile_client_appimage_latest: `search=Seafile-x86_64!!presed=s#^.*">##!!presed=s#</a>.*$##!!https://www.seafile.com/en/download/!!curl`
+- slzb_core_latest: `jq=.["fw"][]|select(.dev==false)|.ver!!remove=\.dev.*$!!https://updates.smlight.tech/services/api/slzb-06x-ota.php?type=ESP!!curl`  
+  type=ESP (0=ESP vs ESPs3 for type>SLZB_06MR4[14])
+- slzb_radio_latest: `skip_version_filter!!jq=.[0][]|select(.type=="0")|.rev!!https://updates.smlight.tech/services/api/slzb-06x-ota.php?type=ZB&format=slzb!!curl`  
+   chip=0 (slzb-06p10 (CC2652P), type=0 (coordinator)
 - splunk_enterprise: `search=<span class="version">!!https://www.splunk.com/en_us/download/splunk-enterprise.html!!curl`
 - splunk_forwarder: `search=<span class="version">!!https://www.splunk.com/en_us/download/universal-forwarder.html!!curl`
+- splunk_unix_ta: `search=">Latest Version[^<]+<!!presed=s#^.*<div [^>]+">Latest Version ##!!https://splunkbase.splunk.com/app/833!!curl`
+- tasmobackup: `search=>TasmoBackup .+ by Dan Medhurst<!!http://127.0.0.1:8259!!curl`
+- truenas: `jq=.version!!https://update.sys.truenas.net/scale/TrueNAS-SCALE-ElectricEel/manifest.json?download=1!!curl`
+- yourls: `https://yourls.tld/ver.php!!curl`  
+  Create a ver.php in the root of yourls with:
+  ```
+  <?php
+  require_once( dirname(__FILE__).'/includes/load-yourls.php' );
+  print("{\n  \"version\": \"" . YOURLS_VERSION . "\"\n}\n");
+  ?>
+  ```
 
