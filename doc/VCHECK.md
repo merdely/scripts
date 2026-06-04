@@ -357,6 +357,7 @@ check: search=^v?[0-9]+(\.[0-9]+){2,3}$!!docker.io/golift/unpackerr!!docker_tags
 - decode-config
 - chezmoi
 - forgejo-runner
+- librewolf
 - rclone
 - rofi-rbw
 - snapclient
@@ -482,7 +483,8 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 - gitea: `gitea!!gitea --version!!docker_exec`
 - gitlab: `search=gitlab-ce!!gitlab!!cat /opt/gitlab/version-manifest.txt!!docker_exec`
 - grafana: `search=Version [0-9]!!grafana!!grafana-server -v!!docker_exec`
-- jellyfin: `sed=s#^Jellyfin\.Server ##!!jellyfin!!/jellyfin/jellyfin --version!!docker_exec`
+- jellyfin: `sed=s#Jellyfin\.Server ##!!sed=s#\.[0-9]$##!!jellyfin!!/jellyfin/jellyfin --version!!docker_exec`
+- jellystat: `jq=.version!!jellystat!!wget -qO- http://127.0.0.1:3000/auth/isconfigured!!docker_exec`
 - open-webui: `jq=.version!!open-webui!!cat /app/package.json!!docker_exec`  
 - php_fpm_docker: `search=^php85-common!!php-fpm!!apk list --installed!!docker_exec`
 - portainer_docker: `portainer!!/portainer --version!!docker_exec`
@@ -511,6 +513,7 @@ The '/usr/bin/' part of the above check is only to demonstrate how to use a full
 
 - adguardhome_server - `jq=.version!!adguardhome_server!!curlapi`
 - local flip_2_dnd_pro mirror - `jq=.[].tag_name!!flip_2_dnd_pro!!curlapi`
+- joplin_server - `search=Joplin Server [0-9]!!sed=s#^#server-v#!!joplin!!curlapi`
 - opnsense_device - `sed=s#-[a-z][a-z0-9]+$##!!search=^OPNsense!!jq=.versions[]!!opnsense_device!!curlapi`
 - routeros_device - `jq=.[] | select(.name=="routeros")|.version!!routeros_device!!curlapi`
 - slzb_core - `jq=.Info.sw_version!!slzb_core!!curlapi`

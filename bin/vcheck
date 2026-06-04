@@ -24,15 +24,24 @@ export PATH
 # From https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
 # Their major, minor, patch, and prerelease groups break bookstack because of its leading 0
 # Changed 0|[1-9] to [0-9]
-SEMVER_MAJOR='(?P<major>[0-9]\d*)'
-SEMVER_MINOR='\.(?P<minor>[0-9]\d*)'
-SEMVER_PATCH='(?:\.(?P<patch>[0-9]\d*))?'
-SEMVER_PRERELEASE='(?:-(?P<prerelease>(?:[0-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:[0-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?'
-SEMVER_BUILDMETA='(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?'
-HOTFIX='(?:\.(?P<hotfix>[0-9]\d*))?'
-VER_YMD='(?P<year>[0-9]{4})[\._-](?P<month>[01]?[0-9])[\._-](?P<day>[0123]?[0-9])'
-LSVER='(?:-(?P<lsver>ls[0-9]+))?'
-SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
+# SEMVER_MAJOR='(?P<major>[0-9]\d*)'
+# SEMVER_MINOR='\.(?P<minor>[0-9]\d*)'
+# SEMVER_PATCH='(?:\.(?P<patch>[0-9]\d*))?'
+# SEMVER_PRERELEASE='(?:-(?P<prerelease>(?:[0-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:[0-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?'
+# SEMVER_BUILDMETA='(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?'
+# HOTFIX='(?:\.(?P<hotfix>[0-9]\d*))?'
+# VER_YMD='(?P<year>[0-9]{4})[\._-](?P<month>[01]?[0-9])[\._-](?P<day>[0123]?[0-9])'
+# LSVER='(?:-(?P<lsver>ls[0-9]+))?'
+# SEMVER_REGEX="(?:$SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
+SEMVER_MAJOR='([0-9][0-9]*)'
+SEMVER_MINOR='\.([0-9][0-9]*)'
+SEMVER_PATCH='(\.([0-9][0-9]*))?'
+SEMVER_PRERELEASE='(-(([0-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.([0-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?'
+SEMVER_BUILDMETA='(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?'
+HOTFIX='(\.([0-9][0-9]*))?'
+VER_YMD='([0-9]{4})[\._-]([01]?[0-9])[\._-]([0123]?[0-9])'
+LSVER='(-(ls[0-9]+))?'
+SEMVER_REGEX="($SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 export SEMVER_REGEX
 
 AUTO_CHECKS='(alpine_repo|aur|cat|codeberg|command|curl|curlapi|docker_exec|docker_inspect|docker_inspect_image|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
@@ -700,32 +709,26 @@ _command_check() { # helper_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local cmd=${1%/command}
+  local cmd=$1
+  log -d "cmd=$cmd"
   if command -v "$cmd" &> /dev/null; then
     log -d -d "Attemping '$cmd --version'"
     # shellcheck disable=SC2119
-    if out=$("$cmd" --version 2>&1 | _version_filter); then
-      echo "$out"
-      return 0
-    fi
+    out=$("$cmd" --version 2>&1)
+    log -d -d -d "$cmd --version: $out"
+    [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
     log -d -d "Attemping '$cmd -V'"
     # shellcheck disable=SC2119
-    if out=$("$cmd" -V 2>&1 | _version_filter); then
-      echo "$out"
-      return 0
-    fi
+    out=$("$cmd" -V 2>&1)
+    [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
     log -d -d "Attemping '$cmd version'"
     # shellcheck disable=SC2119
-    if out=$("$cmd" version 2>&1 | _version_filter); then
-      echo "$out"
-      return 0
-    fi
+    out=$("$cmd" version 2>&1)
+    [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
     log -d -d "Attemping '$cmd --help'"
     # shellcheck disable=SC2119
-    if out=$("$cmd" --help 2>&1 | _version_filter); then
-      echo "$out"
-      return 0
-    fi
+    out=$("$cmd" --help 2>&1)
+    [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
     log -e "Could not determine version for $1"
     return 1
   else
@@ -947,7 +950,7 @@ _docker_inspect() { # helper_function
 
   out=$(docker inspect --format='{{index .Config.Labels "version"}}' "$container" 2> /dev/null)
   log -d -d "version label = $out"
-  [[ -n "$out" ]] && grep -qP "$SEMVER_REGEX" <<< "$out" && { echo "$out" ; return 0 ; }
+  [[ -n "$out" ]] && grep -qE "$SEMVER_REGEX" <<< "$out" && { echo "$out" ; return 0 ; }
 
   out=$(_docker_image_search "$container")
   log -d -d "image_search = $out"
@@ -1191,7 +1194,7 @@ _docker_tags() { # helper_function
       if [[ -n "$hdrfile" ]]; then
         link=$(grep -i '^link:' "$hdrfile" | tr -d '\r')
         if grep -q 'rel="next"' <<< "$link"; then
-          next_path=$(grep -oP '<[^>]+>' <<< "$link" | tr -d '<>' | head -n 1)
+          next_path=$(sed -r 's/^.*(<[^>]+>).*$/\1/' <<< "$link" | tr -d '<>' | head -n 1)
           page_url="https://${site}${next_path}"
         else
           unset page_url
@@ -1353,11 +1356,14 @@ myaur_package() { # helper_function
 # shellcheck disable=SC2120
 _version_filter() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  out=$(grep -oP "$SEMVER_REGEX")
-  if grep -oPq "^$SEMVER_REGEX$" <<< "$out"; then
+  set -x
+  out=$(sed -r "s/^.*$SEMVER_REGEX.*$/\1/")
+  if grep -Eq "^$SEMVER_REGEX$" <<< "$out"; then
     echo "$out" | head -n1
+    set +x
     return 0
   fi
+  set +x
   return 1
 }
 
@@ -1556,22 +1562,12 @@ joplin_desktop() {
     awk '{print $0;exit}'
 }
 
-joplin_server() {
-  out=$(_curl_api)
-  [[ -n "$out" ]] && awk '/Joplin Server [0-9]/{gsub(/,$/,"",$3);print "server-v" $3;exit}' <<< "$out"
-}
-
 libratbag_git_latest() { # no_auto
   check_prog xmllint || return 1
   curl --no-progress-meter "https://github.com/libratbag/libratbag/commits/master/" | \
     xmllint --html --xpath '//span[@class="prc-Button-Label-pTQ3x"]/text()' - 2>/dev/null | \
     grep -iv "^All time$" | \
     head -n1
-}
-
-librespeed_docker() {
-  docker_compose_exec cat /var/www/html/speedtest.js | \
-    awk '/LibreSpeed by /{gsub(/^v/,"",$5);print $5;exit}'
 }
 
 librewolf() {
@@ -2591,7 +2587,8 @@ main() { # utility_function
 
       # For dynamic/auto checks, strip off preceding 
       sw_name=$sw
-      sw_tag=$(grep -Po "(?<=!!)$AUTO_CHECKS$" <<< "$sw_name")
+      # sw_tag=$(grep -Po "(?<=!!)$AUTO_CHECKS$" <<< "$sw_name")
+      sw_tag=$(sed -r "s/^.*"'!!'"$AUTO_CHECKS$/\1/" <<< "$sw_name")
       while [[ "$sw_name" =~ ^(jq=|sed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
         case "$sw_name" in
           jq=*)
