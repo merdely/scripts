@@ -862,7 +862,7 @@ _docker_exec() { # helper_function
 
   # Run through sudo exec if necessary
   out=$(_use_sudo_exec "$@") ; ret=$?
-  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d returning 19;return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local image image_search command=() out
   if (( $# == 1 )); then
@@ -901,7 +901,7 @@ _docker_copy() {
 
   # Run through sudo exec if necessary
   out=$(_use_sudo_exec "$@") ; ret=$?
-  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local image image_search srcfiles catfiles out
   if (( $# == 1 )); then
@@ -949,7 +949,7 @@ _docker_container_search() { # helper_function
 
   # Run through sudo exec if necessary
   out=$(_use_sudo_exec "$@") ; ret=$?
-  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local docker_ps out seconds
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
@@ -987,7 +987,7 @@ _docker_image_search() { # helper_function
 
   # Run through sudo exec if necessary
   out=$(_use_sudo_exec "$@") ; ret=$?
-  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local docker_ps out seconds
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
@@ -1026,7 +1026,7 @@ _docker_inspect() { # helper_function
 
   # Run through sudo exec if necessary
   out=$(_use_sudo_exec "$@") ; ret=$?
-  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   container=$(_docker_container_search "$1")
   (( $? == 19 )) && return 19
@@ -1069,7 +1069,7 @@ _docker_logs() { # helper_function
 
   # Run through sudo exec if necessary
   out=$(_use_sudo_exec "$@") ; ret=$?
-  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local image image_search=$1 out
   log -d "image_search=$image_search"
@@ -1092,7 +1092,7 @@ _docker_printenv() { # helper_function
 
   # Run through sudo exec if necessary
   out=$(_use_sudo_exec "$@") ; ret=$?
-  case $ret in 0) echo "$out" ; return 0 ;; 2|4) ;; *) log -d "_use_sudo_exec error $ret" ; return 1 ;; esac
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local image image_search variable out
   if (( $# == 1 )); then
@@ -1522,13 +1522,15 @@ _use_sudo_exec() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
 
   # shellcheck disable=SC2034
-  local regex rp out SUDO_EXEC_DEBUG=0
+  local regex rp out SUDO_EXEC_DEBUG=0 ret=0
   for regex in "${sudo_regexes[@]}"; do
     if [[ "${FUNCNAME[1]}" =~ $regex ]]; then
       log -v -v "Using sudo as $sudo_user to ${FUNCNAME[1]}"
       rp=$(realpath "$0")
       log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 SUDO_EXEC_DEBUG=$debug DOCKER_FILTER=$docker_filter DOCKER_SECONDS=$docker_seconds'"
       out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" SUDO_EXEC_DEBUG="$debug" DOCKER_FILTER="$docker_filter" DOCKER_SECONDS="$docker_seconds")
+      (( $? == 19 )) && { log -d "Returning 19" ; return 19 ; }
+      log -d "$1"
       log -d "sudo_exec ${FUNCNAME[1]} returned out='$out'"
       [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
       return 3
