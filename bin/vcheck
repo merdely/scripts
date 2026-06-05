@@ -6,12 +6,12 @@ PROGVER=1.1.0             # Program version
 PROGDATA=/etc/"$PROGNAME" # Default program data directory
 ALPINE_VER=""             # Global placeholder for current Alpine Linux version
 SUDO_EXEC=false           # Is this being run through sudo_exec
-SOURCED_LIBS=("$0")       # Array of sourced libraries - TODO review need
+SOURCED_LIBS=("$0")       # Array of sourced libraries
 DEBUG_EXIT=5              # Number of -d flags to print debug info and exit
 export PROGNAME PROGVER PROGDATA ALPINE_VER SUDO_EXEC SOURCED_LIBS DEBUG_EXIT
 
 # Define check for this program
-eval "$PROGNAME() { echo \$PROGVER; }" # { # utility_function
+eval "$PROGNAME() { echo \$PROGVER; }"
 
 # Add common bin dirs to the PATH
 PATH=$PATH:$HOME/.local/bin:/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin
@@ -35,11 +35,12 @@ export SEMVER_REGEX
 # TODO automate this similar to how _latest was done before
 # Define list of check types
 CHECK_LIST='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
-export CHECK_LIST
+CHECK_MODIFIERS='(prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter)'
+export CHECK_LIST CHECK_MODIFIERS
 
 # Store all temp files in a tempdir and delete the directory on exit
 TEMPDIR=$(mktemp -d)
-_cleanup() { # utility_function
+_cleanup() {
   local ret=$?
   log -d -d -d "Cleaning up $TEMPDIR"
   rm -Rf -- "$TEMPDIR"
@@ -52,7 +53,7 @@ trap 'exit 1' INT TERM
 
 # Older versions of bash don't have mapfile
 if ! command -v mapfile &> /dev/null; then
-  mapfile() { # utility_function
+  mapfile() {
     [[ "$1" == "-t" ]] && shift
     local arr=$1 i=0 line
     # shellcheck disable=SC2034
@@ -178,22 +179,6 @@ check_prog() { # utility_function
   return 1
 }
 
-# Get a list of docker checks with name|image|state|age
-# shellcheck disable=SC2120
-docker_checks() { # utility_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  ! command -v docker &> /dev/null && { log -d "docker command not found" ; return 1 ; }
-  local checks=() check name image state
-  while IFS='|' read -r name image state; do
-    [[ "$state" != "running" ]] && continue
-    check=$(image_search -c "$image")
-    [[ -z "$check" ]] && log -v "Could not find check for $name" >&2
-    checks+=("$check")
-  done < <(docker container ls --format='{{.Names}}|{{.Image}}|{{.State}}')
-  mapfile -t checks < <(printf '%s\n' "${checks[@]}" | sort -u)
-  printf '%s\n' "${checks[@]}"
-}
-
 # Drop privileges and run this program as $exec_user
 drop_privs() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
@@ -232,21 +217,6 @@ drop_privs() { # utility_function
   fi
 }
 
-# TODO Determine if needed anymore
-# Ensure that a check function exists
-function_exists() { # utility_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  (( $# == 0 )) && { log -e "Missing argument for ${FUNCNAME[0]}" ; return 1 ; }
-  [[ "$1" == "$PROGNAME" ]] && return 0
-  local flist=()
-  flist+=("${function_list[@]}")
-  flist+=("${function_alias_list[@]}")
-  (( debug >= 4 )) && set -x
-  [[ ! " ${flist[*]} " == *" $1 "* ]] && { set +x ; return 1; }
-  set +x
-  return 0
-}
-
 # Generate an authstring for curl from a token in the config file
 # Called with 'gen_authstring github'
 gen_authstring() { # utility_function
@@ -262,6 +232,16 @@ gen_authstring() { # utility_function
     return 0
   fi
   log -d -d -d "Cannot get '$section' $key from '$file'"
+  return 1
+}
+
+# Return a list of configuration sections
+get_section_list() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  if [[ -s "$rcfile" ]]; then
+    awk -F'[]:]' '/[[:space:]]*\[vcheck::[^\]]+\]/{print $3}' "$rcfile"
+    return 0
+  fi
   return 1
 }
 
@@ -431,7 +411,7 @@ usage_fold() { # utility_function
 
 ## Helper functions
 # Search alpine repo for latest version of a package
-alpine_repo_package() { # helper_function
+alpine_repo_package() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog xmllint "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
@@ -463,7 +443,7 @@ alpine_repo_package() { # helper_function
 }
 
 # Extract app image version from filename
-appimage_check() { # helper_function
+appimage_check() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
@@ -472,7 +452,7 @@ appimage_check() { # helper_function
 }
 
 # Search the AUR for a package version
-aur_package() { # helper_function
+aur_package() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local pkg=$1 out
@@ -507,14 +487,20 @@ aur_package() { # helper_function
 }
 
 # Search for the latest release of a Codeberg or Forgejo Repo
-codeberg_release() { # helper_function
+gitea_release() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  local site="https://codeberg.org" section=codeberg out
+  local site="https://gitea.com" section=gitea out
   local opt OPTARG OPTIND=1
   while getopts ":f" opt; do
     case "$opt" in
+      c) section=codeberg
+         site="https://codeberg.org"
+         ;;
       f) section=forgejo
          site="https://code.forgejo.org"
+         ;;
+      g) section=gitea
+         site="https://gitea.com"
          ;;
       *) log -w "Invalid flag ($OPTARG)" ;;
     esac
@@ -540,7 +526,7 @@ codeberg_release() { # helper_function
 }
 
 # Run different variations of 'command --version' to get a version for a command
-command_check() { # helper_function
+command_check() { # check_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -580,7 +566,7 @@ command_check() { # helper_function
 # To use this function, there must be a section in $rcfile
 # The section should be named after the check using curl_api
 # The section must include url and optionally username & password or apikey
-curl_api() { # helper_function
+curl_api() { # check_function
   log -d "Running ${FUNCNAME[0]} for ${FUNCNAME[1]}"
   local url username password apikey out
 
@@ -615,7 +601,7 @@ curl_api() { # helper_function
 }
 
 # Search for a container name via the image or name fields
-docker_container_search() { # helper_function
+docker_container_search() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -654,7 +640,7 @@ docker_container_search() { # helper_function
 }
 
 # Copy files from a container and search them for a string
-docker_copy() { # helper_function
+docker_copy() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -703,7 +689,7 @@ docker_copy() { # helper_function
 }
 
 # Run a command in a docker container to get version information
-docker_exec() { # helper_function
+docker_exec() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -743,7 +729,7 @@ docker_exec() { # helper_function
 }
 
 # Search name or image fields to get a docker image name
-docker_image_search() { # helper_function
+docker_image_search() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -781,7 +767,7 @@ docker_image_search() { # helper_function
 }
 
 # Use docker inspect information to get version info
-docker_inspect() { # helper_function
+docker_inspect() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -819,7 +805,7 @@ docker_inspect() { # helper_function
 }
 
 # Look through docker logs for version info
-docker_logs() { # helper_function
+docker_logs() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   if [[ -z "$COMPOSE_FILE" ]]; then
@@ -850,7 +836,7 @@ docker_logs() { # helper_function
 }
 
 # Print a docker environment variable for version info
-docker_printenv() { # helper_function
+docker_printenv() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -892,7 +878,7 @@ docker_printenv() { # helper_function
 }
 
 # Search a docker registry for tags for the latest version of a container
-docker_tags() { # helper_function
+docker_tags() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
@@ -1076,7 +1062,7 @@ docker_tags() { # helper_function
 }
 
 # Search flathub for the newest version of a flatpak
-flathub_version() { # helper_function
+flathub_version() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1090,7 +1076,7 @@ flathub_version() { # helper_function
 }
 
 # Print the version info for a flatpak
-flatpak_version() { # helper_function
+flatpak_version() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog flatpak "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1103,7 +1089,7 @@ flatpak_version() { # helper_function
 }
 
 # Check out a git repo and use 'git describe' or 'git tag' to get version info
-git_checkout() { # helper_function
+git_checkout() { # check_function
   log -d -d -d "Running ${FUNCNAME[0]} $*"
   check_prog git "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
@@ -1149,7 +1135,7 @@ git_checkout() { # helper_function
 }
 
 # Get the latest release of a Github repo
-github_release() { # helper_function
+github_release() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1171,7 +1157,7 @@ github_release() { # helper_function
 }
 
 # Get tags from a Github repo
-github_tags() { # helper_function
+github_tags() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   local output err out
@@ -1202,7 +1188,7 @@ github_tags() { # helper_function
 }
 
 # Get the latest release of a Gitlab repo
-gitlab_release() { # helper_function
+gitlab_release() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1228,7 +1214,7 @@ gitlab_release() { # helper_function
 }
 
 # Get the tags of a Gitlab repo
-gitlab_tags() { # helper_function
+gitlab_tags() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1254,7 +1240,7 @@ gitlab_tags() { # helper_function
 }
 
 # Get version information for an installed pacman package
-pacman_package() {
+pacman_package() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local pkg=$1 out
@@ -1276,7 +1262,7 @@ pacman_package() {
 #   19: non-error -- docker container should not be checked right now
 #   3: error -- sudo_regex matched but sudo_exec returned an error
 #   *: error -- do not process output
-use_sudo_exec() { # helper_function
+use_sudo_exec() { # utility_function
   [[ -z "$sudo_user" ]] && { log -d "sudo_user not defined" ; return 2 ; }
   $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 2 ; }
   log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
@@ -1300,7 +1286,7 @@ use_sudo_exec() { # helper_function
 }
 
 # Get ink information from an inkjet printer
-printer_ink_check() { # remote_host
+printer_ink_check() { # check_function
   [[ -z "$PRINTER" ]] && { log -e "Printer not defined" ; usage 1 ; }
   local errjson inkfile inkdata
 
@@ -1412,7 +1398,7 @@ printer_ink_check() { # remote_host
 }
 
 # Run version checks
-execute_check() { # helper_function
+execute_check() { # utility_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
 
@@ -1458,31 +1444,32 @@ execute_check() { # helper_function
 
   case "$tag" in
     # alpine_docker) out=$(alpine_docker_package "$project") ; ret=$? ;;
-    alpine_repo) out=$(alpine_repo_package "$project") ; ret=$? ;;
-    appimage) out=$(appimage_check "$project") ; ret=$? ;;
-    aur) out=$(aur_package "$project") ; ret=$? ;;
-    cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
-    codeberg) out=$(codeberg_release "$project") ; ret=$? ;;
-    command) out=$(command_check "$project") ; ret=$? ;;
-    curl) out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
-    curlapi) out=$(curl_api "$project") ; ret=$? ;;
-    docker_copy) out=$(docker_copy "$project") ; ret=$? ;;
-    docker_exec) out=$(docker_exec "$project") ; ret=$? ;;
-    docker_inspect) out=$(docker_inspect "$project") ; ret=$? ;;
-    docker_logs) out=$(docker_logs "$project") ; ret=$? ;;
+    alpine_repo)     out=$(alpine_repo_package "$project") ; ret=$? ;;
+    appimage)        out=$(appimage_check "$project") ; ret=$? ;;
+    aur)             out=$(aur_package "$project") ; ret=$? ;;
+    cat)             check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
+    codeberg)        out=$(gitea_release -c "$project") ; ret=$? ;;
+    command)         out=$(command_check "$project") ; ret=$? ;;
+    curl)            out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
+    curlapi)         out=$(curl_api "$project") ; ret=$? ;;
+    docker_copy)     out=$(docker_copy "$project") ; ret=$? ;;
+    docker_exec)     out=$(docker_exec "$project") ; ret=$? ;;
+    docker_inspect)  out=$(docker_inspect "$project") ; ret=$? ;;
+    docker_logs)     out=$(docker_logs "$project") ; ret=$? ;;
     docker_printenv) out=$(docker_printenv "$project") ; ret=$? ;;
-    docker_tags) out=$(docker_tags "$project") ; ret=$? ;;
-    flatpak) out=$(flatpak_version "$project") ; ret=$? ;;
-    flathub) out=$(flathub_version "$project") ; ret=$? ;;
-    forgejo) out=$(codeberg_release -f "$project") ; ret=$? ;;
-    gitdescribe) out=$(git_checkout -d "$project") ; ret=$? ;;
-    gittags) out=$(git_checkout -t "$project") ; ret=$? ;;
-    github) out=$(github_release "$project") ; ret=$? ;;
-    github_tags) out=$(github_tags "$project") ; ret=$? ;;
-    gitlab) out=$(gitlab_release "$project") ; ret=$? ;;
-    gitlab_tags) out=$(gitlab_tags "$project") ; ret=$? ;;
-    pacman) out=$(pacman_package "$project") ; ret=$? ;;
-    $PROGNAME) out=$($PROGNAME) ; ret=$? ;;
+    docker_tags)     out=$(docker_tags "$project") ; ret=$? ;;
+    flatpak)         out=$(flatpak_version "$project") ; ret=$? ;;
+    flathub)         out=$(flathub_version "$project") ; ret=$? ;;
+    forgejo)         out=$(gitea_release -f "$project") ; ret=$? ;;
+    gitdescribe)     out=$(git_checkout -d "$project") ; ret=$? ;;
+    gittags)         out=$(git_checkout -t "$project") ; ret=$? ;;
+    gitea)           out=$(gitea_release -g "$project") ; ret=$? ;;
+    github)          out=$(github_release "$project") ; ret=$? ;;
+    github_tags)     out=$(github_tags "$project") ; ret=$? ;;
+    gitlab)          out=$(gitlab_release "$project") ; ret=$? ;;
+    gitlab_tags)     out=$(gitlab_tags "$project") ; ret=$? ;;
+    pacman)          out=$(pacman_package "$project") ; ret=$? ;;
+    $PROGNAME)       out=$($PROGNAME) ; ret=$? ;;
     *)
       log -e "Unknown package check: $tag"
       return 1 ;;
@@ -1571,7 +1558,7 @@ execute_check() { # helper_function
 }
 
 # Print main program usage info
-usage() { # utility_function
+usage() {
   echo "usage: $PROGNAME [Options] SOFTWARE"
   echo "Options:"
   echo "  -h|--help     : print help text"
@@ -1632,21 +1619,7 @@ usage() { # utility_function
 } # usage()
 
 # Main program code
-main() { # utility_function
-  print_opts=(help apps remote_apps latest_apps non_auto_apps helper_functions functions docker example_config version)
-  print_opt_descriptions=(
-    "This help text"
-    "Application/Service List"
-    "Remote Host Application/Service List"
-    "Latest Application List"
-    "Non-Automatic/Disabled Latest Application List"
-    "All Helper Functions"
-    "All Application Version Check Functions"
-    "List of Docker Checks"
-    "Example Configuration File with all options documented"
-    "Application Version"
-  )
-
+main() {
   # Set up ansi escape codes
   e=$'\e'
   b="${e}[1m"
@@ -1677,20 +1650,22 @@ main() { # utility_function
   cache_dir="$HOME"/.cache/"$PROGNAME"
 
   # App Lists
-  mapfile -t helper_list < <(awk '/^[^#].+[(]) {[[:space:]]+#[[:space:]]*helper_function/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t helper_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_helper/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t no_auto_list < <(awk '/^[^#].+[(]) {[[:space:]]+#[[:space:]]*no_auto/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ { gsub(/\(\).*$/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t no_auto_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_no_auto/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t remote_list < <(awk '/^[^#].+[(]) {[[:space:]]+#[[:space:]]*remote_host/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ { gsub(/\(\).*$/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t remote_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_remote/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t app_list < <(awk '/^[^#].+[(]) {$/ && ! /[(]) {[[:space:]]+#[[:space:]]*helper_function/ && $1 !~ /_latest\(\)$/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ {gsub(/\(\)$/,"",$1);print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t app_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_app/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t latest_list < <(awk '/^[^#].+[(]) {$/ && ! /[(]) {[[:space:]]+#[[:space:]]*helper_function/ && ! /[(]) {[[:space:]]+#[[:space:]]*no_auto/ && $1 ~ /_latest\(\)/ && ! /[[:space:]]+#[[:space:]]*(utility_function|alias)/ {gsub(/\(\)$/,"",$1);print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t latest_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_latest/ && /[[:space:]]+#[[:space:]]*helper_alias/ && ! /[[:space:]]+#[[:space:]]*utility_function/ {sub(/^alias[[:space:]]+/,"");sub(/=.*$/,"");print}' "${SOURCED_LIBS[@]}")
-  mapfile -t function_list < <(awk '/^[^#].+[(]) {/ && ! /[(]) {[[:space:]]+#[[:space:]]*helper_function/ && ! /[[:space:]]+#[[:space:]]*alias/ && ! /[[:space:]]+#[[:space:]]*utility_function/ {gsub(/\(\).*$/,"",$1);print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t function_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t utility_list < <(awk '/^[^#].+[(]) {[[:space:]]+#[[:space:]]*utility_function/ && ! /[[:space:]]+#[[:space:]]*(alias)/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
-  mapfile -t utility_alias_list < <(awk '/^[^#].+[(]) {.*}[[:space:]]+#[[:space:]]*alias_utility/ && ! /[[:space:]]+#[[:space:]]*utility_function/ { gsub(/\(\)/,"",$1); print $1}' "${SOURCED_LIBS[@]}")
+  mapfile -t check_list < <(awk '
+    /^[^#].+[(]) {[[:space:]]+#[[:space:]]*check_function/ {
+      gsub(/\(\)/,"",$1)
+      print $1
+    }' "${SOURCED_LIBS[@]}")
+  check_list+=("$PROGNAME")
+  mapfile -t helper_list < <(awk '
+    /^[^#].+[(]) {[[:space:]]+#[[:space:]]*helper_function/ {
+      gsub(/\(\)/,"",$1)
+      print $1
+    }' "${SOURCED_LIBS[@]}")
+  mapfile -t utility_list < <(awk '
+    /^[^#].+[(]) {[[:space:]]+#[[:space:]]*utility_function/ {
+      gsub(/\(\)/,"",$1)
+      print $1
+    }' "${SOURCED_LIBS[@]}")
 
   # Make sure mqtt commands are found
   check_prog curl || exit 1
@@ -1820,6 +1795,43 @@ main() { # utility_function
     log -d -d "Not using a config file (rcfile=$rcfile)"
   fi
 
+  # Get defined checks
+  local checks=() lists=() item
+  local section_list=() docker_checks=() non_auto_latest_checks=() latest_checks=() version_checks=() section
+  mapfile -t section_list < <(get_section_list)
+  for section in "${section_list[@]}"; do
+    mapfile -t checks < <(get_config_value "$rcfile" "$PROGNAME::$section" check)
+    mapfile -t lists < <(get_config_value "$rcfile" "$PROGNAME::$section" list)
+
+    if (( ${#checks[@]} > 0 )); then
+      if [[ $section == *_latest ]]; then
+        non_auto_latest_checks+=("$section")
+      else
+        version_checks+=("$section")
+      fi
+    fi
+
+    for item in "${checks[@]}"; do
+      if [[ "$item" == *!!* && "${item##*!!}" == docker_* && "$section" != *_latest ]]; then
+        docker_checks+=("$section")
+      fi
+    done
+    for item in "${lists[@]}"; do
+      while [[ "$item" =~ ^$CHECK_MODIFIERS ]]; do
+        item=${item#*!!}
+      done
+      if [[ $section == "latest" ]]; then
+        latest_checks+=("$item")
+      fi
+      if [[ "$item" == *!!* ]]; then
+        version_checks+=("$item")
+      fi
+      if [[ "$item" == *!!* && "${item##*!!}" == docker_* && "$section" != *_latest ]]; then
+        docker_checks+=("$item")
+      fi
+    done
+  done
+
   # Validate output_mode
   case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
@@ -1833,8 +1845,8 @@ main() { # utility_function
   # Drop privileges if running as root and $exec_user is defined
   [[ $(id -u) == 0 && -n "$exec_user" ]] && drop_privs "$exec_user" "${args_orig[@]}"
 
-  local rcvalue=()
   # Read configuration file options
+  local rcvalue=()
   if [[ -s "$rcfile" ]]; then
     rcvalue=(); mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
     (( ${#rcvalue[@]} > 0 )) && cache_dir=${rcvalue[0]}
@@ -1887,6 +1899,28 @@ main() { # utility_function
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && prepend_name=${rcvalue[0]}
 
   fi # if [[ -s "$rcfile" ]]; then
+  local print_opts=(
+    help
+    app_checks
+    latest_checks
+    non_auto_latest_checks
+    docker_checks
+    check_functions
+    utility_functions
+    example_config
+    version
+  )
+  local print_opt_descriptions=(
+    "This help text"
+    "Application Version Checks"
+    "Latest Application Version Checks"
+    "Non-Automatic Latest Application Version Checks"
+    "Docker Checks"
+    "Check Functions"
+    "Utility Functions"
+    "Example Configuration File with all options documented"
+    "Application Version"
+  )
 
   local i=0 n=0 checks=()
   if [[ -n "$print_opt" ]]; then
@@ -1898,37 +1932,14 @@ main() { # utility_function
             printf '    %-*s : %s\n' "$n" "${print_opts[i]}" "${print_opt_descriptions[i]}"
           done
           exit ;;
-          # print_list "$print_single" -l "Available print options" "${print_opts[@]}" ; exit ;;
-      a*) n=$(get_longest "${app_list[@]}" "${app_alias_list[@]}")
-          print_list "$print_single" -n "$n" -l "Host/Service Applications" "${app_list[@]}"
-          print_list "$print_single" -n "$n" -l "Host/Service Aliases" "${app_alias_list[@]}"
+        # print_list "$print_single" -l "Available print options" "${print_opts[@]}" ; exit ;;
+      a*) print_list "$print_single" -l "Application Version Checks" "${version_checks[@]}" ; exit ;;
+      c*) print_list "$print_single" -l "Check Functions" "${check_list[@]}" ; exit ;;
+      l*) print_list "$print_single" -l "Latest Application Version Checks" "${latest_checks[@]}" ; exit ;;
+      n*) print_list "$print_single" -l "Non-Automatic Latest Application Version Checks" "${non_auto_latest_checks[@]}" ; exit ;;
+      d*) print_list "$print_single" -l "Docker Checks" "${docker_checks[@]}"
           exit ;;
-      r*) n=$(get_longest "${remote_list[@]}" "${remote_alias_list[@]}")
-          print_list "$print_single" -n "$n" -l "Remote Host Applications" "${remote_list[@]}"
-          print_list "$print_single" -n "$n" -l "Remote Host Aliases" "${remote_alias_list[@]}"
-          exit ;;
-      l*) n=$(get_longest "${latest_list[@]}" "${latest_alias_list[@]}")
-          print_list "$print_single" -n "$n" -l "Automatic Latest Applications" "${latest_list[@]}"
-          print_list "$print_single" -n "$n" -l "Automatic Latest Aliases" "${latest_alias_list[@]}"
-          exit ;;
-      n*) n=$(get_longest "${no_auto_list[@]}" "${no_auto_alias_list[@]}")
-          print_list "$print_single" -n "$n" -l "Non-Automatic Latest Applications" "${no_auto_list[@]}"
-          print_list "$print_single" -n "$n" -l "Non-Automatic Latest Aliases" "${no_auto_alias_list[@]}"
-          exit ;;
-      h*) n=$(get_longest "${helper_list[@]}" "${helper_alias_list[@]}")
-          print_list "$print_single" -n "$n" -l "Helper Functions" "${helper_list[@]}"
-          print_list "$print_single" -n "$n" -l "Helper Aliases" "${helper_alias_list[@]}"
-          exit ;;
-      f*) n=$(get_longest "${function_list[@]}" "${function_alias_list[@]}")
-          print_list "$print_single" -n "$n" -l "All Application Functions" "${function_list[@]}"
-          print_list "$print_single" -n "$n" -l "All Application Aliases" "${function_alias_list[@]}"
-          exit ;;
-      d*) mapfile -t checks < <(docker_checks) || { log "There are no ${bu}docker${ubu} checks" ; exit 0 ; }
-          print_list "$print_single" -l "${bu}docker${ubu} List Checks" "${checks[@]}"
-          exit ;;
-      u*) n=$(get_longest "${utility_list[@]}" "${utility_alias_list[@]}")
-          print_list "$print_single" -n "$n" -l "Utility Functions" "${utility_list[@]}"
-          print_list "$print_single" -n "$n" -l "Utility Aliases" "${utility_alias_list[@]}"
+      u*) print_list "$print_single" -l "Utility Functions" "${utility_list[@]}"
           exit ;;
       v*) echo Version $PROGVER ; exit 0 ;;
       e*) # Add new options for [$PROGNAME] to list_reserved_words array above
@@ -2085,10 +2096,10 @@ main() { # utility_function
 
     # If list=docker, load docker checks
     if [[ "$list" == "docker" ]]; then
-      mapfile -t sw_list < <(docker_checks)
+      sw_list=("${docker_checks[@]}")
       log -d "Setting software list to '${sw_list[*]}'"
       if (( ${#sw_list[@]} == 0 )); then
-        log "There are no ${bu}docker${ubu} checks"
+        log "There are no docker checks"
         exit
       fi
 
@@ -2225,7 +2236,7 @@ main() { # utility_function
       sw_name=$sw
       # sw_tag=$(grep -Po "(?<=!!)$CHECK_LIST$" <<< "$sw_name")
       sw_tag=$(sed -r "s/^.*"'!!'"$CHECK_LIST$/\1/" <<< "$sw_name")
-      while [[ "$sw_name" =~ ^(prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
+      while [[ "$sw_name" =~ ^$CHECK_MODIFIERS ]]; do
         case "$sw_name" in
           prejq=*)
             tmpstring=${sw_name%%!!*}
@@ -2321,19 +2332,6 @@ main() { # utility_function
 
       found=false
       [[ "$sw_orig" =~ !!$CHECK_LIST ]] && found=true
-      if ! $found && ! function_exists "$sw"; then
-        for tag in docker git flatpak appimage pacman arch command; do
-          if function_exists "$sw"_"$tag"; then
-            sw=${sw}_$tag
-            found=true
-            break
-          fi
-        done
-      else
-        found=true
-      fi
-      log -d -d "Validating function for $sw exists (exists=$found)"
-      ! $found && log -e "Invalid software: $sw" && continue
 
       # If software is "ink" but printer is not set, go to the next software
       if [[ "$sw_name" == "printer_ink_check" && -z "$PRINTER" ]]; then
