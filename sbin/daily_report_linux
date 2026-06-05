@@ -137,7 +137,8 @@ if [[ -z "$1" ]]; then
   echo "Checking subsystem status:"
   echo
   echo "disks:"
-  /usr/bin/df -hlx overlay
+  # print real filesystem output with type field, but only unique btrfs filesystems (or all non-btrfs)
+  /usr/bin/df -hTl -x overlay -x tmpfs -x devtmpfs -x efivarfs | awk '$2 != "btrfs" || !seen[$1]++'
   echo
   echo "network:"
   /usr/sbin/ip addr
