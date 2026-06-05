@@ -25,23 +25,38 @@ if [ $? != 0 ]; then
   }
 fi
 
+sum() {
+  openssl dgst -sha256 | awk '{print $NF}'
+}
+
 unset add_dirs
 if mount | grep -q " on /export/homes "; then
   add_dirs=/export/homes/*
 fi
 [ -d /etc/ssh/authorized_keys.d ] && add_dirs="$add_dirs /etc/ssh/authorized_keys.d/*"
 
-default_key=$(echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOgO13IYDIa4H0ebwea5xFnEQpPutuKfpKkD7pz8Dhmo mike@erdelynet.com" | openssl dgst -sha256 | awk '{print $NF}')
+default_key=$(echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOgO13IYDIa4H0ebwea5xFnEQpPutuKfpKkD7pz8Dhmo mike@erdelynet.com" | sum)
+root_key=$(echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOgO13IYDIa4H0ebwea5xFnEQpPutuKfpKkD7pz8Dhmo mike@erdelynet.com
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEJwztKDEPYjFs0Z02V1zApEu6FuEGvKpqumbxODl5W9 root@earth
+restrict,command="/srv/scripts/bin/rsync_ssh_client" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJDsxNoLaDkuLIPH5293oREzILMYp0Q0ZBGxTzsCRHCu backup@earth' | sum)
 
 declare -A keys def_keys checked
 
-def_keys[/root/.ssh/authorized_keys]=777ab2f005173f3c0cd50677c257c604e99ea0a35cd50d44180a19780cd264cb  # mike + root@earth + rsync_ssh_client
-def_keys[/var/root/.ssh/authorized_keys]=${def_keys[/root/.ssh/authorized_keys]}
+def_keys[/root/.ssh/authorized_keys]=$root_key
+def_keys[/var/root/.ssh/authorized_keys]=$root_key
 
-keys[mercury,/root/.ssh/authorized_keys.local]=994d2c526213395f8e60aea7144ad6a16f25223498e82d5eeb8487df3861fdc8  # libvirt backup
-keys[sinope,/home/mike/.ssh/authorized_keys.local]=e9cd01694fe8e5bd97700e185e5dfbd41af4d40883609b96f4aa41c795789459  # home assistant picframe
-keys[carpo,/home/ha/.ssh/authorized_keys]=3c3606a749f96b37ca0b9c187983a2e823ff73dba75739b77c326402b8245ae6  # home assistant
-keys[venus,/var/root/.ssh/authorized_keys.local]=a2990caf248c5642b577e1c815e59c491554a274333935d7fa6dfdedc84da973  # rsync_ssh_client in /opt/scripts/bin
+keys[mercury,/root/.ssh/authorized_keys.local]=$(
+  echo 'restrict,command="rsync --server --sender -vlogDtpre.iLsfxCIvu . /var/lib/libvirt/images/" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOJ7HDgDz7L8EJYQ2JYpv7eKdQfdlSZlNkD/xoGnAK8J backup2@earth' | sum
+)
+keys[sinope,/home/mike/.ssh/authorized_keys.local]=$(
+  echo 'from="192.168.26.235",restrict,command="/srv/scripts/bin/picframe_mode.sh" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPibUaqgOGK0ZyE5Fi7o3LfNu23J1/wDYUjy1f+CMmKQ homeassistant' | sum
+)
+keys[carpo,/home/ha/.ssh/authorized_keys]=$(
+  echo 'from="192.168.25.40",command="$HOME/bin/manage_camera",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPibUaqgOGK0ZyE5Fi7o3LfNu23J1/wDYUjy1f+CMmKQ homeassistant' | sum
+)
+keys[venus,/var/root/.ssh/authorized_keys.local]=$(
+  echo 'restrict,command="/opt/scripts/bin/rsync_ssh_client" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJDsxNoLaDkuLIPH5293oREzILMYp0Q0ZBGxTzsCRHCu backup@earth' | sum
+)
 
 for hdir in $(getent passwd | awk -F: '{print $6}') $add_dirs; do
   for ak in $hdir/.ssh/authorized_keys $hdir/.ssh/authorized_keys2 $hdir/.ssh/authorized_keys.local; do
