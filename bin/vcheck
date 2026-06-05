@@ -801,7 +801,7 @@ docker_container_search() { # helper_function
     seconds=$(calc_seconds "${out##*|}")
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
     log -d -d "Comparing ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2}"
-    (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
+    $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
     echo "${out%%|*}"
     return 0
   fi
@@ -811,7 +811,7 @@ docker_container_search() { # helper_function
   if [[ -n "$out" ]]; then
     seconds=$(calc_seconds "${out##*|}")
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
-    (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
+    $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
     echo "${out%%|*}"
     return 0
   fi
@@ -928,7 +928,7 @@ docker_image_search() { # helper_function
   if [[ -n "$out" ]]; then
     seconds=$(calc_seconds "${out##*|}")
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
-    (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
+    $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
     echo "${out%%|*}"
     return 0
   fi
@@ -939,7 +939,7 @@ docker_image_search() { # helper_function
   if [[ -n "$out" ]]; then
     seconds=$(calc_seconds "${out##*|}")
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
-    (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
+    $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
     echo "${out%%|*}"
     return 0
   fi
