@@ -34,7 +34,7 @@ export SEMVER_REGEX
 
 # TODO automate this similar to how _latest was done before
 # Define list of check types
-CHECK_LIST='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
+CHECK_LIST='(alpine_repo|appimage|aur|cat|codeberg|codeberg_tags|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|forgejo_tags|gitdescribe|gitea|gitea_tags|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
 CHECK_MODIFIERS='(prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter)'
 export CHECK_LIST CHECK_MODIFIERS
 
@@ -483,45 +483,6 @@ aur_package() { # check_function
       }' "$out")
   fi
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
-  return 1
-}
-
-# Search for the latest release of a Codeberg or Forgejo Repo
-gitea_release() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  local site="https://gitea.com" section=gitea out
-  local opt OPTARG OPTIND=1
-  while getopts ":f" opt; do
-    case "$opt" in
-      c) section=codeberg
-         site="https://codeberg.org"
-         ;;
-      f) section=forgejo
-         site="https://code.forgejo.org"
-         ;;
-      g) section=gitea
-         site="https://gitea.com"
-         ;;
-      *) log -w "Invalid flag ($OPTARG)" ;;
-    esac
-  done
-  shift $(( OPTIND - 1 ))
-  (( $# == 0 )) && { log -d "${FUNCNAME[0]} requires a project argument" ; return 1 ; }
-
-  local uri="$site/$1/releases/latest"
-  log -d "uri: $uri"
-
-  local authstring=()
-  mapfile -t authstring < <(gen_authstring "$section")
-
-  out=$(maketemp)
-  curl "${authstring[@]}" --no-progress-meter -o "$out" "$uri"
-  log -d -d -d "Curl output: $(cat "$out")"
-  if [[ -s "$out" ]]; then
-    awk -F'["/]' '{print $7;exit}' "$out"
-    return 0
-  fi
-  log -e "Invalid curl output"
   return 1
 }
 
@@ -1134,6 +1095,93 @@ git_checkout() { # check_function
   return 1
 }
 
+# Search for the latest release of a Codeberg or Forgejo Repo
+gitea_release() { # check_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  local site="https://gitea.com" section=gitea out
+  local opt OPTARG OPTIND=1
+  while getopts ":cfg" opt; do
+    case "$opt" in
+      c) section=codeberg
+         site="https://codeberg.org"
+         ;;
+      f) section=forgejo
+         site="https://code.forgejo.org"
+         ;;
+      g) section=gitea
+         site="https://gitea.com"
+         ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  local uri="$site/$1/releases/latest"
+  log -d "uri: $uri"
+
+  local authstring=()
+  mapfile -t authstring < <(gen_authstring "$section")
+
+  out=$(maketemp)
+  curl "${authstring[@]}" --no-progress-meter -o "$out" "$uri"
+  log -d -d -d "Curl output: $(cat "$out")"
+  if [[ -s "$out" ]]; then
+    awk -F'["/]' '{print $7;exit}' "$out"
+    return 0
+  fi
+  log -e "Invalid curl output"
+  return 1
+}
+
+# Get tags from a Codeberg/Gitea/Forgejo repo
+gitea_tags() { # check_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  local site="https://gitea.com" section=gitea
+  local output err out project_name
+  local opt OPTARG OPTIND=1
+  while getopts ":cfg" opt; do
+    case "$opt" in
+      c) section=codeberg
+         site="https://codeberg.org"
+         ;;
+      f) section=forgejo
+         site="https://code.forgejo.org"
+         ;;
+      g) section=gitea
+         site="https://gitea.com"
+         ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  project_name=$1
+
+  local authstring=()
+  mapfile -t authstring < <(gen_authstring "$section")
+
+  err=$(maketemp)
+  local maxpages=20 page=0 done=false
+  while ! $done && (( page < maxpages )); do
+    page=$(( page + 1 ))
+    echo "Looking up tags for $project_name using $section API" >> "$err"
+    out=$(maketemp)
+    curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
+      "$site/api/v1/repos/$project_name/tags?limit=50&page=$page" 2> "$err"
+    [[ ! -s "$out" || "$(jq 'length' 2> /dev/null "$out")" -eq 0 ]] && done=true && break
+    out=$(jq -r '.[].name' "$out" 2> /dev/null)
+    log -d -d -d "Jq output: $out"
+    output="${output# } $out"
+  done
+  [[ -z "${output# }" ]] && { log -e "Could not find $section tags data for $project_name" ; return 1 ; }
+
+  errmsg=$(cat "$err")
+  [[ -n "$errmsg" ]] && log -d "$1: $errmsg"
+  echo "$output"
+}
+
 # Get the latest release of a Github repo
 github_release() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
@@ -1449,6 +1497,7 @@ execute_check() { # utility_function
     aur)             out=$(aur_package "$project") ; ret=$? ;;
     cat)             check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
     codeberg)        out=$(gitea_release -c "$project") ; ret=$? ;;
+    codeberg_tags)   out=$(gitea_tags -c "$project") ; ret=$? ;;
     command)         out=$(command_check "$project") ; ret=$? ;;
     curl)            out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
     curlapi)         out=$(curl_api "$project") ; ret=$? ;;
@@ -1461,9 +1510,11 @@ execute_check() { # utility_function
     flatpak)         out=$(flatpak_version "$project") ; ret=$? ;;
     flathub)         out=$(flathub_version "$project") ; ret=$? ;;
     forgejo)         out=$(gitea_release -f "$project") ; ret=$? ;;
+    forgejo_tags)    out=$(gitea_tags -f "$project") ; ret=$? ;;
     gitdescribe)     out=$(git_checkout -d "$project") ; ret=$? ;;
     gittags)         out=$(git_checkout -t "$project") ; ret=$? ;;
     gitea)           out=$(gitea_release -g "$project") ; ret=$? ;;
+    gitea_tags)      out=$(gitea_tags -g "$project") ; ret=$? ;;
     github)          out=$(github_release "$project") ; ret=$? ;;
     github_tags)     out=$(github_tags "$project") ; ret=$? ;;
     gitlab)          out=$(gitlab_release "$project") ; ret=$? ;;
