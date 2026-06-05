@@ -506,165 +506,6 @@ aur_package() { # helper_function
   return 1
 }
 
-# Run version checks
-auto_check() { # helper_function
-  # log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  log -d "Running: ${FUNCNAME[0]} $*"
-
-  local remove=() search=() presed=() postsed=() skipverfilter=false
-  local project tmp prejqfilter postjqfilter xmlfilter sedstring
-  local opt OPTARG OPTIND=1
-  while getopts ":p:t:J:j:x:r:s:P:S:vV" opt; do
-    case "$opt" in
-      p) project=$OPTARG ;;
-      t) tag=$OPTARG ;;
-      J) prejqfilter=$OPTARG ;;    # Uses last one given
-      j) postjqfilter=$OPTARG ;;   # Uses last one given
-      x) xmlfilter=$OPTARG ;;      # Uses last one given
-      r) remove+=("$OPTARG") ;;
-      s) search+=("$OPTARG") ;;
-      P) presed+=("$OPTARG") ;;
-      S) postsed+=("$OPTARG") ;;
-      v) skipverfilter=true ;;
-      V) skipverfilter=false ;;
-      *) log -w "Invalid flag ($OPTARG)" ;;
-    esac
-  done
-  shift $(( OPTIND - 1 ))
-
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local check=$1
-
-  log -d -d "check=$check"
-  log -d -d "tag=$tag"
-  log -d -d "project=$project"
-  log -d -d "xmlfilter=$xmlfilter"
-  log -d -d "prejq=$prejqfilter"
-  log -d -d "presed=${presed[*]}"
-  log -d -d "search=${search[*]}"
-  log -d -d "remove=${remove[*]}"
-  log -d -d "postjq=$postjqfilter"
-  log -d -d "postsed=${postsed[*]}"
-  log -d -d "skip=$skipverfilter"
-
-  local ret=0
-  tag=${tag%_latest}
-  [[ "$tag" =~ (aur|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
-
-  case "$tag" in
-    # alpine_docker) out=$(alpine_docker_package "$project") ; ret=$? ;;
-    alpine_repo) out=$(alpine_repo_package "$project") ; ret=$? ;;
-    appimage) out=$(appimage_check "$project") ; ret=$? ;;
-    aur) out=$(aur_package "$project") ; ret=$? ;;
-    cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
-    codeberg) out=$(codeberg_release "$project") ; ret=$? ;;
-    command) out=$(command_check "$project") ; ret=$? ;;
-    curl) out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
-    curlapi) out=$(curl_api "$project") ; ret=$? ;;
-    docker_copy) out=$(docker_copy "$project") ; ret=$? ;;
-    docker_exec) out=$(docker_exec "$project") ; ret=$? ;;
-    docker_inspect) out=$(docker_inspect "$project") ; ret=$? ;;
-    docker_logs) out=$(docker_logs "$project") ; ret=$? ;;
-    docker_printenv) out=$(docker_printenv "$project") ; ret=$? ;;
-    docker_tags) out=$(docker_tags "$project") ; ret=$? ;;
-    flatpak) out=$(flatpak_version "$project") ; ret=$? ;;
-    flathub) out=$(flathub_version "$project") ; ret=$? ;;
-    forgejo) out=$(codeberg_release -f "$project") ; ret=$? ;;
-    gitdescribe) out=$(git_checkout -d "$project") ; ret=$? ;;
-    gittags) out=$(git_checkout -t "$project") ; ret=$? ;;
-    github) out=$(github_release "$project") ; ret=$? ;;
-    github_tags) out=$(github_tags "$project") ; ret=$? ;;
-    gitlab) out=$(gitlab_release "$project") ; ret=$? ;;
-    gitlab_tags) out=$(gitlab_tags "$project") ; ret=$? ;;
-    pacman) out=$(pacman_package "$project") ; ret=$? ;;
-    $PROGNAME) out=$($PROGNAME) ; ret=$? ;;
-    *)
-      log -e "Unknown package check: $tag"
-      return 1 ;;
-  esac
-
-  [[ "$tag" == docker* && "$ret" -eq 19 ]] && return 19
-
-  # Apply xml filter, if set
-  if [[ -n "$out" && -n "$xmlfilter" ]]; then
-    check_prog xmllint || return 1
-    log -d -d -d "Using xmllint --html --xpath '$xmlfilter' - 2> /dev/null"
-    out=$(xmllint --html --xpath "$xmlfilter" - 2> /dev/null <<< "$out")
-    log -d -d -d "xmllint output: $out"
-  fi
-
-  # Apply pre-jq filter, if set
-  if [[ -n "$out" && -n "$prejqfilter" ]]; then
-    check_prog jq || return 1
-    log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $prejqfilter'"
-    out=$(jq -rn --argjson j "$out" "\$j | $prejqfilter")
-    log -d -d -d "jq output: $out"
-  fi
-
-  # Apply presed, if set
-  [[ -n "$out" ]] && for sedstring in "${presed[@]}"; do
-    log -d "Applying presed: sed -r '$sedstring'"
-    out=$(sed -r "$sedstring" <<< "$out")
-    log -d -d "sed output: $out"
-  done
-
-  # Apply search grep filter
-  if (( ${#search[@]} > 0 )); then
-    log -d "Searching for '$(IFS='|'; echo "${search[*]}")'"
-    out=$(grep -E -- "($(IFS='|'; echo "${search[*]}"))" <<< "$out")
-    log -d -d -d "search grep output: $out"
-  fi
-
-  # Apply remove grep filter
-  if (( ${#remove[@]} > 0 )); then
-    log -d "Searching for '$(IFS='|'; echo "${remove[*]}")'"
-    out=$(echo "$out" | grep -Ev -- "($(IFS='|'; echo "${remove[*]}"))")
-    log -d -d -d "remove grep output: $out"
-  fi
-
-  # Apply post-jq filter, if set
-  if [[ -n "$out" && -n "$postjqfilter" ]]; then
-    check_prog jq || return 1
-    log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $postjqfilter'"
-    out=$(jq -rn --argjson j "$out" "\$j | $postjqfilter")
-    log -d -d -d "jq output: $out"
-  fi
-
-  # Trim trailing linefeeds
-  [[ -n "$out" ]] && out=$(echo "$out" | tr -d '\r')
-
-  # Sort output
-  [[ -n "$out" ]] && out=$(sort -V <<< "$out")
-
-  # Grab the last line of output
-  [[ -n "$out" ]] && out=$(tail -n1 <<< "$out")
-  log -d -d "tail -n1 output = '$out'"
-
-  # Apply postsed, if set
-  [[ -n "$out" ]] && for sedstring in "${postsed[@]}"; do
-    log -d "Applying postsed: sed -r '$sedstring'"
-    out=$(sed -r "$sedstring" <<< "$out")
-    log -d -d "sed output: $out"
-  done
-
-  # Apply versionfilter if $skipverfilter is false
-  # shellcheck disable=SC2119
-  local vout
-  if [[ -n "$out" ]] && ! $skipverfilter; then
-    log -d -d -d "Executing: perl -ne 'print \"\$&\n\" if /$SEMVER_REGEX/'"
-    vout=$(perl -ne 'print "$&\n" if /'"$SEMVER_REGEX"'/' <<< "$out")
-    log -d -d -d "perl output: $vout"
-    grep -Eq "^$SEMVER_REGEX$" <<< "$vout" && out=$(head -n1 <<< "$vout")
-  fi
-
-  # If there is still output, print it
-  [[ -n "$out" ]] && echo "$out" && return 0
-
-  # Default to printing an error message and returning 1
-  log -e "Could not determine version for $check"
-  return 1
-}
-
 # Search for the latest release of a Codeberg or Forgejo Repo
 codeberg_release() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
@@ -1568,6 +1409,165 @@ printer_ink_check() { # remote_host
 
   [[ -z "$inkdata" ]] && printf '%s' "$errjson" && return 1
   jq -rn --argjson j "$inkdata" '$j' 2> /dev/null
+}
+
+# Run version checks
+auto_check() { # helper_function
+  # log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  log -d "Running: ${FUNCNAME[0]} $*"
+
+  local remove=() search=() presed=() postsed=() skipverfilter=false
+  local project tmp prejqfilter postjqfilter xmlfilter sedstring
+  local opt OPTARG OPTIND=1
+  while getopts ":p:t:J:j:x:r:s:P:S:vV" opt; do
+    case "$opt" in
+      p) project=$OPTARG ;;
+      t) tag=$OPTARG ;;
+      J) prejqfilter=$OPTARG ;;    # Uses last one given
+      j) postjqfilter=$OPTARG ;;   # Uses last one given
+      x) xmlfilter=$OPTARG ;;      # Uses last one given
+      r) remove+=("$OPTARG") ;;
+      s) search+=("$OPTARG") ;;
+      P) presed+=("$OPTARG") ;;
+      S) postsed+=("$OPTARG") ;;
+      v) skipverfilter=true ;;
+      V) skipverfilter=false ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local check=$1
+
+  log -d -d "check=$check"
+  log -d -d "tag=$tag"
+  log -d -d "project=$project"
+  log -d -d "xmlfilter=$xmlfilter"
+  log -d -d "prejq=$prejqfilter"
+  log -d -d "presed=${presed[*]}"
+  log -d -d "search=${search[*]}"
+  log -d -d "remove=${remove[*]}"
+  log -d -d "postjq=$postjqfilter"
+  log -d -d "postsed=${postsed[*]}"
+  log -d -d "skip=$skipverfilter"
+
+  local ret=0
+  tag=${tag%_latest}
+  [[ "$tag" =~ (aur|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
+
+  case "$tag" in
+    # alpine_docker) out=$(alpine_docker_package "$project") ; ret=$? ;;
+    alpine_repo) out=$(alpine_repo_package "$project") ; ret=$? ;;
+    appimage) out=$(appimage_check "$project") ; ret=$? ;;
+    aur) out=$(aur_package "$project") ; ret=$? ;;
+    cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
+    codeberg) out=$(codeberg_release "$project") ; ret=$? ;;
+    command) out=$(command_check "$project") ; ret=$? ;;
+    curl) out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
+    curlapi) out=$(curl_api "$project") ; ret=$? ;;
+    docker_copy) out=$(docker_copy "$project") ; ret=$? ;;
+    docker_exec) out=$(docker_exec "$project") ; ret=$? ;;
+    docker_inspect) out=$(docker_inspect "$project") ; ret=$? ;;
+    docker_logs) out=$(docker_logs "$project") ; ret=$? ;;
+    docker_printenv) out=$(docker_printenv "$project") ; ret=$? ;;
+    docker_tags) out=$(docker_tags "$project") ; ret=$? ;;
+    flatpak) out=$(flatpak_version "$project") ; ret=$? ;;
+    flathub) out=$(flathub_version "$project") ; ret=$? ;;
+    forgejo) out=$(codeberg_release -f "$project") ; ret=$? ;;
+    gitdescribe) out=$(git_checkout -d "$project") ; ret=$? ;;
+    gittags) out=$(git_checkout -t "$project") ; ret=$? ;;
+    github) out=$(github_release "$project") ; ret=$? ;;
+    github_tags) out=$(github_tags "$project") ; ret=$? ;;
+    gitlab) out=$(gitlab_release "$project") ; ret=$? ;;
+    gitlab_tags) out=$(gitlab_tags "$project") ; ret=$? ;;
+    pacman) out=$(pacman_package "$project") ; ret=$? ;;
+    $PROGNAME) out=$($PROGNAME) ; ret=$? ;;
+    *)
+      log -e "Unknown package check: $tag"
+      return 1 ;;
+  esac
+
+  [[ "$tag" == docker* && "$ret" -eq 19 ]] && return 19
+
+  # Apply xml filter, if set
+  if [[ -n "$out" && -n "$xmlfilter" ]]; then
+    check_prog xmllint || return 1
+    log -d -d -d "Using xmllint --html --xpath '$xmlfilter' - 2> /dev/null"
+    out=$(xmllint --html --xpath "$xmlfilter" - 2> /dev/null <<< "$out")
+    log -d -d -d "xmllint output: $out"
+  fi
+
+  # Apply pre-jq filter, if set
+  if [[ -n "$out" && -n "$prejqfilter" ]]; then
+    check_prog jq || return 1
+    log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $prejqfilter'"
+    out=$(jq -rn --argjson j "$out" "\$j | $prejqfilter")
+    log -d -d -d "jq output: $out"
+  fi
+
+  # Apply presed, if set
+  [[ -n "$out" ]] && for sedstring in "${presed[@]}"; do
+    log -d "Applying presed: sed -r '$sedstring'"
+    out=$(sed -r "$sedstring" <<< "$out")
+    log -d -d "sed output: $out"
+  done
+
+  # Apply search grep filter
+  if (( ${#search[@]} > 0 )); then
+    log -d "Searching for '$(IFS='|'; echo "${search[*]}")'"
+    out=$(grep -E -- "($(IFS='|'; echo "${search[*]}"))" <<< "$out")
+    log -d -d -d "search grep output: $out"
+  fi
+
+  # Apply remove grep filter
+  if (( ${#remove[@]} > 0 )); then
+    log -d "Searching for '$(IFS='|'; echo "${remove[*]}")'"
+    out=$(echo "$out" | grep -Ev -- "($(IFS='|'; echo "${remove[*]}"))")
+    log -d -d -d "remove grep output: $out"
+  fi
+
+  # Apply post-jq filter, if set
+  if [[ -n "$out" && -n "$postjqfilter" ]]; then
+    check_prog jq || return 1
+    log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $postjqfilter'"
+    out=$(jq -rn --argjson j "$out" "\$j | $postjqfilter")
+    log -d -d -d "jq output: $out"
+  fi
+
+  # Trim trailing linefeeds
+  [[ -n "$out" ]] && out=$(echo "$out" | tr -d '\r')
+
+  # Sort output
+  [[ -n "$out" ]] && out=$(sort -V <<< "$out")
+
+  # Grab the last line of output
+  [[ -n "$out" ]] && out=$(tail -n1 <<< "$out")
+  log -d -d "tail -n1 output = '$out'"
+
+  # Apply postsed, if set
+  [[ -n "$out" ]] && for sedstring in "${postsed[@]}"; do
+    log -d "Applying postsed: sed -r '$sedstring'"
+    out=$(sed -r "$sedstring" <<< "$out")
+    log -d -d "sed output: $out"
+  done
+
+  # Apply versionfilter if $skipverfilter is false
+  # shellcheck disable=SC2119
+  local vout
+  if [[ -n "$out" ]] && ! $skipverfilter; then
+    log -d -d -d "Executing: perl -ne 'print \"\$&\n\" if /$SEMVER_REGEX/'"
+    vout=$(perl -ne 'print "$&\n" if /'"$SEMVER_REGEX"'/' <<< "$out")
+    log -d -d -d "perl output: $vout"
+    grep -Eq "^$SEMVER_REGEX$" <<< "$vout" && out=$(head -n1 <<< "$vout")
+  fi
+
+  # If there is still output, print it
+  [[ -n "$out" ]] && echo "$out" && return 0
+
+  # Default to printing an error message and returning 1
+  log -e "Could not determine version for $check"
+  return 1
 }
 
 # Print main program usage info
