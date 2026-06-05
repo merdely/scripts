@@ -36,6 +36,7 @@ default_key=$(echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOgO13IYDIa4H0ebwea5xFnE
 declare -A keys def_keys checked
 
 def_keys[/root/.ssh/authorized_keys]=777ab2f005173f3c0cd50677c257c604e99ea0a35cd50d44180a19780cd264cb  # mike + root@earth + rsync_ssh_client
+def_keys[/var/root/.ssh/authorized_keys]=${def_keys[/root/.ssh/authorized_keys]}
 
 keys[mercury,/root/.ssh/authorized_keys.local]=994d2c526213395f8e60aea7144ad6a16f25223498e82d5eeb8487df3861fdc8  # libvirt backup
 keys[sinope,/home/mike/.ssh/authorized_keys.local]=e9cd01694fe8e5bd97700e185e5dfbd41af4d40883609b96f4aa41c795789459  # home assistant picframe
