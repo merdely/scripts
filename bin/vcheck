@@ -502,9 +502,8 @@ aur_package() { # helper_function
         print o
       }' "$out")
   fi
-  [[ -z "$out" ]] && return 1
-  echo "$out"
-  return 0
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
 }
 
 # Run version checks
@@ -577,13 +576,7 @@ auto_check() { # helper_function
     github_tags) out=$(github_tags "$project") ; ret=$? ;;
     gitlab) out=$(gitlab_release "$project") ; ret=$? ;;
     gitlab_tags) out=$(gitlab_tags "$project") ; ret=$? ;;
-    pacman)
-      check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-      out=$(pacman -Q "$project" 2> /dev/null)
-      log -d -d -d "pacman output: $out"
-      out=$(awk '{for (i = 2 ; i <= NF ; i++) o = o " " $i }END{sub(/^ /,"",o);printf "%s\n",o}' <<< "$out")
-      log -d -d -d "awk output: $out"
-      ret=$? ;;
+    pacman) out=$(pacman_package "$project") ; ret=$? ;;
     $PROGNAME) out=$($PROGNAME) ; ret=$? ;;
     *)
       log -e "Unknown package check: $tag"
@@ -1417,6 +1410,21 @@ gitlab_tags() { # helper_function
   errmsg=$(cat "$err")
   [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
   echo "$out"
+}
+
+# Get version information for an installed pacman package
+pacman_package() {
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local pkg=$1 out
+
+  check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  out=$(pacman -Q "$pkg" 2> /dev/null)
+  log -d -d -d "pacman output: $out"
+  out=$(awk '{for (i = 2 ; i <= NF ; i++) o = o " " $i }END{sub(/^ /,"",o);printf "%s\n",o}' <<< "$out")
+  log -d -d -d "awk output: $out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
 }
 
 # Determine if function should be run with sudo_exec and do it if so
