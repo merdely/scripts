@@ -451,41 +451,6 @@ appimage_check() { # check_function
     sed -r "s#^.*$1-(.*)\.AppImage#\1#"
 }
 
-# Search the AUR for a package version
-aur_package() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local pkg=$1 out
-
-  if command -v aur &> /dev/null; then
-    log -d -d "Using aur command for $1"
-    out=$(aur query -t info "$1")
-    log -d -d -d "aur query output: $out"
-    out=$(jq -rn --argjson j "$out" '$j.results[].Version' 2> /dev/null)
-    log -d -d -d "jq output: $out"
-  else
-    log -d -d "Using curl/awk via github for $1"
-    out=$(maketemp)
-    curl --no-progress-meter -Lo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
-    log -d -d -d "Curl output: $(cat "$out")"
-    [[ -s "$out" ]] && out=$(awk -F= '
-        /^_major=/ { m = $2 }
-        /^_subver=/ { s = $2 }
-        /^pkgver=/ { pv = $2 }
-        /^pkgrel=/ { pr = $2 }
-      END {
-        if (m != "" && s != "")
-          o=sprintf("%s.%s-%s\n",m,s,pr)
-        else if (pv != "")
-          o=sprintf("%s-%s\n",pv,pr)
-        gsub(/"/,"",o)
-        print o
-      }' "$out")
-  fi
-  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
-  return 1
-}
-
 # Run different variations of 'command --version' to get a version for a command
 command_check() { # check_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
@@ -568,6 +533,7 @@ docker_container_search() { # utility_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
@@ -582,6 +548,7 @@ docker_container_search() { # utility_function
     seconds=$(calc_seconds "${out##*|}")
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
     log -d -d "Comparing ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2}"
+    # Return code 19 when docker_filter is enabled and container is older than seconds
     $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
     echo "${out%%|*}"
     return 0
@@ -592,6 +559,7 @@ docker_container_search() { # utility_function
   if [[ -n "$out" ]]; then
     seconds=$(calc_seconds "${out##*|}")
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
+    # Return code 19 when docker_filter is enabled and container is older than seconds
     $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
     echo "${out%%|*}"
     return 0
@@ -607,6 +575,7 @@ docker_copy() { # check_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
@@ -629,6 +598,7 @@ docker_copy() { # check_function
   log -d "catfiles=$catfiles"
 
   container=$(docker_container_search "$image_search")
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
@@ -656,6 +626,7 @@ docker_exec() { # check_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|4);;19)log -d returning 19;return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
@@ -677,6 +648,7 @@ docker_exec() { # check_function
 
   log -d -d "Running docker_container_search $image_search"
   container=$(docker_container_search "$image_search")
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
@@ -696,6 +668,7 @@ docker_image_search() { # utility_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
@@ -709,6 +682,7 @@ docker_image_search() { # utility_function
   if [[ -n "$out" ]]; then
     seconds=$(calc_seconds "${out##*|}")
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
+    # Return code 19 when docker_filter is enabled and container is older than seconds
     $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
     echo "${out%%|*}"
     return 0
@@ -720,6 +694,7 @@ docker_image_search() { # utility_function
   if [[ -n "$out" ]]; then
     seconds=$(calc_seconds "${out##*|}")
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
+    # Return code 19 when docker_filter is enabled and container is older than seconds
     $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return 19
     echo "${out%%|*}"
     return 0
@@ -735,10 +710,12 @@ docker_inspect() { # check_function
   local container out
 
   # Run through sudo exec if necessary
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
   container=$(docker_container_search "$1")
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
@@ -752,6 +729,7 @@ docker_inspect() { # check_function
   [[ -n "$out" ]] && grep -qE "$SEMVER_REGEX" <<< "$out" && { echo "$out" ; return 0 ; }
 
   out=$(docker_image_search "$container")
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   (( $? == 19 )) && return 19
   log -d -d "image_search = $out"
   local tag=${out##*:}
@@ -779,6 +757,7 @@ docker_logs() { # check_function
   [[ "$1" == "-h" ]] && { log "usage: docker_logs dockername" ; return 0 ; }
 
   # Run through sudo exec if necessary
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
@@ -786,6 +765,7 @@ docker_logs() { # check_function
   log -d "image_search=$image_search"
 
   container=$(docker_container_search "$image_search")
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
@@ -803,6 +783,7 @@ docker_printenv() { # check_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
@@ -819,6 +800,7 @@ docker_printenv() { # check_function
     variable=$2
   fi
   image=$(docker_image_search "$image_search")
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   (( $? == 19 )) && return 19
   log -d -d "image_search=$image_search"
   log -d -d "variable=$variable"
@@ -1023,7 +1005,7 @@ docker_tags() { # check_function
 }
 
 # Search flathub for the newest version of a flatpak
-flathub_version() { # check_function
+flathub_app() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1034,19 +1016,6 @@ flathub_version() { # check_function
   curl --no-progress-meter -Lo "$out" "https://flathub.org/api/v2/appstream/$1"
   log -d -d -d "Curl output: $(cat "$out")"
   [[ -s "$out" ]] && jq -r '.releases[0].version' "$out" 2> /dev/null
-}
-
-# Print the version info for a flatpak
-flatpak_version() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog flatpak "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} application_id" ; return 0 ; }
-
-  local out
-  out=$(flatpak list --columns=application,version)
-  log -d -d -d "Flatpak list output: $out"
-  [[ -n "$out" ]] && awk -v a="$1" '$1==a {print $NF;exit}' <<< "$out"
 }
 
 # Check out a git repo and use 'git describe' or 'git tag' to get version info
@@ -1095,210 +1064,157 @@ git_checkout() { # check_function
   return 1
 }
 
-# Search for the latest release of a Codeberg or Forgejo Repo
-gitea_release() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  local site="https://gitea.com" section=gitea out
-  local opt OPTARG OPTIND=1
-  while getopts ":cfg" opt; do
-    case "$opt" in
-      c) section=codeberg
-         site="https://codeberg.org"
-         ;;
-      f) section=forgejo
-         site="https://code.forgejo.org"
-         ;;
-      g) section=gitea
-         site="https://gitea.com"
-         ;;
-      *) log -w "Invalid flag ($OPTARG)" ;;
-    esac
-  done
-  shift $(( OPTIND - 1 ))
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-
-  local uri="$site/$1/releases/latest"
-  log -d "uri: $uri"
-
-  local authstring=()
-  mapfile -t authstring < <(gen_authstring "$section")
-
-  out=$(maketemp)
-  curl "${authstring[@]}" --no-progress-meter -o "$out" "$uri"
-  log -d -d -d "Curl output: $(cat "$out")"
-  if [[ -s "$out" ]]; then
-    awk -F'["/]' '{print $7;exit}' "$out"
-    return 0
-  fi
-  log -e "Invalid curl output"
-  return 1
-}
-
-# Get tags from a Codeberg/Gitea/Forgejo repo
-gitea_tags() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  local site="https://gitea.com" section=gitea
-  local output err out project_name
-  local opt OPTARG OPTIND=1
-  while getopts ":cfg" opt; do
-    case "$opt" in
-      c) section=codeberg
-         site="https://codeberg.org"
-         ;;
-      f) section=forgejo
-         site="https://code.forgejo.org"
-         ;;
-      g) section=gitea
-         site="https://gitea.com"
-         ;;
-      *) log -w "Invalid flag ($OPTARG)" ;;
-    esac
-  done
-  shift $(( OPTIND - 1 ))
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  project_name=$1
-
-  local authstring=()
-  mapfile -t authstring < <(gen_authstring "$section")
-
-  err=$(maketemp)
-  local maxpages=20 page=0 done=false
-  while ! $done && (( page < maxpages )); do
-    page=$(( page + 1 ))
-    echo "Looking up tags for $project_name using $section API" >> "$err"
-    out=$(maketemp)
-    curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
-      "$site/api/v1/repos/$project_name/tags?limit=50&page=$page" 2> "$err"
-    [[ ! -s "$out" || "$(jq 'length' 2> /dev/null "$out")" -eq 0 ]] && done=true && break
-    out=$(jq -r '.[].name' "$out" 2> /dev/null)
-    log -d -d -d "Jq output: $out"
-    output="${output# } $out"
-  done
-  [[ -z "${output# }" ]] && { log -e "Could not find $section tags data for $project_name" ; return 1 ; }
-
-  errmsg=$(cat "$err")
-  [[ -n "$errmsg" ]] && log -d "$1: $errmsg"
-  echo "$output"
-}
-
-# Get the latest release of a Github repo
-github_release() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
-
-  local authstring=() err errmsg out
-  mapfile -t authstring < <(gen_authstring github)
-
-  err=$(maketemp)
-  out=$(maketemp)
-  echo "Looking up latest release for $1 using github api" >> "$err"
-  curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
-    "https://api.github.com/repos/$1/releases/latest" 2>> "$err"
-  log -d -d -d "curl output: $(cat "$out")"
-  out=$(jq -r '.tag_name' "$out" 2> /dev/null)
-  errmsg=$(cat "$err")
-  [[ -n "$errmsg" ]] && log -d "$1: $errmsg"
-  echo "$out"
-}
-
-# Get tags from a Github repo
-github_tags() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  local output err out
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  project_name=$1
-
-  local authstring=()
-  mapfile -t authstring < <(gen_authstring github)
-
-  err=$(maketemp)
-  local maxpages=20 page=0 done=false
-  while ! $done && (( page < maxpages )); do
-    page=$(( page + 1 ))
-    echo "Looking up tags for $project_name using github_api" >> "$err"
-    out=$(maketemp)
-    curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
-      "https://api.github.com/repos/$project_name/tags?per_page=100&page=$page" 2> "$err"
-    [[ ! -s "$out" || "$(jq 'length' 2> /dev/null "$out")" -eq 0 ]] && done=true && break
-    out=$(jq -r '.[].name' "$out" 2> /dev/null)
-    log -d -d -d "Jq output: $out"
-    output="${output# } $out"
-  done
-  [[ -z "${output# }" ]] && { log -e "Could not find github tags data for $project_name" ; return 1 ; }
-
-  errmsg=$(cat "$err")
-  [[ -n "$errmsg" ]] && log -d "$1: $errmsg"
-  echo "$output"
-}
-
-# Get the latest release of a Gitlab repo
-gitlab_release() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
-
-  local authstring=() err errmsg out
-  mapfile -t authstring < <(gen_authstring gitlab)
-
-  # URL-encode the owner/repo slug (GitLab requires this for namespaced projects)
-  local encoded
-  encoded=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1")
-
-  err=$(maketemp)
-  out=$(maketemp)
-  echo "Looking up latest release for $1 using gitlab api" >> "$err"
-  curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
-    "https://gitlab.com/api/v4/projects/${encoded}/releases/permalink/latest" 2>> "$err"
-  log -d -d -d "curl output: $(cat "$out")"
-  out=$(jq -r '.tag_name' "$out" 2> /dev/null)
-  errmsg=$(cat "$err")
-  [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
-  echo "$out"
-}
-
-# Get the tags of a Gitlab repo
-gitlab_tags() { # check_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
-
-  local authstring=() err errmsg out
-  mapfile -t authstring < <(gen_authstring gitlab)
-
-  # URL-encode the owner/repo slug (GitLab requires this for namespaced projects)
-  local encoded
-  encoded=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1")
-
-  err=$(maketemp)
-  out=$(maketemp)
-  echo "Looking up latest tag for $1 using gitlab api" >> "$err"
-  curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
-    "https://gitlab.com/api/v4/projects/${encoded}/repository/tags?order_by=version&sort=desc&per_page=1" 2>> "$err"
-  log -d -d -d "curl output: $(cat "$out")"
-  out=$(jq -r '.[0].name' "$out" 2> /dev/null)
-  errmsg=$(cat "$err")
-  [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
-  echo "$out"
-}
-
 # Get version information for an installed pacman package
-pacman_package() { # check_function
+os_package() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  local pkgtype=flatpak opt OPTARG OPTIND=1
+  while getopts ":aAF" opt; do
+    case "$opt" in
+      a) pkgtype=pacman  ;;
+      A) pkgtype=aur     ;;
+      F) pkgtype=flatpak ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local pkg=$1 out
 
-  check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  out=$(pacman -Q "$pkg" 2> /dev/null)
-  log -d -d -d "pacman output: $out"
-  out=$(awk '{for (i = 2 ; i <= NF ; i++) o = o " " $i }END{sub(/^ /,"",o);printf "%s\n",o}' <<< "$out")
+  case "$pkgtype" in
+    aur)
+      if command -v aur &> /dev/null; then
+        log -d -d "Using aur command for $pkg"
+        out=$(aur query -t info "$pkg")
+        log -d -d -d "aur query output: $out"
+        out=$(jq -rn --argjson j "$out" '$j.results[].Version' 2> /dev/null)
+        log -d -d -d "jq output: $out"
+      else
+        log -d -d "Using curl/awk via github for $pkg"
+        out=$(maketemp)
+        curl --no-progress-meter -Lo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
+        log -d -d -d "Curl output: $(cat "$out")"
+        [[ -s "$out" ]] && out=$(awk -F= '
+            /^_major=/ { m = $2 }
+            /^_subver=/ { s = $2 }
+            /^pkgver=/ { pv = $2 }
+            /^pkgrel=/ { pr = $2 }
+          END {
+            if (m != "" && s != "")
+              o=sprintf("%s.%s-%s\n",m,s,pr)
+            else if (pv != "")
+              o=sprintf("%s-%s\n",pv,pr)
+            gsub(/"/,"",o)
+            print o
+          }' "$out")
+        log -d -d -d "awk output: $out"
+      fi
+      ;;
+    flatpak)
+      out=$(flatpak list --columns=application,version)
+      log -d -d -d "Flatpak list output: $out"
+      [[ -n "$out" ]] && out=$(awk -v a="$pkg" '$1==a {print $NF;exit}' <<< "$out")
+      log -d -d -d "awk output: $out"
+      ;;
+    pacman)
+      check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+      out=$(pacman -Q "$pkg" 2> /dev/null)
+      log -d -d -d "pacman output: $out"
+      out=$(awk '{for (i = 2 ; i <= NF ; i++) o = o " " $i }END{sub(/^ /,"",o);printf "%s\n",o}' <<< "$out")
+      log -d -d -d "awk output: $out"
+      ;;
+    *) log -e "Invalid package type ($pkgtype)" ; return 1 ;;
+  esac
   log -d -d -d "awk output: $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
+}
+
+# Search for the latest release of a Codeberg/Forgejo/Gitea/Github/Gitlab repo
+scm_project() { # check_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  local mode=release maxpages=20
+  local site="https://api.github.com/repos" section=github jqtags='.[].name'
+  local release_end=releases/latest tags_end="tags?per_page=100&page" jqstring='.tag_name'
+  local opt OPTARG OPTIND=1
+  while getopts ":cfgltRT" opt; do
+    case "$opt" in
+      g) ;; # github defaults
+      R) ;; # release
+      c) section=codeberg
+         site="https://codeberg.org/api/v1/repos"
+         release_end=releases/latest
+         tags_end="tags?limit=50&page"
+         jqstring='.tag_name'
+         jqtags='.[].name'
+         ;;
+      f) section=forgejo
+         site="https://code.forgejo.org/api/v1/repos"
+         release_end=releases/latest
+         tags_end="tags?limit=50&page"
+         jqstring='.tag_name'
+         jqtags='.[].name'
+         ;;
+      l) section=gitlab
+         site="https://gitlab.com/api/v4/projects"
+         release_end=releases/permalink/latest
+         tags_end="repository/tags?order_by_version&sort=desc&per_page"
+         jqstring='.tag_name'
+         jqtags='.[].name'
+         maxpages=1
+         ;;
+      t) section=gitea
+         site="https://gitea.com/api/v1/repos"
+         release_end=releases/latest
+         tags_end="tags?limit=50&page"
+         jqstring='.tag_name'
+         jqtags='.[].name'
+         ;;
+      T) mode=tags ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
+
+  local repo=$1 output=() out err errmsg
+  # Encode repo for Gitlab
+  [[ "$section" == "gitlab" ]] && repo=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$repo")
+  local authstring=() uri
+  mapfile -t authstring < <(gen_authstring "$section")
+
+  err=$(maketemp)
+  out=$(maketemp)
+  if [[ "$mode" == "release" ]]; then
+    uri="$site/$repo/$release_end"
+    log -d -d  "Looking up latest release for $1 using $section API: $uri"
+    curl "${authstring[@]}" --no-progress-meter -Lo "$out" "$uri" 2> "$err"
+    log -d -d -d "curl output: $(cat "$out")"
+    out=$(jq -r "$jqstring" "$out" 2> /dev/null)
+    log -d -d "jq output: $out"
+    output=("$out")
+  else
+    jqstring=$jqtags
+    local page=0 done=false tmp
+    uri="$site/$repo/$tags_end"
+    log -d -d "Looking up tags for $repo using $section API: $uri=1"
+    while ! $done && (( page < maxpages )); do
+      page=$(( page + 1 ))
+      curl "${authstring[@]}" --no-progress-meter -Lo "$out" "$uri=$page" 2> "$err"
+      log -d -d -d "curl output: $(cat "$out")"
+      if [[ ! -s "$out" || "$(jq 'length' 2> /dev/null "$out")" -eq 0 ]]; then
+        done=true
+        break
+      fi
+      tmp=$(jq -r "$jqtags" "$out" 2> /dev/null)
+      log -d -d -d "Jq output: $tmp"
+      output+=("$tmp")
+    done
+  fi
+  errmsg=$(cat "$err")
+  [[ -n "$errmsg" ]] && log -e "$1: $errmsg"
+  (( ${#output[@]} > 0 )) && { printf '%s\n' "${output[@]}" ; return 0 ; }
+  log -e "Could not find $section $mode data for $repo"
   return 1
 }
 
@@ -1323,6 +1239,7 @@ use_sudo_exec() { # utility_function
       rp=$(realpath "$0")
       log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X ${FUNCNAME[1]} $1 SUDO_EXEC_DEBUG=$debug DOCKER_FILTER=$docker_filter DOCKER_SECONDS=$docker_seconds'"
       out=$(sudo -n -u "$sudo_user" "$rp" -X "${FUNCNAME[1]}" "$1" SUDO_EXEC_DEBUG="$debug" DOCKER_FILTER="$docker_filter" DOCKER_SECONDS="$docker_seconds")
+      # Return code 19 when docker_filter is enabled and container is older than seconds
       (( $? == 19 )) && { log -d "Returning 19" ; return 19 ; }
       log -d "$1"
       log -d "sudo_exec ${FUNCNAME[1]} returned out='$out'"
@@ -1494,10 +1411,10 @@ execute_check() { # utility_function
     # alpine_docker) out=$(alpine_docker_package "$project") ; ret=$? ;;
     alpine_repo)     out=$(alpine_repo_package "$project") ; ret=$? ;;
     appimage)        out=$(appimage_check "$project") ; ret=$? ;;
-    aur)             out=$(aur_package "$project") ; ret=$? ;;
+    aur)             out=$(os_package -A "$project") ; ret=$? ;;
     cat)             check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
-    codeberg)        out=$(gitea_release -c "$project") ; ret=$? ;;
-    codeberg_tags)   out=$(gitea_tags -c "$project") ; ret=$? ;;
+    codeberg)        out=$(scm_project -c "$project") ; ret=$? ;;
+    codeberg_tags)   out=$(scm_project -T -c "$project") ; ret=$? ;;
     command)         out=$(command_check "$project") ; ret=$? ;;
     curl)            out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
     curlapi)         out=$(curl_api "$project") ; ret=$? ;;
@@ -1507,25 +1424,25 @@ execute_check() { # utility_function
     docker_logs)     out=$(docker_logs "$project") ; ret=$? ;;
     docker_printenv) out=$(docker_printenv "$project") ; ret=$? ;;
     docker_tags)     out=$(docker_tags "$project") ; ret=$? ;;
-    flatpak)         out=$(flatpak_version "$project") ; ret=$? ;;
-    flathub)         out=$(flathub_version "$project") ; ret=$? ;;
-    forgejo)         out=$(gitea_release -f "$project") ; ret=$? ;;
-    forgejo_tags)    out=$(gitea_tags -f "$project") ; ret=$? ;;
+    flatpak)         out=$(os_package -F "$project") ; ret=$? ;;
+    flathub)         out=$(flathub_app "$project") ; ret=$? ;;
+    forgejo)         out=$(scm_project -f "$project") ; ret=$? ;;
+    forgejo_tags)    out=$(scm_project -T -f "$project") ; ret=$? ;;
     gitdescribe)     out=$(git_checkout -d "$project") ; ret=$? ;;
     gittags)         out=$(git_checkout -t "$project") ; ret=$? ;;
-    gitea)           out=$(gitea_release -g "$project") ; ret=$? ;;
-    gitea_tags)      out=$(gitea_tags -g "$project") ; ret=$? ;;
-    github)          out=$(github_release "$project") ; ret=$? ;;
-    github_tags)     out=$(github_tags "$project") ; ret=$? ;;
-    gitlab)          out=$(gitlab_release "$project") ; ret=$? ;;
-    gitlab_tags)     out=$(gitlab_tags "$project") ; ret=$? ;;
-    pacman)          out=$(pacman_package "$project") ; ret=$? ;;
+    gitea)           out=$(scm_project -t "$project") ; ret=$? ;;
+    gitea_tags)      out=$(scm_project -T -t "$project") ; ret=$? ;;
+    github)          out=$(scm_project -g "$project") ; ret=$? ;;
+    github_tags)     out=$(scm_project -T -g "$project") ; ret=$? ;;
+    gitlab)          out=$(scm_project -l "$project") ; ret=$? ;;
+    gitlab_tags)     out=$(scm_project -T -l "$project") ; ret=$? ;;
+    pacman)          out=$(os_package -a "$project") ; ret=$? ;;
     $PROGNAME)       out=$($PROGNAME) ; ret=$? ;;
     *)
       log -e "Unknown package check: $tag"
       return 1 ;;
   esac
-
+  # Return code 19 when docker_filter is enabled and container is older than seconds
   [[ "$tag" == docker* && "$ret" -eq 19 ]] && return 19
 
   # Apply xml filter, if set
