@@ -34,8 +34,8 @@ export SEMVER_REGEX
 
 # TODO automate this similar to how _latest was done before
 # Define list of check types
-AUTO_CHECKS='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
-export AUTO_CHECKS
+CHECK_LIST='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
+export CHECK_LIST
 
 # Store all temp files in a tempdir and delete the directory on exit
 TEMPDIR=$(mktemp -d)
@@ -1412,7 +1412,7 @@ printer_ink_check() { # remote_host
 }
 
 # Run version checks
-auto_check() { # helper_function
+execute_check() { # helper_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
 
@@ -2223,8 +2223,8 @@ main() { # utility_function
 
       # For dynamic/auto checks, strip off preceding 
       sw_name=$sw
-      # sw_tag=$(grep -Po "(?<=!!)$AUTO_CHECKS$" <<< "$sw_name")
-      sw_tag=$(sed -r "s/^.*"'!!'"$AUTO_CHECKS$/\1/" <<< "$sw_name")
+      # sw_tag=$(grep -Po "(?<=!!)$CHECK_LIST$" <<< "$sw_name")
+      sw_tag=$(sed -r "s/^.*"'!!'"$CHECK_LIST$/\1/" <<< "$sw_name")
       while [[ "$sw_name" =~ ^(prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter) ]]; do
         case "$sw_name" in
           prejq=*)
@@ -2320,7 +2320,7 @@ main() { # utility_function
       [[ -n "$compose_file" ]] && export COMPOSE_FILE=$compose_file
 
       found=false
-      [[ "$sw_orig" =~ !!$AUTO_CHECKS ]] && found=true
+      [[ "$sw_orig" =~ !!$CHECK_LIST ]] && found=true
       if ! $found && ! function_exists "$sw"; then
         for tag in docker git flatpak appimage pacman arch command; do
           if function_exists "$sw"_"$tag"; then
@@ -2469,10 +2469,8 @@ main() { # utility_function
             update_time=$(date +%s)
             (( ret != 0 )) && log -e "Could not get $sw_name version with sudo" && continue 2
           else
-
-            # TODO move auto_check here
-            log -d -d "Running 'auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_auto_flags[*]}$sw_name' to get version"
-            version=$(auto_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" \
+            log -d -d "Running 'execute_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_auto_flags[*]}$sw_name' to get version"
+            version=$(execute_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" \
               "${sw_auto_flags[@]}" "$sw_name")
 
             ret=$?
