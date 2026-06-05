@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 
 # Define variables for this program
-PROGNAME=vcheck           # The name of this program
-PROGVER=1.1.0             # Program version
-PROGDATA=/etc/"$PROGNAME" # Default program data directory
-ALPINE_VER=""             # Global placeholder for current Alpine Linux version
-SUDO_EXEC=false           # Is this being run through sudo_exec
-SOURCED_LIBS=("$0")       # Array of sourced libraries - TODO review need
-DEBUG_EXIT=5              # Number of -d flags to print debug info and exit
-export PROGNAME PROGVER PROGDATA ALPINE_VER SUDO_EXEC SOURCED_LIBS DEBUG_EXIT
+PROGNAME=vcheck
+PROGVER=1.1.0
+PROGDATA=/etc/"$PROGNAME"
+ALPINE_VER=""
+SUDO_EXEC=false
+SOURCED_LIBS=("$0")
+export PROGNAME PROGVER PROGDATA ALPINE_VER SUDO_EXEC SOURCED_LIBS
 
 # Define check for this program
 eval "$PROGNAME() { echo \$PROGVER; }" # { # utility_function
+
+TMPFILES=()
+trap 'rm -Rf -- "${TMPFILES[@]}"' EXIT
+trap 'exit 1' INT TERM
+export TMPFILES
 
 # Add common bin dirs to the PATH
 PATH=$PATH:$HOME/.local/bin:/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin
@@ -32,12 +36,10 @@ LSVER='(-(ls[0-9]+))?'
 SEMVER_REGEX="($SEMVER_MAJOR$SEMVER_MINOR$SEMVER_PATCH$HOTFIX|$VER_YMD)$SEMVER_PRERELEASE$SEMVER_BUILDMETA$LSVER"
 export SEMVER_REGEX
 
-# TODO automate this similar to how _latest was done before
-# Define list of check types
-AUTO_CHECKS='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
+AUTO_CHECKS='(alpine_repo|appimage|aur|cat|codeberg|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flatpak_appstream|forgejo|gitdescribe|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
 export AUTO_CHECKS
 
-# Store all temp files in a tempdir and delete the directory on exit
+# Handle temp files
 TEMPDIR=$(mktemp -d)
 _cleanup() { # utility_function
   local ret=$?
@@ -63,7 +65,7 @@ if ! command -v mapfile &> /dev/null; then
   }
 fi
 
-# Log messages respecting -d, -v, -q, and -e
+# Function to log messages respecting -d, -v, -q, and -e
 log() { # utility_function
   # Comment out printing Running here because it is too noisy
   # (( debug == 3 )) && echo "[DEBUG] (${FUNCNAME[0]}) Running: ${FUNCNAME[0]} $*" >&2
@@ -87,8 +89,8 @@ log() { # utility_function
   return 0
 }
 
-# Read a config value (optionally from a section) from a config file
-get_config_value() { # utility_function
+# Use get_config_value from my _config library
+get_config_value() {
   # No section: variable=( $(get_config_value file key) )
   # Section:    variable=( $(get_config_value file section key) )
 
@@ -146,7 +148,24 @@ get_config_value() { # utility_function
   fi
 }
 
-# Calculate the number of seconds from docker's Created/RunningFor fields
+# Function to find which index matches "$1" in a array passed as $2...
+arr_index() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "usage: ${FUNCNAME[0]} needle stack1 [stack2 stack3...]" ; echo "-1" ; return 1 ; }
+  local needle=$1 i=0
+  shift
+  local arr=("$@")
+  for (( i = 0 ; i < $# ; i++ )) do
+    if [[ "$needle" == "${arr[i]}" ]]; then
+      echo "$i"
+      return 0
+    fi
+  done
+  echo "-1"
+  return 1
+}
+
+# Function to calculate the number of seconds from docker's CREATED field
 calc_seconds() { # utility_function
   [[ ! "$1" =~ ^[0-9]+" "[^[:space:]]+" ago"$ ]] && return 1
 
@@ -161,7 +180,7 @@ calc_seconds() { # utility_function
   esac
 }
 
-# check if a program is installed and print an error message if not
+# Function to check if a program exists and print an error message
 check_prog() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { echo "usage: check_prog prog" ; return 1 ; }
@@ -178,7 +197,7 @@ check_prog() { # utility_function
   return 1
 }
 
-# Get a list of docker checks with name|image|state|age
+# Function to get a list of docker checks with name|image|state|age
 # shellcheck disable=SC2120
 docker_checks() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
@@ -194,7 +213,7 @@ docker_checks() { # utility_function
   printf '%s\n' "${checks[@]}"
 }
 
-# Drop privileges and run this program as $exec_user
+# Function to drop privileges and run this program as $exec_user
 drop_privs() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# < 2 )) && { log -d "Not enough arguments" ; return 1 ; }
@@ -232,8 +251,7 @@ drop_privs() { # utility_function
   fi
 }
 
-# TODO Determine if needed anymore
-# Ensure that a check function exists
+# Function to ensure that a check function exists
 function_exists() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Missing argument for ${FUNCNAME[0]}" ; return 1 ; }
@@ -247,7 +265,7 @@ function_exists() { # utility_function
   return 0
 }
 
-# Generate an authstring for curl from a token in the config file
+# Function to generate an authstring for curl from a token in the config file
 # Called with 'gen_authstring github'
 gen_authstring() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
@@ -265,6 +283,23 @@ gen_authstring() { # utility_function
   return 1
 }
 
+# Function to return the running system architecture
+get_arch() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  if command -v dpkg > /dev/null 2>&1; then
+    dpkg --print-architecture
+  else
+    case $(uname -m) in
+      x86_64)
+        echo amd64 ;;
+      aarch64|armv7l)
+        echo arm64 ;;
+      *)
+        echo error ;;
+    esac
+  fi
+}
+
 # Print the length of the longest element
 get_longest() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} from ${FUNCNAME[1]}"
@@ -276,7 +311,7 @@ get_longest() { # utility_function
   echo "$max"
 }
 
-# Wrap mktemp and add tmpfile/tmpdir to TEMPFILES
+# Function to wrap mktemp and add tmpfile/tmpdir to TEMPFILES
 maketemp() { # utility_function
   local tmpfile args=()
   local OPTIND=1 OPTARG opt
@@ -296,7 +331,37 @@ maketemp() { # utility_function
   echo "$tmpfile"
 }
 
-# Print arrays
+# Function to make sure program can write to cache directory/create directory
+prepare_cache_dir() { # utility_function
+  log -d -d -d "Running: ${FUNCNAME[0]} from ${FUNCNAME[1]}"
+  $CACHE_DIR_PREPARED && return 0
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local cache_dir=$1 cache_parent
+  if [[ -n "$cache_dir" ]]; then
+    if [[ ! -d "$cache_dir" ]]; then
+      [[ -e "$cache_dir" ]] && log -e "Cache directory '$cache_dir' exists but is not a directory" && exit 1
+      mkdir -p "$cache_dir" &> /dev/null
+      # If cache_dir does not exist, ensure parent is writable
+      cache_parent=$(realpath "$cache_dir")
+      cache_parent=${cache_parent%/*}
+      if [[ ! -w "$cache_parent" ]]; then
+        log -e "Cannot write to $cache_parent to create cache dir: $cache_dir"
+        exit 1
+      fi
+    else
+      # If cache_dir exists, make sure it is writable
+      if [[ ! -w "$cache_dir" ]]; then
+        log -e "Cannot write to cache dir: $cache_dir"
+        exit 1
+      fi
+    fi
+    [[ ! -d "$cache_dir" ]] && mkdir -p "$cache_dir"
+  fi
+  log -d "Cache directory prepared"
+  CACHE_DIR_PREPARED=true
+}
+
+# Function to print arrays
 # Usage: print_list [-n 14] -l "Label" "${arr1[@]}"
 # Where -n tells print_list to pad for each string being 14 characters
 # -n could be passed with $(get_longest "${arr1[@]}" "${arr2[@]}" ...) to have multiple lists line up
@@ -347,7 +412,7 @@ print_list() { # utility_function
   printf '\n\n'
 }
 
-# Run a specific function as $sudo_user
+# Function to allow a user to run a specific function with sudo
 sudo_exec() { # utility_function
   local arg args=()
 
@@ -375,7 +440,7 @@ sudo_exec() { # utility_function
   "$1" "${@:2}"
 }
 
-# Fold the usage lines
+# Function to fold the usage lines
 usage_fold() { # utility_function
   local opt OPTARG OPTIND=1
   local first=2 second=4 cols=100 first_set=false second_set=false
@@ -429,9 +494,31 @@ usage_fold() { # utility_function
   fi
 }
 
-## Helper functions
-# Search alpine repo for latest version of a package
-alpine_repo_package() { # helper_function
+## helper functions
+alpine_docker_package() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  if [[ -z "$COMPOSE_FILE" ]]; then
+    log -e "${FUNCNAME[1]}: COMPOSE_FILE not set"
+    [[ -n "$SUDO_USER" ]] && log -e "Check sudoers: add COMPOSE_FILE to env_keep for $LOGNAME"
+    return 1
+  fi
+  [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
+  local package=$1 containername out ret=0
+  log -d "Checking ${FUNCNAME[0]} for $package"
+  containername=$(_docker_container_search "${FUNCNAME[1]%_docker}")
+  ret=$?
+  (( $ret == 19 )) && return 19
+  (( $ret != 0 )) && return 1
+  [[ -z "$package" ]] && package=$containername
+  log -d -d "Executing docker compose -f $COMPOSE_FILE exec -u nobody $containername apk list --installed"
+  out=$(docker compose -f "$COMPOSE_FILE" exec -u nobody "$containername" apk list --installed 2>&1)
+  log -d -d -d "docker compose output: $out"
+  log -d -d "Searching output for '$package'"
+  [[ -n "$out" ]] && awk -v p="$package" '$0 ~ "^" p {sub("^" p "-?","",$1);print $1;exit}' 2>/dev/null <<< "$out"
+}
+
+_alpine_repo_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog xmllint "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
@@ -462,8 +549,7 @@ alpine_repo_package() { # helper_function
     | tail -n1
 }
 
-# Extract app image version from filename
-appimage_check() { # helper_function
+_appimage_check() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
@@ -471,8 +557,7 @@ appimage_check() { # helper_function
     sed -r "s#^.*$1-(.*)\.AppImage#\1#"
 }
 
-# Search the AUR for a package version
-aur_package() { # helper_function
+_aur_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local pkg=$1 out
@@ -507,8 +592,7 @@ aur_package() { # helper_function
   return 0
 }
 
-# Run version checks
-auto_check() { # helper_function
+_auto_check() { # helper_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
 
@@ -548,35 +632,36 @@ auto_check() { # helper_function
   log -d -d "postsed=${postsed[*]}"
   log -d -d "skip=$skipverfilter"
 
-  local ret=0
+  local latest=false ret=0
+  [[ "$tag" == *_latest ]] && latest=true
   tag=${tag%_latest}
   [[ "$tag" =~ (aur|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
   case "$tag" in
     # alpine_docker) out=$(alpine_docker_package "$project") ; ret=$? ;;
-    alpine_repo) out=$(alpine_repo_package "$project") ; ret=$? ;;
-    appimage) out=$(appimage_check "$project") ; ret=$? ;;
-    aur) out=$(aur_package "$project") ; ret=$? ;;
+    alpine_repo) out=$(_alpine_repo_package "$project") ; ret=$? ;;
+    appimage) out=$(_appimage_check "$project") ; ret=$? ;;
+    aur) out=$(_aur_package "$project") ; ret=$? ;;
     cat) check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
-    codeberg) out=$(codeberg_release "$project") ; ret=$? ;;
-    command) out=$(command_check "$project") ; ret=$? ;;
+    codeberg) out=$(_codeberg_project "$project") ; ret=$? ;;
+    command) out=$(_command_check "$project") ; ret=$? ;;
     curl) out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
-    curlapi) out=$(curl_api "$project") ; ret=$? ;;
-    docker_copy) out=$(docker_copy "$project") ; ret=$? ;;
-    docker_exec) out=$(docker_exec "$project") ; ret=$? ;;
-    docker_inspect) out=$(docker_inspect "$project") ; ret=$? ;;
-    docker_logs) out=$(docker_logs "$project") ; ret=$? ;;
-    docker_printenv) out=$(docker_printenv "$project") ; ret=$? ;;
-    docker_tags) out=$(docker_tags "$project") ; ret=$? ;;
-    flatpak) out=$(flatpak_version "$project") ; ret=$? ;;
-    flathub) out=$(flathub_version "$project") ; ret=$? ;;
-    forgejo) out=$(codeberg_release -f "$project") ; ret=$? ;;
-    gitdescribe) out=$(git_checkout -d "$project") ; ret=$? ;;
-    gittags) out=$(git_checkout -t "$project") ; ret=$? ;;
-    github) out=$(github_release "$project") ; ret=$? ;;
-    github_tags) out=$(github_tags "$project") ; ret=$? ;;
-    gitlab) out=$(gitlab_release "$project") ; ret=$? ;;
-    gitlab_tags) out=$(gitlab_tags "$project") ; ret=$? ;;
+    curlapi) out=$(_curl_api "$project") ; ret=$? ;;
+    docker_copy) out=$(_docker_copy "$project") ; ret=$? ;;
+    docker_exec) out=$(_docker_exec "$project") ; ret=$? ;;
+    docker_inspect) out=$(_docker_inspect "$project") ; ret=$? ;;
+    docker_logs) out=$(_docker_logs "$project") ; ret=$? ;;
+    docker_printenv) out=$(_docker_printenv "$project") ; ret=$? ;;
+    docker_tags) out=$(_docker_tags "$project") ; ret=$? ;;
+    flatpak) out=$(_flatpak_version "$project") ; ret=$? ;;
+    flatpak_appstream) out=$(_flatpak_appstream "$project") ; ret=$? ;;
+    forgejo) out=$(_codeberg_project -f "$project") ; ret=$? ;;
+    gitdescribe) out=$(_git_checkout -d "$project") ; ret=$? ;;
+    gittags) out=$(_git_checkout -t "$project") ; ret=$? ;;
+    github) out=$(_github_project "$project") ; ret=$? ;;
+    github_tags) out=$(_github_tags "$project") ; ret=$? ;;
+    gitlab) out=$(_gitlab_project "$project") ; ret=$? ;;
+    gitlab_tags) out=$(_gitlab_tags "$project") ; ret=$? ;;
     pacman)
       check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
       out=$(pacman -Q "$project" 2> /dev/null)
@@ -655,13 +740,7 @@ auto_check() { # helper_function
 
   # Apply versionfilter if $skipverfilter is false
   # shellcheck disable=SC2119
-  local vout
-  if [[ -n "$out" ]] && ! $skipverfilter; then
-    log -d -d -d "Executing: perl -ne 'print \"\$&\n\" if /$SEMVER_REGEX/'"
-    vout=$(perl -ne 'print "$&\n" if /'"$SEMVER_REGEX"'/' <<< "$out")
-    log -d -d -d "perl output: $vout"
-    grep -Eq "^$SEMVER_REGEX$" <<< "$vout" && out=$(head -n1 <<< "$vout")
-  fi
+  [[ -n "$out" ]] && ! $skipverfilter && out=$(_version_filter <<< "$out")
 
   # If there is still output, print it
   [[ -n "$out" ]] && echo "$out" && return 0
@@ -671,41 +750,7 @@ auto_check() { # helper_function
   return 1
 }
 
-# Search for the latest release of a Codeberg or Forgejo Repo
-codeberg_release() { # helper_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  local site="https://codeberg.org" section=codeberg out
-  local opt OPTARG OPTIND=1
-  while getopts ":f" opt; do
-    case "$opt" in
-      f) section=forgejo
-         site="https://code.forgejo.org"
-         ;;
-      *) log -w "Invalid flag ($OPTARG)" ;;
-    esac
-  done
-  shift $(( OPTIND - 1 ))
-  (( $# == 0 )) && { log -d "${FUNCNAME[0]} requires a project argument" ; return 1 ; }
-
-  local uri="$site/$1/releases/latest"
-  log -d "uri: $uri"
-
-  local authstring=()
-  mapfile -t authstring < <(gen_authstring "$section")
-
-  out=$(maketemp)
-  curl "${authstring[@]}" --no-progress-meter -o "$out" "$uri"
-  log -d -d -d "Curl output: $(cat "$out")"
-  if [[ -s "$out" ]]; then
-    awk -F'["/]' '{print $7;exit}' "$out"
-    return 0
-  fi
-  log -e "Invalid curl output"
-  return 1
-}
-
-# Run different variations of 'command --version' to get a version for a command
-command_check() { # helper_function
+_command_check() { # helper_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -741,11 +786,42 @@ command_check() { # helper_function
   fi
 }
 
-# Use curl with credentials to get version info from an API
+_codeberg_project() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  local site="https://codeberg.org" section=codeberg out
+  local opt OPTARG OPTIND=1
+  while getopts ":f" opt; do
+    case "$opt" in
+      f) section=forgejo
+         site="https://code.forgejo.org"
+         ;;
+      *) log -w "Invalid flag ($OPTARG)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# == 0 )) && { log -d "${FUNCNAME[0]} requires a project argument" ; return 1 ; }
+
+  local uri="$site/$1/releases/latest"
+  log -d "uri: $uri"
+
+  local authstring=()
+  mapfile -t authstring < <(gen_authstring "$section")
+
+  out=$(maketemp)
+  curl "${authstring[@]}" --no-progress-meter -o "$out" "$uri"
+  log -d -d -d "Curl output: $(cat "$out")"
+  if [[ -s "$out" ]]; then
+    awk -F'["/]' '{print $7;exit}' "$out"
+    return 0
+  fi
+  log -e "Invalid curl output"
+  return 1
+}
+
 # To use this function, there must be a section in $rcfile
-# The section should be named after the check using curl_api
+# The section should be named after the check using _curl_api
 # The section must include url and optionally username & password or apikey
-curl_api() { # helper_function
+_curl_api() { # helper_function
   log -d "Running ${FUNCNAME[0]} for ${FUNCNAME[1]}"
   local url username password apikey out
 
@@ -779,15 +855,101 @@ curl_api() { # helper_function
   cat "$out"
 }
 
-# Search for a container name via the image or name fields
-docker_container_search() { # helper_function
+_docker_exec() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
-  out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d returning 19;return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
+
+  local image image_search command=() out
+  if (( $# == 1 )); then
+    if [[ "$1" == *!!* ]]; then
+      image_search=${1%%!!*}
+      command=("${1#*!!}")
+    else
+      image_search=$1
+      # command=($*)
+      read -ra command <<< "$*"
+    fi
+  else
+    image_search=$1
+    shift
+    command=("$@")
+  fi
+
+  log -d -d "Running _docker_container_search $image_search"
+  container=$(_docker_container_search "$image_search")
+  (( $? == 19 )) && return 19
+  log -d -d "container=$container"
+  [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
+
+  log -d -d "Executing: docker exec -u nobody $container ${command[*]}"
+  # shellcheck disable=SC2048,SC2086
+  out=$(docker exec -u nobody "$container" ${command[*]} 2>&1)
+  log -d -d "docker exec output = $out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
+}
+
+_docker_copy() {
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
+
+  local image image_search srcfiles catfiles out
+  if (( $# == 1 )); then
+    if [[ "$1" == *!!*!!* ]]; then
+      image_search=${1%%!!*}
+      catfiles=${1##*!!}
+      srcfiles=${1#"$image_search"!!}
+      srcfiles=${srcfiles%!!"$catfiles"}
+    fi
+  else
+    image_search=$1
+    srcfiles=$2
+    catfiles=$3
+  fi
+
+  log -d "image_search=$image_search"
+  log -d "srcfiles=$srcfiles"
+  log -d "catfiles=$catfiles"
+
+  container=$(_docker_container_search "$image_search")
+  (( $? == 19 )) && return 19
+  log -d -d "container=$container"
+  [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
+
+  local tmp
+  tmp=$(maketemp -d)
+  log -d -d "Running: docker cp -q $container:$srcfiles $tmp"
+  if ! out=$(docker cp -q "$container":"$srcfiles" "$tmp" 2>&1); then
+    log -e "'docker cp $container:$srcfiles $tmp' failed with $?"
+    return 1
+  fi
+
+  log -d -d "Running: cat $(compgen -G "$tmp/$catfiles")"
+  # shellcheck disable=SC2046
+  out=$(cat $(compgen -G "$tmp/$catfiles"))
+  log -d -d -d -d "cat output: $out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
+}
+
+_docker_container_search() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+
+  # Run through sudo exec if necessary
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local docker_ps out seconds
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
@@ -818,104 +980,14 @@ docker_container_search() { # helper_function
   return 1
 }
 
-# Copy files from a container and search them for a string
-docker_copy() { # helper_function
+_docker_image_search() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
-  out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
-
-  local image image_search srcfiles catfiles out
-  if (( $# == 1 )); then
-    if [[ "$1" == *!!*!!* ]]; then
-      image_search=${1%%!!*}
-      catfiles=${1##*!!}
-      srcfiles=${1#"$image_search"!!}
-      srcfiles=${srcfiles%!!"$catfiles"}
-    fi
-  else
-    image_search=$1
-    srcfiles=$2
-    catfiles=$3
-  fi
-
-  log -d "image_search=$image_search"
-  log -d "srcfiles=$srcfiles"
-  log -d "catfiles=$catfiles"
-
-  container=$(docker_container_search "$image_search")
-  (( $? == 19 )) && return 19
-  log -d -d "container=$container"
-  [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
-
-  local tmp
-  tmp=$(maketemp -d)
-  log -d -d "Running: docker cp -q $container:$srcfiles $tmp"
-  if ! out=$(docker cp -q "$container":"$srcfiles" "$tmp" 2>&1); then
-    log -e "'docker cp $container:$srcfiles $tmp' failed with $?"
-    return 1
-  fi
-
-  log -d -d "Running: cat $(compgen -G "$tmp/$catfiles")"
-  # shellcheck disable=SC2046
-  out=$(cat $(compgen -G "$tmp/$catfiles"))
-  log -d -d -d -d "cat output: $out"
-  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
-  return 1
-}
-
-# Run a command in a docker container to get version information
-docker_exec() { # helper_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-
-  # Run through sudo exec if necessary
-  out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d returning 19;return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
-
-  local image image_search command=() out
-  if (( $# == 1 )); then
-    if [[ "$1" == *!!* ]]; then
-      image_search=${1%%!!*}
-      command=("${1#*!!}")
-    else
-      image_search=$1
-      # command=($*)
-      read -ra command <<< "$*"
-    fi
-  else
-    image_search=$1
-    shift
-    command=("$@")
-  fi
-
-  log -d -d "Running docker_container_search $image_search"
-  container=$(docker_container_search "$image_search")
-  (( $? == 19 )) && return 19
-  log -d -d "container=$container"
-  [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
-
-  log -d -d "Executing: docker exec -u nobody $container ${command[*]}"
-  # shellcheck disable=SC2048,SC2086
-  out=$(docker exec -u nobody "$container" ${command[*]} 2>&1)
-  log -d -d "docker exec output = $out"
-  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
-  return 1
-}
-
-# Search name or image fields to get a docker image name
-docker_image_search() { # helper_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-
-  # Run through sudo exec if necessary
-  out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local docker_ps out seconds
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
@@ -942,21 +1014,21 @@ docker_image_search() { # helper_function
     echo "${out%%|*}"
     return 0
   fi
+
   return 1
 }
 
-# Use docker inspect information to get version info
-docker_inspect() { # helper_function
+_docker_inspect() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local container out
 
   # Run through sudo exec if necessary
-  out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
-  container=$(docker_container_search "$1")
+  container=$(_docker_container_search "$1")
   (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
@@ -969,7 +1041,7 @@ docker_inspect() { # helper_function
   log -d -d "version label = $out"
   [[ -n "$out" ]] && grep -qE "$SEMVER_REGEX" <<< "$out" && { echo "$out" ; return 0 ; }
 
-  out=$(docker_image_search "$container")
+  out=$(_docker_image_search "$container")
   (( $? == 19 )) && return 19
   log -d -d "image_search = $out"
   local tag=${out##*:}
@@ -983,8 +1055,7 @@ docker_inspect() { # helper_function
   return 1
 }
 
-# Look through docker logs for version info
-docker_logs() { # helper_function
+_docker_logs() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   if [[ -z "$COMPOSE_FILE" ]]; then
@@ -997,13 +1068,13 @@ docker_logs() { # helper_function
   [[ "$1" == "-h" ]] && { log "usage: docker_logs dockername" ; return 0 ; }
 
   # Run through sudo exec if necessary
-  out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local image image_search=$1 out
   log -d "image_search=$image_search"
 
-  container=$(docker_container_search "$image_search")
+  container=$(_docker_container_search "$image_search")
   (( $? == 19 )) && return 19
   log -d -d "container=$container"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
@@ -1014,15 +1085,14 @@ docker_logs() { # helper_function
   return 1
 }
 
-# Print a docker environment variable for version info
-docker_printenv() { # helper_function
+_docker_printenv() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
   # Run through sudo exec if necessary
-  out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  out=$(_use_sudo_exec "$@") ; ret=$?
+  case $ret in 0)echo "$out";return 0;;2|4);;19)log -d "Returning 19";return 19;;*)log -d "_use_sudo_exec error $ret";return 1;;esac
 
   local image image_search variable out
   if (( $# == 1 )); then
@@ -1036,7 +1106,7 @@ docker_printenv() { # helper_function
     image_search=$1
     variable=$2
   fi
-  image=$(docker_image_search "$image_search")
+  image=$(_docker_image_search "$image_search")
   (( $? == 19 )) && return 19
   log -d -d "image_search=$image_search"
   log -d -d "variable=$variable"
@@ -1056,8 +1126,7 @@ docker_printenv() { # helper_function
   fi
 }
 
-# Search a docker registry for tags for the latest version of a container
-docker_tags() { # helper_function
+_docker_tags() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
@@ -1240,8 +1309,7 @@ docker_tags() { # helper_function
   return 1
 }
 
-# Search flathub for the newest version of a flatpak
-flathub_version() { # helper_function
+_flatpak_appstream() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1254,8 +1322,7 @@ flathub_version() { # helper_function
   [[ -s "$out" ]] && jq -r '.releases[0].version' "$out" 2> /dev/null
 }
 
-# Print the version info for a flatpak
-flatpak_version() { # helper_function
+_flatpak_version() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog flatpak "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1267,8 +1334,7 @@ flatpak_version() { # helper_function
   [[ -n "$out" ]] && awk -v a="$1" '$1==a {print $NF;exit}' <<< "$out"
 }
 
-# Check out a git repo and use 'git describe' or 'git tag' to get version info
-git_checkout() { # helper_function
+_git_checkout() { # helper_function
   log -d -d -d "Running ${FUNCNAME[0]} $*"
   check_prog git "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
 
@@ -1313,8 +1379,7 @@ git_checkout() { # helper_function
   return 1
 }
 
-# Get the latest release of a Github repo
-github_release() { # helper_function
+_github_project() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
@@ -1335,8 +1400,57 @@ github_release() { # helper_function
   echo "$out"
 }
 
-# Get tags from a Github repo
-github_tags() { # helper_function
+_gitlab_project() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
+
+  local authstring=() err errmsg out
+  mapfile -t authstring < <(gen_authstring gitlab)
+
+  # URL-encode the owner/repo slug (GitLab requires this for namespaced projects)
+  local encoded
+  encoded=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1")
+
+  err=$(maketemp)
+  out=$(maketemp)
+  echo "Looking up latest release for $1 using gitlab api" >> "$err"
+  curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
+    "https://gitlab.com/api/v4/projects/${encoded}/releases/permalink/latest" 2>> "$err"
+  log -d -d -d "curl output: $(cat "$out")"
+  out=$(jq -r '.tag_name' "$out" 2> /dev/null)
+  errmsg=$(cat "$err")
+  [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
+  echo "$out"
+}
+
+_gitlab_tags() { # helper_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
+
+  local authstring=() err errmsg out
+  mapfile -t authstring < <(gen_authstring gitlab)
+
+  # URL-encode the owner/repo slug (GitLab requires this for namespaced projects)
+  local encoded
+  encoded=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1")
+
+  err=$(maketemp)
+  out=$(maketemp)
+  echo "Looking up latest tag for $1 using gitlab api" >> "$err"
+  curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
+    "https://gitlab.com/api/v4/projects/${encoded}/repository/tags?order_by=version&sort=desc&per_page=1" 2>> "$err"
+  log -d -d -d "curl output: $(cat "$out")"
+  out=$(jq -r '.[0].name' "$out" 2> /dev/null)
+  errmsg=$(cat "$err")
+  [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
+  echo "$out"
+}
+
+_github_tags() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   local output err out
@@ -1366,67 +1480,43 @@ github_tags() { # helper_function
   echo "$output"
 }
 
-# Get the latest release of a Gitlab repo
-gitlab_release() { # helper_function
+# This function cannot use _curl_api because of the dynamic URL with $1
+myaur_package() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
-
-  local authstring=() err errmsg out
-  mapfile -t authstring < <(gen_authstring gitlab)
-
-  # URL-encode the owner/repo slug (GitLab requires this for namespaced projects)
-  local encoded
-  encoded=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1")
-
-  err=$(maketemp)
-  out=$(maketemp)
-  echo "Looking up latest release for $1 using gitlab api" >> "$err"
-  curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
-    "https://gitlab.com/api/v4/projects/${encoded}/releases/permalink/latest" 2>> "$err"
-  log -d -d -d "curl output: $(cat "$out")"
-  out=$(jq -r '.tag_name' "$out" 2> /dev/null)
-  errmsg=$(cat "$err")
-  [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
-  echo "$out"
+  (( $# == 0 )) && { log -e "Package name required for ${FUNCNAME[0]}" ; return 1 ; }
+  local url out
+  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for ${FUNCNAME[0]}" ; return 1; }
+  mapfile -t url < <(get_config_value "$rcfile" private_aur url)
+  (( ${#url[@]} == 0 )) && { log -e "Could not read ${FUNCNAME[0]} URL from $rcfile" ; return 1 ; }
+  out=$(curl --no-progress-meter "${url[0]}/raw/branch/main/$1/PKGBUILD")
+  log -d -d -d "Curl output: $out"
+  [[ -n "$out" ]] && awk -F= '/^pkgver=/{pv=$2}/^pkgrel=/{pr=$2}END{printf "%s-%s\n",pv,pr;exit}' <<< "$out"
 }
 
-# Get the tags of a Gitlab repo
-gitlab_tags() { # helper_function
+# Function to validate STDIN contains a version string and
+# prints that string as output, returning 0 for success and 1 for failure
+# Example usage: if out=$(command | _version_filter); then
+# shellcheck disable=SC2120
+_version_filter() { # helper_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
-  check_prog jq "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} project/repo" ; return 0 ; }
-
-  local authstring=() err errmsg out
-  mapfile -t authstring < <(gen_authstring gitlab)
-
-  # URL-encode the owner/repo slug (GitLab requires this for namespaced projects)
-  local encoded
-  encoded=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1")
-
-  err=$(maketemp)
-  out=$(maketemp)
-  echo "Looking up latest tag for $1 using gitlab api" >> "$err"
-  curl "${authstring[@]}" --no-progress-meter -Lo "$out" \
-    "https://gitlab.com/api/v4/projects/${encoded}/repository/tags?order_by=version&sort=desc&per_page=1" 2>> "$err"
-  log -d -d -d "curl output: $(cat "$out")"
-  out=$(jq -r '.[0].name' "$out" 2> /dev/null)
-  errmsg=$(cat "$err")
-  [[ -n "$errmsg" ]] && log -d "$sw: $errmsg"
-  echo "$out"
+  log -d -d -d "Executing: perl -ne 'print \"\$&\n\" if /$SEMVER_REGEX/'"
+  out=$(perl -ne 'print "$&\n" if /'"$SEMVER_REGEX"'/')
+  log -d -d -d "perl output: $out"
+  if grep -Eq "^$SEMVER_REGEX$" <<< "$out"; then
+    echo "$out" | head -n1
+    return 0
+  fi
+  return 1
 }
 
-# Determine if function should be run with sudo_exec and do it if so
+# Function to determine if function should be run with sudo_exec and do it if so
 # Return Codes:
 #   0: success -- process output
 #   2: non-error -- do not process output
 #   4: non-error -- no sudo_regex matches
-#   19: non-error -- docker container should not be checked right now
 #   3: error -- sudo_regex matched but sudo_exec returned an error
 #   *: error -- do not process output
-use_sudo_exec() { # helper_function
+_use_sudo_exec() { # helper_function
   [[ -z "$sudo_user" ]] && { log -d "sudo_user not defined" ; return 2 ; }
   $SUDO_EXEC && { log -d "Already running sudo_exec" ; return 2 ; }
   log -d -d -d "Running: ${FUNCNAME[0]} for ${FUNCNAME[1]}"
@@ -1449,7 +1539,6 @@ use_sudo_exec() { # helper_function
   return 4
 }
 
-# Get ink information from an inkjet printer
 printer_ink_check() { # remote_host
   [[ -z "$PRINTER" ]] && { log -e "Printer not defined" ; usage 1 ; }
   local errjson inkfile inkdata
@@ -1561,7 +1650,9 @@ printer_ink_check() { # remote_host
   jq -rn --argjson j "$inkdata" '$j' 2> /dev/null
 }
 
-# Print main program usage info
+DEBUG_EXIT=5
+export DEBUG_EXIT
+
 usage() { # utility_function
   echo "usage: $PROGNAME [Options] SOFTWARE"
   echo "Options:"
@@ -2062,6 +2153,7 @@ main() { # utility_function
   local tmpstring sw_skip_vflag=() sw_auto_flags=()
   local sw_name sw_check_set tmp_name sw_orig sw_tag sw_project
 
+  # TODO: Turn into function?
   # Process software list
   log -d -d "Software list: ${software[*]}"
   for list in "${software[@]}"; do
@@ -2378,32 +2470,7 @@ main() { # utility_function
         (( i > 0 )) && log -v "Retrying for $sw_name (try $i of $retries) after $delay wait" && sleep "$delay"
 
         unset ret version
-        if [[ "$sw_name" == *"_latest" ]] && ! ${CACHE_DIR_PREPARED:-false}; then
-          # && prepare_cache_dir "$cache_dir"
-          local cache_parent
-          if [[ -n "$cache_dir" ]]; then
-            if [[ ! -d "$cache_dir" ]]; then
-              [[ -e "$cache_dir" ]] && log -e "Cache directory '$cache_dir' exists but is not a directory" && exit 1
-              mkdir -p "$cache_dir" &> /dev/null
-              # If cache_dir does not exist, ensure parent is writable
-              cache_parent=$(realpath "$cache_dir")
-              cache_parent=${cache_parent%/*}
-              if [[ ! -w "$cache_parent" ]]; then
-                log -e "Cannot write to $cache_parent to create cache dir: $cache_dir"
-                exit 1
-              fi
-            else
-              # If cache_dir exists, make sure it is writable
-              if [[ ! -w "$cache_dir" ]]; then
-                log -e "Cannot write to cache dir: $cache_dir"
-                exit 1
-              fi
-            fi
-            [[ ! -d "$cache_dir" ]] && mkdir -p "$cache_dir"
-          fi
-          log -d "Cache directory prepared"
-          CACHE_DIR_PREPARED=true
-        fi
+        [[ "$sw_name" == *"_latest" ]] && prepare_cache_dir "$cache_dir"
 
         log -d -d "Determining if using cache"
         log -d -d "sw_name=$sw_name"
@@ -2447,8 +2514,6 @@ main() { # utility_function
             (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
           fi
 
-          ## EXECUTE CHECK
-          # TODO Replace with use_sudo_exec
           if $use_sudo && [[ -n "$sudo_user" ]] && (( $(id -u) != 0 )); then
             [[ -z "$sudo_user" ]] && log -e "Cannot use sudo for $sw_name: No sudo_user defined (-x username)" && exit 1
             unset dflags
@@ -2460,12 +2525,14 @@ main() { # utility_function
             update_time=$(date +%s)
             (( ret != 0 )) && log -e "Could not get $sw_name version with sudo" && continue 2
           else
-
-            # TODO move auto_check here
-            log -d -d "Running 'auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_auto_flags[*]}$sw_name' to get version"
-            version=$(auto_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" \
-              "${sw_auto_flags[@]}" "$sw_name")
-
+            if [[ "$sw" =~ !!$AUTO_CHECKS && " ${app_list[*]} ${app_alias_list[*]} " != *" $sw "* ]]; then
+              log -d -d "Running '_auto_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_auto_flags[*]}$sw_name' to get version"
+              version=$(_auto_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" \
+                "${sw_auto_flags[@]}" "$sw_name")
+            else
+              log -d -d -d "Running $sw to get version"
+              version=$($sw)
+            fi
             ret=$?
             [[ $ret -eq 19 && "$sw_tag" == docker* ]] && continue 2
             update_time=$(date +%s)
