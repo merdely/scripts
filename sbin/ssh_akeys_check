@@ -31,30 +31,21 @@ if mount | grep -q " on /export/homes "; then
 fi
 [ -d /etc/ssh/authorized_keys.d ] && add_dirs="$add_dirs /etc/ssh/authorized_keys.d/*"
 
+default_key=$(echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOgO13IYDIa4H0ebwea5xFnEQpPutuKfpKkD7pz8Dhmo mike@erdelynet.com" | openssl dgst -sha256 | awk '{print $NF}')
+
 declare -A keys def_keys checked
 
-def_keys[/home/mike/.ssh/authorized_keys]=edc3511c5f60bd2a30720b5546cdde5d28f56cb761b8fa504e672bf13bf4f81a
-def_keys[/etc/ssh/authorized_keys.d/mike]=edc3511c5f60bd2a30720b5546cdde5d28f56cb761b8fa504e672bf13bf4f81a
-def_keys[/home/splunk/.ssh/authorized_keys]=edc3511c5f60bd2a30720b5546cdde5d28f56cb761b8fa504e672bf13bf4f81a
-#def_keys[/root/.ssh/authorized_keys]=95bcceb9611a49e6e0fea4ce7dc75787bf852f2035ec5b67eaf99102b32cd40d  # mike + root@earth
 def_keys[/root/.ssh/authorized_keys]=777ab2f005173f3c0cd50677c257c604e99ea0a35cd50d44180a19780cd264cb  # mike + root@earth + rsync_ssh_client
 
-keys[jupiter,/home/mike/.ssh/authorized_keys.local]=1030e792b47afea3df1d6a7a3f881cc5e6431b48c62c787ca6f8dc1285a2e2fe
-keys[mercury,/home/mike/.ssh/authorized_keys.local]=b8695a8ff6c6c79c56554c779f9b39459dd307fd4aa8cf102ba0f854decf2f32
-keys[mercury,/root/.ssh/authorized_keys]=ccd2a34056198be16f456077361d5e1b8d9ae362e06a7724909e19346eed2f04
-keys[sinope,/home/mike/.ssh/authorized_keys]=f2133add0e1d6ea90658e7544707b9bc6d7938cf7fb2b4b026e752a2cc3fb66e
-keys[sinope,/home/picframe/.ssh/authorized_keys]=7f6d41764985a774109aa94319e33387624cbea8e9257cd0bdfb1eca811f1e61
-keys[BedroomSpeaker,/home/picframe/.ssh/authorized_keys]=7f6d41764985a774109aa94319e33387624cbea8e9257cd0bdfb1eca811f1e61
-keys[carpo,/home/ha/.ssh/authorized_keys]=3c3606a749f96b37ca0b9c187983a2e823ff73dba75739b77c326402b8245ae6
-keys[venus,/Users/holly/.ssh/authorized_keys]=5d73d284af63be1c82fd2e27481e0dd83960e9e5e59dc9666ef3b074498772b0
-keys[venus,/Users/mike/.ssh/authorized_keys]=75774f534f4cfa6baf38017a960eb4384816bcf5fb1b9f789349716b10436bdd
-keys[venus,/Users/splunk/.ssh/authorized_keys]=edc3511c5f60bd2a30720b5546cdde5d28f56cb761b8fa504e672bf13bf4f81a
-keys[venus,/var/root/.ssh/authorized_keys]=16bbdbb88c84ab0fde1f92f88136b1c710a5152bb117c4a43b3cedc77ffa9d17
+keys[mercury,/root/.ssh/authorized_keys.local]=994d2c526213395f8e60aea7144ad6a16f25223498e82d5eeb8487df3861fdc8  # libvirt backup
+keys[sinope,/home/mike/.ssh/authorized_keys.local]=e9cd01694fe8e5bd97700e185e5dfbd41af4d40883609b96f4aa41c795789459  # home assistant picframe
+keys[carpo,/home/ha/.ssh/authorized_keys]=3c3606a749f96b37ca0b9c187983a2e823ff73dba75739b77c326402b8245ae6  # home assistant
+keys[venus,/var/root/.ssh/authorized_keys.local]=a2990caf248c5642b577e1c815e59c491554a274333935d7fa6dfdedc84da973  # rsync_ssh_client in /opt/scripts/bin
 
 for hdir in $(getent passwd | awk -F: '{print $6}') $add_dirs; do
   for ak in $hdir/.ssh/authorized_keys $hdir/.ssh/authorized_keys2 $hdir/.ssh/authorized_keys.local; do
     [ "${checked[$ak]}" = true ] && continue
-    unset keysum
+    keysum=$default_key
     [ -n "${def_keys[$ak]}" ] && keysum=${def_keys[$ak]}
     [ -n "${keys[$hostname,$ak]}" ] && keysum=${keys[$hostname,$ak]}
     if sudo test -f $ak; then
