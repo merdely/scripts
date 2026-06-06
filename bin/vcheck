@@ -1823,7 +1823,6 @@ main() {
     log -d -d "Not using a config file (rcfile = '$rcfile)'"
   fi
 
-  echo start
   # Get defined checks
   local checks=() lists=() section_list=() section item
   mapfile -t section_list < <(get_section_list)
@@ -1861,7 +1860,6 @@ main() {
       fi
     done
   done
-  echo stop
 
   # Validate output_mode
   case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
