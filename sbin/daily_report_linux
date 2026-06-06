@@ -141,7 +141,7 @@ if [[ -z "$1" ]]; then
   /usr/bin/df -hTl -x overlay -x tmpfs -x devtmpfs -x efivarfs | awk '$2 != "btrfs" || !seen[$1]++'
   echo
   echo "network:"
-  /usr/sbin/ip addr
+  /usr/sbin/ip --brief address show
   echo
 fi
 
