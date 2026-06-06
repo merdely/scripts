@@ -93,15 +93,20 @@ if [[ -z "$1" || "$1" == "pacnew" ]]; then
   fi
 fi
 
-if [[ -z "$1" || "$1" == "badcam" ]]; then
-  if findmnt /share/Cameras &> /dev/null; then
-    echo "Bad Camera Files:"
-    /usr/bin/find /share/media/Cameras/.badfiles -name "*.264" -mtime -1 2> /dev/null | /usr/bin/sort -n
-    echo
-  fi
+if [[ -z "$1" ]]; then
+  echo "Checking subsystem status:"
+  echo
+  echo "disks:"
+  # print real filesystem output with type field, but only unique btrfs filesystems (or all non-btrfs)
+  /usr/bin/df -hTl -x overlay -x tmpfs -x devtmpfs -x efivarfs | awk '$2 != "btrfs" || !seen[$1]++'
+  echo
+  echo "network:"
+  /usr/sbin/ip --brief address show
+  echo
 fi
 
 if [[ -z "$1" || "$1" == "git" ]]; then
+  echo "Checking git repo status:"
   printed=false
   for dir in /etc /var /srv /srv/scripts /home/* \
       $(find /home/*/src /home/*/Work/src -maxdepth 2 -name "*.git" -exec dirname "{}" \; 2> /dev/null); do
@@ -131,17 +136,5 @@ if [[ -z "$1" || "$1" = "scripts" ]]; then
     ! $quiet && git -C /opt/scripts diff --name-only ORIG_HEAD HEAD | sed '/^$/d;s/^/   - /'
   fi
   unset q_flag
-fi
-
-if [[ -z "$1" ]]; then
-  echo "Checking subsystem status:"
-  echo
-  echo "disks:"
-  # print real filesystem output with type field, but only unique btrfs filesystems (or all non-btrfs)
-  /usr/bin/df -hTl -x overlay -x tmpfs -x devtmpfs -x efivarfs | awk '$2 != "btrfs" || !seen[$1]++'
-  echo
-  echo "network:"
-  /usr/sbin/ip --brief address show
-  echo
 fi
 
