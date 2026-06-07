@@ -520,7 +520,7 @@ command_check() { # check_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local cmd=$1
+  local cmd=$1 out ret=0
   log -d "cmd = '$cmd'"
   if command -v "$cmd" &> /dev/null; then
     log -d -d "Attemping '$cmd --version'"
@@ -595,13 +595,13 @@ docker_container_search() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local docker_ps out seconds ret=0
 
   # Run through sudo exec if necessary
   # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|3|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
-  local docker_ps out seconds
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
   log -d -d -d "docker ps output = '$docker_ps'"
 
@@ -637,13 +637,13 @@ docker_copy() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local container image image_search srcfiles catfiles out ret=0
 
   # Run through sudo exec if necessary
   # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|3|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
-  local image image_search srcfiles catfiles out
   if (( $# == 1 )); then
     if [[ "$1" == *!!*!!* ]]; then
       image_search=${1%%!!*}
@@ -694,7 +694,7 @@ docker_exec() { # check_function
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|3|4);;19)log -d returning 19;return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
-  local image image_search command=() out
+  local container image image_search command=() out
   if (( $# == 1 )); then
     if [[ "$1" == *!!* ]]; then
       image_search=${1%%!!*}
@@ -729,13 +729,13 @@ docker_image_search() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local docker_ps out seconds ret
 
   # Run through sudo exec if necessary
   # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|3|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
-  local docker_ps out seconds
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
   log -d -d -d "docker ps output = '$docker_ps'"
 
@@ -770,7 +770,7 @@ docker_inspect() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local container out
+  local container out ret=0
 
   # Run through sudo exec if necessary
   # Return code 19 when docker_filter is enabled and container is older than seconds
@@ -812,13 +812,13 @@ docker_logs() { # check_function
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "You must supply docker name" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: docker_logs dockername" ; return 0 ; }
+  local container image image_search=$1 out ret=0
 
   # Run through sudo exec if necessary
   # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|3|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
-  local image image_search=$1 out
   log -d "image_search = '$image_search'"
 
   container=$(docker_container_search "$image_search")
@@ -838,13 +838,13 @@ docker_printenv() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local image image_search variable out ret
 
   # Run through sudo exec if necessary
   # Return code 19 when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|3|4);;19)log -d "Returning 19";return 19;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
-  local image image_search variable out
   if (( $# == 1 )); then
     if [[ "$1" == *!!* ]]; then
       image_search=${1%%!!*}
@@ -926,7 +926,7 @@ docker_tags() { # check_function
     *) log -e "Unknown site for skopeo ($site)" && return 1 ;;
   esac
 
-  local cmdout authfile hash skopeoargs=()
+  local out cmdout authfile hash skopeoargs=()
   if ${useskopeo:-false} && command -v skopeo &> /dev/null; then
     if (( ${#token[@]} > 0 && ${#username[@]} > 0 )); then
       authfile=$(maketemp)
@@ -1094,7 +1094,7 @@ git_checkout() { # check_function
 
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: ${FUNCNAME[0]} [Options] project/repo" ; return 0 ; }
-  local dir
+  local dir out
   dir=$(maketemp -d)
   log -d -d "Running: git clone -q --tags --mirror '$1' '$dir'"
   git clone -q --tags --mirror "$1" "$dir"
@@ -1314,7 +1314,7 @@ use_sudo_exec() { # utility_function
   [[ -z "$sudo_user" ]] && { log -d "sudo_user not defined" ; return 2 ; }
 
   if $use_sudo; then
-    local func=${FUNCNAME[1]}
+    local func=${FUNCNAME[1]} rp
     local args=("$check")
     # If calling from main, run with first argument, otherwise run with calling function
     [[ "${FUNCNAME[1]}" == "main" ]] && { func=$check ; args=() ; }
@@ -1451,7 +1451,7 @@ execute_check() { # utility_function
   log -d "Running: ${FUNCNAME[0]} $*"
 
   local remove=() search=() presed=() postsed=() skipverfilter=false
-  local project tmp prejqfilter postjqfilter xmlfilter sedstring
+  local project tmp prejqfilter postjqfilter xmlfilter sedstring tag
   local opt OPTARG OPTIND=1
   while getopts ":p:t:J:j:x:r:s:P:S:vV" opt; do
     case "$opt" in
@@ -1671,25 +1671,23 @@ usage() {
 # Main program code
 main() {
   # Set up ansi escape codes
-  e=$'\e'
-  b="${e}[1m"
-  ub="${e}[22m"
-  u="${e}[4m"
-  uu="${e}[24m"
-  bu="${b}${u}"
-  ubu="${uu}${ub}"
+  local e=$'\e'
+  local b="${e}[1m"
+  local ub="${e}[22m"
+  local u="${e}[4m"
+  local uu="${e}[24m"
+  local bu="${b}${u}"
+  local ubu="${uu}${ub}"
+
   # Set default delay and wait values
-  args_orig=("$@")
-  cache_lifetime=60    # Number of minutes to wait between _latest checks
-  retry_delay=1        # Number of seconds to wait between retries
-  max_retries=1        # Number of times to try getting version
-  unset docker_seconds # Look for containers that started within restart_delay seconds
+  local args_orig=("$@")
 
   # Set some variables
-  rcfile=$HOME/.config/"${PROGNAME}"rc
+  local rcfile=$HOME/.config/"${PROGNAME}"rc
   [[ ! -r $rcfile && -r "$PROGDATA"/"${PROGNAME}"rc ]] && rcfile="$PROGDATA"/"${PROGNAME}"rc
-  list_reserved_words=(docker user cache_dir cache_lifetime retry_delay max_retries docker_seconds sudo_regex sudo_user printer)
+  local list_reserved_words=(docker user cache_dir cache_lifetime retry_delay max_retries docker_seconds sudo_regex sudo_user printer)
 
+  local host_name
   if command -v hostname > /dev/null 2>&1; then
     host_name=$(hostname)
   else
@@ -1697,7 +1695,7 @@ main() {
   fi
   host_name=${host_name%%.*}
   host_name=$(echo "$host_name" | tr '[:upper:]' '[:lower:]')
-  cache_dir="$HOME"/.cache/"$PROGNAME"
+  local cache_dir="$HOME"/.cache/"$PROGNAME"
 
   # App Lists
   local all_checks=() app_checks=() docker_checks=() latest_checks=() non_auto_latest_checks=()
@@ -1727,40 +1725,45 @@ main() {
   check_prog grep || exit 1
   check_prog printf || exit 1
 
-  for a in "$@"; do [[ "$a" == "--help" ]] && usage verbose; done
-  for a in "$@"; do [[ "$a" == "--version" ]] && echo "Version $PROGVER" && exit ; done
-  debug=0
-  verbose=0
-  quiet=0
-  appimage_path=$HOME/Applications
-  cache_lifetime_set=false
-  docker_filter=false
-  docker_seconds=30
-  docker_seconds_set=false
-  force_all=false
-  force_list=()
-  host_name_set=false
-  include_invalid=false
-  include_invalid_set=false
-  ink_topic=ink2mqtt
-  ink_topic_set=false
-  mqtt_test=false
-  output_file=/dev/stdout
-  output_file_set=false
-  output_mode=text
-  output_mode_set=false
-  prepend_name=false
-  prepend_name_set=false
-  printer_set=false
-  print_single='-m'
-  printonly=false
-  rcfile_set=false
-  retry_delay_set=false
-  sudo_regexes=()
-  sudo_regex_set=false
-  sudo_user_set=false
-  update=false
-  unset sudo_user exec_user PRINTER minver print_opt update_list
+  local i=0 n=0
+  for i in "$@"; do [[ "$i" == "--help" ]] && usage verbose; done
+  for i in "$@"; do [[ "$i" == "--version" ]] && echo "Version $PROGVER" && exit ; done
+  local debug=0
+  local verbose=0
+  local quiet=0
+  local appimage_path=$HOME/Applications
+  local cache_lifetime=60    # Number of minutes to wait between _latest checks
+  local cache_lifetime_set=false
+  local docker_filter=false
+  local docker_seconds=30
+  local docker_seconds_set=false
+  local force_all=false
+  local force_list=()
+  local host_name_set=false
+  local include_invalid=false
+  local include_invalid_set=false
+  local ink_topic=ink2mqtt
+  local ink_topic_set=false
+  local max_retries=1        # Number of times to try getting version
+  local mqtt_test=false
+  local output_file=/dev/stdout
+  local output_file_set=false
+  local output_mode=text
+  local output_mode_set=false
+  local prepend_name=false
+  local prepend_name_set=false
+  local printer_set=false
+  local print_single='-m'
+  local printonly=false
+  local rcfile_set=false
+  local retry_delay=1        # Number of seconds to wait between retries
+  local retry_delay_set=false
+  local sudo_regexes=()
+  local sudo_regex_set=false
+  local sudo_user_set=false
+  local update=false
+  local sudo_user exec_user PRINTER minver print_opt update_list
+  local opt OPTARG OPTIND=1
   while getopts ":hdvqc:u:p:1w:r:P:R:S:X:x:L:DV:f:Fo:OtjmiTMH:INn" opt; do
     case $opt in
       # Base options
@@ -1936,17 +1939,16 @@ main() {
   case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
   # Read configuration settings
+  local rcvalue=()
   if [[ -z "$exec_user" && -s "$rcfile" ]]; then
-    mapfile -t arr < <(get_config_value "$rcfile" "$PROGNAME" user)
-    (( ${#arr[@]} > 0 )) && exec_user=${arr[0]}
-    unset arr
+    mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" user)
+    (( ${#rcvalue[@]} > 0 )) && exec_user=${rcvalue[0]}
   fi
 
   # Drop privileges if running as root and $exec_user is defined
   [[ $(id -u) == 0 && -n "$exec_user" ]] && drop_privs "$exec_user" "${args_orig[@]}"
 
   # Read configuration file options
-  local rcvalue=()
   if [[ -s "$rcfile" ]]; then
     rcvalue=(); mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
     (( ${#rcvalue[@]} > 0 )) && cache_dir=${rcvalue[0]}
@@ -1981,6 +1983,7 @@ main() {
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" appimage_path)
     (( ${#rcvalue[@]} > 0 )) && appimage_path=${rcvalue[0]}
 
+    local mqtt_server mqtt_username mqtt_password
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt server)
     (( ${#rcvalue[@]} > 0 )) && mqtt_server=${rcvalue[0]}
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt username)
@@ -2019,7 +2022,6 @@ main() {
     "Application Version"
   )
 
-  local i=0 n=0
   if [[ -n "$print_opt" ]]; then
     case "$print_opt" in
       help)
@@ -2125,10 +2127,11 @@ main() {
   (( $# == 0 )) && usage
 
   # Set up software list from command line arguments, substitute _ for -
+  local software
   mapfile -t software < <(printf '%s\n' "$@" | sort -u)
 
   # Prepare cache_dir
-  CACHE_DIR_PREPARED=false
+  local cache_dir_prepared=false
   # Warn if wait is extreme
   (( cache_lifetime < 30 )) && log -q "Warning: Latest update WAIT set to under 30 minutes"
   (( cache_lifetime > 1440 )) && log -q "Warning: Latest update WAIT set to over $(( cache_lifetime / 60 )) hours/$(( cache_lifetime / 60 / 24 )) days (WAIT is in minutes)"
@@ -2162,16 +2165,20 @@ main() {
   fi
 
   # Prep variables
-  printlist=()
-  json_string="[]" # json string for printing to the screen
-  saved_prepend_name=$prepend_name
-  saved_output_file=$output_file
-  saved_output_mode=$output_mode
-  saved_include_invalid=$include_invalid
-  saved_docker_seconds=$docker_seconds
+  local printlist=()
+  local json_string="[]" # json string for printing to the screen
+  local saved_prepend_name=$prepend_name
+  local saved_output_file=$output_file
+  local saved_output_mode=$output_mode
+  local saved_include_invalid=$include_invalid
+  local saved_docker_seconds=$docker_seconds
 
+  local list sw sw_list listname rcvalue=()
   local tmpstring sw_skip_vflag=() sw_auto_flags=() sw_latest=false
   local sw_name sw_check_set tmp_name sw_orig sw_tag sw_project
+  local docker_seconds_local container_list containers
+  local sw_list_item started_at started_secs now stamp lifetime delay
+  local retries ret version update_time use_sudo regex topic tmpjson
 
   # Process software list
   log -d -d "Software list: ${software[*]}"
@@ -2480,7 +2487,7 @@ main() {
         (( i > 0 )) && log -d "Retrying for $sw_name (try $i of $retries) after $delay wait" && sleep "$delay"
 
         unset ret version
-        if $sw_latest && ! ${CACHE_DIR_PREPARED:-false}; then
+        if $sw_latest && ! ${cache_dir_prepared:-false}; then
           # && prepare_cache_dir "$cache_dir"
           local cache_parent
           if [[ -n "$cache_dir" ]]; then
@@ -2504,7 +2511,7 @@ main() {
             [[ ! -d "$cache_dir" ]] && mkdir -p "$cache_dir"
           fi
           log -d "Cache directory prepared"
-          CACHE_DIR_PREPARED=true
+          cache_dir_prepared=true
         fi
 
         log -d -d -d "Determining if using cache:"
