@@ -43,7 +43,9 @@ get_config_value() {
     $localdebug && echo "Warning: Cannot read ${configfile##*/} for ${section:+[$section] }$key" >&2
     return 1
   fi
+  key=$(sed 's/[[\.*^$()+?{|]/\\&/g' <<< "$key")
   if [[ -n "$section" ]]; then
+    section=$(sed 's/[[\.*^$()+?{|]/\\&/g' <<< "${section:-}")
     awk -v section="$section" -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
       BEGIN {
         in_section = 0
