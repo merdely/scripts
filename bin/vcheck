@@ -701,7 +701,7 @@ docker_exec() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local container="" image="" image_search="" command=() out=""
+  local container="" image="" image_search="" command=() out="" ret=0
 
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
@@ -742,7 +742,7 @@ docker_image_search() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local docker_ps="" out="" seconds="" ret=""
+  local docker_ps="" out="" seconds="" ret=0
 
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
@@ -851,7 +851,7 @@ docker_printenv() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
-  local image="" image_search="" variable="" out="" ret=""
+  local image="" image_search="" variable="" out="" ret=0
 
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
