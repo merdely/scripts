@@ -35,40 +35,62 @@ get_config_value() {
   # Replace ^~ with $HOME
   [[ "$configfile" == ~* ]] && configfile=$HOME${configfile#~}
 
-  # If 3 arguments provided
-  (( $# >= 3 )) && section=$2 && key=$3
-
   # Validate that configfile can be read
   if [[ ! -r "$configfile" ]]; then
     $localdebug && echo "Warning: Cannot read ${configfile##*/} for ${section:+[$section] }$key" >&2
     return 1
   fi
-  key=$(sed 's/[[\.*^$()+?{|]/\\&/g' <<< "$key")
+
+  # If 3 arguments provided
+  (( $# >= 3 )) && section=$2 && key=$3
+
   if [[ -n "$section" ]]; then
-    section=$(sed 's/[[\.*^$()+?{|]/\\&/g' <<< "${section:-}")
-    awk -v section="$section" -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
+    awk -v section="$section" -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
       BEGIN {
         in_section = 0
+        section_header = "[" section "]"
+        # Build key matcher: key followed by optional space then : or =
       }
-      $0 ~ /^[[:space:]]*\[/ {
-        in_section = 0
+      {
+        # Left-trim the line for comparisons
+        ltrimmed = $0
+        sub(/^[[:space:]]+/, "", ltrimmed)
       }
-      $0 ~ "^[[:space:]]*\\["section"\\]" {
-        in_section = 1
+      /^[[:space:]]*\[/ {
+        in_section = (index(ltrimmed, section_header) == 1 && \
+                      substr(ltrimmed, length(section_header) + 1) ~ /^[[:space:]]*$/)
+        next
       }
-      in_section == 1 && $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
-        sub(/^[^:=]+[:=]/, "")
-        if (ltrim == 1) sub(/^[[:space:]]+/, "")
-        if (rtrim == 1) sub(/[[:space:]]+$/,"")
-        print
+      in_section {
+        # Check if line starts with key followed by optional whitespace then : or =
+        if (index(ltrimmed, key) == 1) {
+          rest = substr(ltrimmed, length(key) + 1)
+          if (rest ~ /^[[:space:]]*[:=]/) {
+            sub(/^[^:=]+[:=]/, "", ltrimmed)
+            if (ltrim == 1) sub(/^[[:space:]]+/, "", ltrimmed)
+            if (rtrim == 1) sub(/[[:space:]]+$/, "", ltrimmed)
+            print ltrimmed
+          }
+        }
       }' "$configfile"
   else
-    awk -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
-      $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
-        sub(/^[^:=]+[:=]/, "")
-        if (ltrim == 1) sub(/^[[:space:]]+/, "")
-        if (rtrim == 1) sub(/[[:space:]]+$/, "")
-        print
+    awk -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
+      {
+        # Left-trim the line for comparisons
+        ltrimmed = $0
+        sub(/^[[:space:]]+/, "", ltrimmed)
+      }
+      {
+        # Check if line starts with key followed by optional whitespace then : or =
+        if (index(ltrimmed, key) == 1) {
+          rest = substr(ltrimmed, length(key) + 1)
+          if (rest ~ /^[[:space:]]*[:=]/) {
+            sub(/^[^:=]+[:=]/, "", ltrimmed)
+            if (ltrim == 1) sub(/^[[:space:]]+/, "", ltrimmed)
+            if (rtrim == 1) sub(/[[:space:]]+$/, "", ltrimmed)
+            print ltrimmed
+          }
+        }
       }' "$configfile"
   fi
 }
