@@ -295,18 +295,6 @@ gen_authstring() { # utility_function
   return 1
 }
 
-# Return a list of configuration sections
-get_section_list() { # utility_function
-  log -d -d -d "Running: ${FUNCNAME[0]}"
-  if [[ -n "$rcfile_contents" ]]; then
-    log -d -d -d "Parsing rcfile for sections"
-    awk -F'[]:]' '/[[:space:]]*\[vcheck::[^\]]+\]/{print $3}' <<< "$rcfile_contents"
-    return 0
-  fi
-  log -e "rcfile contents empty"
-  return 1
-}
-
 # Print the length of the longest element
 get_longest() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} from ${FUNCNAME[1]}"
@@ -1867,43 +1855,90 @@ main() {
     log -d -d "Not using a config file (rcfile = '$rcfile)'"
   fi
 
-  # Get defined checks
-  local checks=() lists=() section_list=() section item
-  mapfile -t section_list < <(get_section_list)
-  for section in "${section_list[@]}"; do
-    mapfile -t checks < <(get_config_value "$rcfile" "$PROGNAME::$section" check)
-    mapfile -t lists < <(get_config_value "$rcfile" "$PROGNAME::$section" list)
+  local checks=() section_list=() section item
+  local all_output
 
-    if (( ${#checks[@]} > 0 )); then
-      all_checks+=("$section")
-      if [[ $section == *_latest ]]; then
-        non_auto_latest_checks+=("$section")
-      else
-        app_checks+=("$section")
-      fi
-    fi
+  # Parse entire config in one awk pass
+  all_output=$(awk -v progname="$PROGNAME" '
+    /^[[:space:]]*\[/ {
+      current = $0
+      gsub(/^[[:space:]]*\[|[[:space:]]*\].*$/, "", current)
+      # Check if this is a vcheck:: section
+      if (index(current, progname "::") == 1) {
+        in_section = 1
+        section = substr(current, length(progname) + 3)
+        # Print section marker so we know what sections exist
+        print "section|" section
+      } else {
+        in_section = 0
+        section = ""
+      }
+      next
+    }
+    in_section {
+      ltrimmed = $0
+      sub(/^[[:space:]]+/, "", ltrimmed)
+      if (index(ltrimmed, "check") == 1) {
+        rest = substr(ltrimmed, 6)   # length("check") + 1
+        if (rest ~ /^[[:space:]]*[:=]/) {
+          sub(/^[^:=]+[:=][[:space:]]*/, "", ltrimmed)
+          sub(/[[:space:]]+$/, "", ltrimmed)
+          print section "|check|" ltrimmed
+        }
+      } else if (index(ltrimmed, "list") == 1) {
+        rest = substr(ltrimmed, 5)   # length("list") + 1
+        if (rest ~ /^[[:space:]]*[:=]/) {
+          sub(/^[^:=]+[:=][[:space:]]*/, "", ltrimmed)
+          sub(/[[:space:]]+$/, "", ltrimmed)
+          print section "|list|" ltrimmed
+        }
+      }
+    }
+  ' "$rcfile")
 
-    for item in "${checks[@]}"; do
-      if [[ "$item" == *!!* && "${item##*!!}" == docker_* && "$section" != *_latest ]]; then
-        docker_checks+=("$section")
-      fi
-    done
-    for item in "${lists[@]}"; do
-      item=$(strip_modifiers "$item")
-      if [[ $section == "latest" ]]; then
-        all_checks+=("$item")
-        latest_checks+=("$item")
-      fi
-      if [[ "$item" == *!!* ]]; then
-        all_checks+=("$item")
-        app_checks+=("$item")
-      fi
-      if [[ "$item" == *!!* && "${item##*!!}" == docker_* && "$section" != *_latest ]]; then
-        all_checks+=("$item")
-        docker_checks+=("$item")
-      fi
-    done
-  done
+  local cur_section cur_type cur_val
+  while IFS='|' read -r cur_section cur_type cur_val; do
+    case "$cur_section" in
+      section) section_list+=("$cur_type") ;;
+      *) section=$cur_section
+         case "$cur_type" in
+           check)
+             checks=("$cur_val")
+             if (( ${#checks[@]} > 0 )); then
+               all_checks+=("$section")
+               if [[ $section == *_latest ]]; then
+                 non_auto_latest_checks+=("$section")
+               else
+                 app_checks+=("$section")
+               fi
+             fi
+             for item in "${checks[@]}"; do
+               if [[ "$item" == *!!* && "${item##*!!}" == docker_* && "$section" != *_latest ]]; then
+                 docker_checks+=("$section")
+               fi
+             done
+             ;;
+           list)
+             item=$(strip_modifiers "$cur_val")
+             if [[ $section == "latest" ]]; then
+               all_checks+=("$item")
+               latest_checks+=("$item")
+             fi
+             if [[ "$item" == *!!* ]]; then
+               all_checks+=("$item")
+               app_checks+=("$item")
+             fi
+             if [[ "$item" == *!!* && "${item##*!!}" == docker_* && "$section" != *_latest ]]; then
+               all_checks+=("$item")
+               docker_checks+=("$item")
+             fi
+             ;;
+          *) ;;
+         esac
+         ;;
+    esac
+  done <<< "$all_output"
+  unset all_output
 
   # Validate output_mode
   case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
