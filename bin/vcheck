@@ -109,10 +109,13 @@ log() { # utility_function
 
 # Get the fields from a bearer string
 get_bearer_field() {
-    local field=$1 str=$2
-    # Extract field="value" or field=value
-    [[ "$str" =~ (^|,)[[:space:]]*${field}=\"([^\"]+)\" ]] && { echo "${BASH_REMATCH[2]}"; return; }
-    [[ "$str" =~ (^|,)[[:space:]]*${field}=([^,]+) ]]     && { echo "${BASH_REMATCH[2]}"; return; }
+  local field=$1 str=$2
+  # Try quoted form first: field="value"
+  local out
+  out=$(sed -n "s/.*${field}=\"\\([^\"]*\\)\".*/\\1/p" <<< "$str")
+  [[ -n "$out" ]] && { echo "$out"; return; }
+  # Fall back to unquoted form: field=value
+  sed -n "s/.*${field}=\\([^,]*\\).*/\\1/p" <<< "$str"
 }
 
 # Read a config value (optionally from a section) from a config file
