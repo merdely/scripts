@@ -2409,7 +2409,7 @@ main() {
       unset update_time
       while (( i <= retries )); do
         # If a retry, sleep for $delay
-        (( i > 0 )) && log -v "Retrying for $sw_name (try $i of $retries) after $delay wait" && sleep "$delay"
+        (( i > 0 )) && log -d "Retrying for $sw_name (try $i of $retries) after $delay wait" && sleep "$delay"
 
         unset ret version
         if $sw_latest && ! ${CACHE_DIR_PREPARED:-false}; then
