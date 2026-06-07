@@ -157,7 +157,12 @@ get_config_value() { # utility_function
   # If 3 arguments provided
   (( $# >= 3 )) && section=$2 && key=$3
 
+  # Escape metacharacters in key
+  key=$(sed 's/[[\.*^$()+?{|]/\\&/g' <<< "$key")
   if [[ -n "$section" ]]; then
+    # Escape metacharacters in section
+    section=$(sed 's/[[\.*^$()+?{|]/\\&/g' <<< "${section:-}")
+
     awk -v section="$section" -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
       BEGIN {
         in_section = 0
