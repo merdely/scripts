@@ -52,13 +52,34 @@ trap 'exit 1' INT TERM
 # Older versions of bash don't have mapfile
 if ! command -v mapfile &> /dev/null; then
   mapfile() {
-    [[ "$1" == "-t" ]] && shift
-    local arr=$1 i=0 line
-    # shellcheck disable=SC2034
-    while IFS= read -r line; do
-      eval "${arr}[i]=\"\$line\""
-      i=$(( i + 1 ))
+    local _mapfile_trim=0 _mapfile_var _mapfile_line _mapfile_i=0
+    # Only handle the -t flag (strip trailing newlines)
+    [[ "${1:-}" == "-t" ]] && { _mapfile_trim=1; shift; }
+    # If var name not passed, use MAPFILE as the variable
+    _mapfile_var=${1:-MAPFILE}
+
+    # Validate variable name: must be a legal identifier (no array syntax, no special chars)
+    if [[ ! "$_mapfile_var" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+      log -e "mapfile: \`$_mapfile_var': not a valid identifier"
+      return 1
+    fi
+
+    # Clear the array using indirect reference via read trick
+    unset "$_mapfile_var"
+    while IFS= read -r _mapfile_line; do
+      (( _mapfile_trim )) && _mapfile_line=${_mapfile_line%$'\r'}
+      # eval is restricted: only the value is variable, and it's single-quoted with internal
+      # single quotes escaped, so no shell metacharacters in the value can escape the quoting
+      _mapfile_line=${_mapfile_line//"'"/"'\\''"}
+      eval "${_mapfile_var}[${_mapfile_i}]='${_mapfile_line}'"
+      (( _mapfile_i++ ))
     done
+
+    # Capture final line if input didn't end with newline
+    if [[ -n "$_mapfile_line" ]]; then
+      _mapfile_line=${_mapfile_line//"'"/"'\\''"}
+      eval "${_mapfile_var}[${_mapfile_i}]='${_mapfile_line}'"
+    fi
   }
 fi
 
