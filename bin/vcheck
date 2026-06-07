@@ -613,7 +613,7 @@ docker_container_search() { # utility_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;$DOCKER_TOO_OLD)log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
   log -d -d -d "docker ps output = '$docker_ps'"
@@ -655,7 +655,7 @@ docker_copy() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;$DOCKER_TOO_OLD)log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
   if (( $# == 1 )); then
     if [[ "${1:-}" == *!!*!!* ]]; then
@@ -706,7 +706,7 @@ docker_exec() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;$DOCKER_TOO_OLD)log -d returning DOCKER_TOO_OLD;return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d returning DOCKER_TOO_OLD;return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
   if (( $# == 1 )); then
     if [[ "${1:-}" == *!!* ]]; then
@@ -747,7 +747,7 @@ docker_image_search() { # utility_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;$DOCKER_TOO_OLD)log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
   log -d -d -d "docker ps output = '$docker_ps'"
@@ -788,7 +788,7 @@ docker_inspect() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;$DOCKER_TOO_OLD)log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
   container=$(docker_container_search "${1:-}")
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
@@ -830,7 +830,7 @@ docker_logs() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;$DOCKER_TOO_OLD)log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
   log -d "image_search = '$image_search'"
 
@@ -856,7 +856,7 @@ docker_printenv() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;$DOCKER_TOO_OLD)log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
 
   if (( $# == 1 )); then
     if [[ "${1:-}" == *!!* ]]; then
@@ -1344,8 +1344,8 @@ use_sudo_exec() { # utility_function
     out=$(sudo -n -u "$sudo_user" "$rp" -X "$func" "${args[@]}")
     ret=$?
     # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
-    (( $ret == DOCKER_TOO_OLD )) && { log -d "Returning DOCKER_TOO_OLD" ; return $DOCKER_TOO_OLD ; }
-    (( $ret != 0 )) && { log -d "sudo exit error code $ret" ; return 1 ; }
+    (( ret == DOCKER_TOO_OLD )) && { log -d "Returning DOCKER_TOO_OLD" ; return $DOCKER_TOO_OLD ; }
+    (( ret != 0 )) && { log -d "sudo exit error code $ret" ; return 1 ; }
     log -d "sudo_exec $func returned out = '$out'"
     [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
     return 1
@@ -1754,6 +1754,8 @@ main() {
   local docker_filter=false
   local docker_seconds=30
   local docker_seconds_set=false
+  local docker_user=nobody
+  local docker_user_set=false
   local force_all=false
   local force_list=()
   local host_name_set=false
@@ -1982,6 +1984,15 @@ main() {
     rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && docker_seconds=${rcvalue[0]}
 
+    rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" docker_user)
+    if (( ${#rcvalue[@]} > 0 )); then
+      if id "${rcvalue[0]}" &> /dev/null; then
+        docker_user=${rcvalue[0]}
+      else
+        log -w "Cannot set docker_user to ${rcvalue[0]}: user does not exist"
+      fi
+    fi
+
     rcvalue=() ; ! $printer_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" printer)
     (( ${#rcvalue[@]} > 0 )) && PRINTER=${rcvalue[0]}
 
@@ -2067,6 +2078,7 @@ main() {
           echo "  retry_delay: seconds          $(printf '%*s' "${#PROGNAME}" " ") # defaults to $retry_delay"
           echo "  max_retries: number           $(printf '%*s' "${#PROGNAME}" " ") # defaults to $max_retries"
           echo "  docker_seconds: seconds       $(printf '%*s' "${#PROGNAME}" " ") # defaults to $docker_seconds"
+          echo "  docker_user: username         $(printf '%*s' "${#PROGNAME}" " ") # defaults to 'nobody'"
           echo "  include_invalid: true/false   $(printf '%*s' "${#PROGNAME}" " ") # defaults to $include_invalid"
           echo "  sudo_regex: _latest$          $(printf '%*s' "${#PROGNAME}" " ") # no default"
           echo "  sudo_regex: ^sudo             $(printf '%*s' "${#PROGNAME}" " ") # no default"
@@ -2171,6 +2183,7 @@ main() {
     log -d "[GLOBAL SETTINGS] output_mode = '$output_mode'"
     log -d -d "[GLOBAL SETTINGS] output_mode_set = '$output_mode_set'"
     log -d "[GLOBAL SETTINGS] docker_seconds = '$docker_seconds'"
+    log -d "[GLOBAL SETTINGS] docker_user = '$docker_user'"
     log -d "[GLOBAL SETTINGS] retry_delay = '$retry_delay'"
     log -d "[GLOBAL SETTINGS] printer = '$PRINTER'"
     log -d "[GLOBAL SETTINGS] include_invalid = '$include_invalid'"
@@ -2193,6 +2206,7 @@ main() {
   local saved_output_mode=$output_mode
   local saved_include_invalid=$include_invalid
   local saved_docker_seconds=$docker_seconds
+  local saved_docker_user=$docker_user
 
   local list="" sw="" sw_list="" listname="" rcvalue=()
   local tmpstring="" sw_skip_vflag=() sw_auto_flags=() sw_latest=false
@@ -2210,6 +2224,7 @@ main() {
     output_mode=$saved_output_mode
     include_invalid=$saved_include_invalid
     docker_seconds=$saved_docker_seconds
+    docker_user=$saved_docker_user
     sw_list=()
 
     # If list=docker, load docker checks
@@ -2265,6 +2280,15 @@ main() {
       # include_invalid
       rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" include_invalid)
       (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[0]}
+
+      rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" docker_user)
+      if (( ${#rcvalue[@]} > 0 )); then
+        if id "${rcvalue[0]}" &> /dev/null; then
+          docker_user=${rcvalue[0]}
+        else
+          log -w "Cannot set docker_user to ${rcvalue[0]}: user does not exist"
+        fi
+      fi
     fi
 
     # If -L docker was given and docker_seconds is set, only look for checks
@@ -2324,6 +2348,7 @@ main() {
       [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[$list SETTINGS] output_mode = '$output_mode'"
       [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[$list SETTINGS] include_invalid = '$include_invalid'"
       [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[$list SETTINGS] docker_seconds = '$docker_seconds'"
+      [[ "$docker_user" != "$saved_docker_user" ]] && log -d "[$list SETTINGS] docker_user = '$docker_user'"
       log -d "[$list SETTINGS] list = '${sw_list[*]}'"
       echo
     fi
@@ -2436,6 +2461,19 @@ main() {
         # prepend_name
         rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" prepend_name)
         (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
+
+        # include_invalid
+        rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" include_invalid)
+        (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[0]}
+
+        rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" docker_user)
+        if (( ${#rcvalue[@]} > 0 )); then
+          if id "${rcvalue[0]}" &> /dev/null; then
+            docker_user=${rcvalue[0]}
+          else
+            log -w "Cannot set docker_user to ${rcvalue[0]}: user does not exist"
+          fi
+        fi
       fi
 
       # If software is "ink" but printer is not set, go to the next software
@@ -2491,6 +2529,7 @@ main() {
         [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] output_mode = '$output_mode'"
         [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] include_invalid = '$include_invalid'"
         [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] docker_seconds = '$docker_seconds'"
+        [[ "$docker_user" != "$saved_docker_user" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] docker_user = '$docker_user'"
         [[ "$lifetime" != "$cache_lifetime" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] lifetime = '$lifetime'"
         [[ "$delay" != "$retry_delay" ]]       && log -d "[${listname:+$listname:}$sw_name SETTINGS] delay = '$delay'"
         [[ "$retries" != "$max_retries" ]]     && log -d "[${listname:+$listname:}$sw_name SETTINGS] retries = '$retries'"
