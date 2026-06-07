@@ -506,6 +506,12 @@ appimage_check() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
 
+  # Validate appimage_path
+  if [[ -n "$appimage_path" && ! -d "$appimage_path" ]]; then
+    log -e "AppImage path does not exist: $appimage_path"
+    return 1
+  fi
+
   compgen -G "$appimage_path/$1*.AppImage" | \
     sed -r "s#^.*$1-(.*)\.AppImage#\1#"
 }
@@ -2406,6 +2412,25 @@ main() {
 
       # If printonly mode, add to list and continue to next
       $printonly && printlist+=("$sw") && continue
+
+      # Validate output_file
+      if [[ "$output_file" != "/dev/stdout" ]]; then
+        # Ensure parent directory exists and is writable
+        local out_dir
+        out_dir=$(dirname "$output_file")
+        if [[ ! -d "$out_dir" ]]; then
+          log -e "Output directory does not exist: $out_dir"
+          exit 1
+        fi
+        if [[ ! -w "$out_dir" ]]; then
+          log -e "Output directory is not writable: $out_dir"
+          exit 1
+        fi
+        if [[ -e "$output_file" && ! -w "$output_file" ]]; then
+          log -e "Output file is not writable: $output_file"
+          exit 1
+        fi
+      fi
 
       if (( debug > 1 )) && [[ "$listname" != "$sw_name" ]]; then
         [[ "$output_file" != "$saved_output_file" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] output_file = '$output_file'"
