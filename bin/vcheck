@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 
 # Define variables for this program
-PROGNAME=vcheck           # The name of this program
-PROGVER=1.1.0             # Program version
-PROGDATA=/etc/"$PROGNAME" # Default program data directory
-ALPINE_VER=""             # Global placeholder for current Alpine Linux version
-SUDO_EXEC=false           # Is this being run through sudo_exec
-SOURCED_LIBS=("$0")       # Array of sourced libraries
-DEBUG_EXIT=5              # Number of -d flags to print debug info and exit
+vcheck() { echo $PROGVER; } # Define check for this program
+PROGNAME=vcheck             # The name of this program
+PROGDATA=/etc/vcheck        # Default program data directory
+PROGVER=1.1.0               # Program version
+ALPINE_VER=""               # Global placeholder for current Alpine Linux version
+SUDO_EXEC=false             # Is this being run through sudo_exec
+SOURCED_LIBS=("$0")         # Array of sourced libraries
+DEBUG_EXIT=5                # Number of -d flags to print debug info and exit
 export PROGNAME PROGVER PROGDATA ALPINE_VER SUDO_EXEC SOURCED_LIBS DEBUG_EXIT
-
-# Define check for this program
-eval "$PROGNAME() { echo \$PROGVER; }"
 
 # Add common bin dirs to the PATH
 PATH=$PATH:$HOME/.local/bin:/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin
@@ -88,6 +86,14 @@ log() { # utility_function
   return 0
 }
 
+# Get the fields from a bearer string
+get_bearer_field() {
+    local field=$1 str=$2
+    # Extract field="value" or field=value
+    [[ "$str" =~ (^|,)[[:space:]]*${field}=\"([^\"]+)\" ]] && { echo "${BASH_REMATCH[2]}"; return; }
+    [[ "$str" =~ (^|,)[[:space:]]*${field}=([^,]+) ]]     && { echo "${BASH_REMATCH[2]}"; return; }
+}
+
 # Read a config value (optionally from a section) from a config file
 get_config_value() { # utility_function
   # No section: variable=( $(get_config_value file key) )
@@ -128,7 +134,7 @@ get_config_value() { # utility_function
   (( $# >= 3 )) && section=$2 && key=$3
 
   if [[ -n "$section" ]]; then
-    awk -v section="$section" -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
+    awk -v section="$section" -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
       BEGIN {
         in_section = 0
       }
@@ -145,7 +151,7 @@ get_config_value() { # utility_function
         print
       }' <<< "$config_string"
   else
-    awk -v key="$key" -v ltrim=${ltrim:-1} -v rtrim=${rtrim:-1} '
+    awk -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
       $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
         sub(/^[^:=]+[:=]/, "")
         if (ltrim == 1) sub(/^[[:space:]]+/, "")
@@ -364,7 +370,7 @@ sudo_exec() { # utility_function
   done
   [[ ! "$debug" =~ ^[0-9]+$ ]] && debug=${debug:-0}
   [[ ! "$docker_seconds" =~ ^[0-9]+$ ]] && docker_seconds=${docker_seconds:-0}
-  [[ ! "$docker_filter" == true ]] && docker_filter=false
+  [[ "$docker_filter" != true ]] && docker_filter=false
   set -- "${args[@]}"
 
   cd /
@@ -627,7 +633,7 @@ docker_copy() { # check_function
   log -d -d "container = '$container'"
   [[ -z "$container" ]] && { log -e "Could not determine container for '$1'" ; return 1 ; }
 
-  local tmp
+  local tmp files
   tmp=$(maketemp -d)
   log -d -d "Running: docker cp -q $container:$srcfiles $tmp"
   if ! out=$(docker cp -q "$container":"$srcfiles" "$tmp" 2>&1); then
@@ -635,9 +641,9 @@ docker_copy() { # check_function
     return 1
   fi
 
-  log -d -d "Running: cat $(compgen -G "$tmp/$catfiles")"
-  # shellcheck disable=SC2046
-  out=$(cat $(compgen -G "$tmp/$catfiles"))
+  mapfile -t files < <(compgen -G "$tmp/$catfiles")
+  log -d -d "Running: cat ${files[*]}"
+  out=$(cat "${files[@]}")
   log -d -d -d -d "cat output: $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
   return 1
@@ -658,10 +664,9 @@ docker_exec() { # check_function
   if (( $# == 1 )); then
     if [[ "$1" == *!!* ]]; then
       image_search=${1%%!!*}
-      command=("${1#*!!}")
+      read -ra command <<< "${1#*!!}"
     else
       image_search=$1
-      # command=($*)
       read -ra command <<< "$*"
     fi
   else
@@ -679,7 +684,7 @@ docker_exec() { # check_function
 
   log -d -d "Executing: docker exec -u nobody $container ${command[*]}"
   # shellcheck disable=SC2048,SC2086
-  out=$(docker exec -u nobody "$container" ${command[*]} 2>&1)
+  out=$(docker exec -u nobody "$container" "${command[@]}" 2>&1)
   log -d -d "docker exec output = $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
   return 1
@@ -962,19 +967,19 @@ docker_tags() { # check_function
           log -d -d -d "Curl output: $out"
           [[ -n "$out" ]] && out=$(awk -F: 'tolower($1) ~ /www-authenticate/ {sub("^.*"$1":[[:space:]]([Bb]earer )?*","");print}' <<< "$out" | tr -d '\r')
           log -d -d -d "awk output: '$out'"
-          if [[ -n "$out" && $out =~ ^realm=\"[^\"]+\",service=\"[^\"]+\",scope=\"[^\"]+\"$ ]]; then
-            eval "${out//,/;}"
-            log -d -d -d "realm = '$realm'"
-            log -d -d -d "service = '$service'"
-            log -d -d -d "scope = '$scope'"
-            if [[ -n "$realm" && -n "$service" && -n "$scope" ]]; then
-              local token_url="$realm?service=$service&scope=$scope:${org:+$org/}$repo:pull"
-              out=$(curl --no-progress-meter -f --max-time 15 "$token_url")
-              [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.token // .access_token // ""' 2> /dev/null)
-              log -d -d -d "curl + jq output: $out"
-              [[ -n "$out" ]] && authstring=("-H" "Authorization: Bearer $out") && \
-                log -d -d "Using token for $site"
-            fi
+          realm=$(get_bearer_field realm "$out")
+          service=$(get_bearer_field service "$out")
+          scope=$(get_bearer_field scope "$out")
+          log -d -d -d "realm = '$realm'"
+          log -d -d -d "service = '$service'"
+          log -d -d -d "scope = '$scope'"
+          if [[ -n "$realm" && -n "$service" && -n "$scope" ]]; then
+            local token_url="$realm?service=$service&scope=$scope:${org:+$org/}$repo:pull"
+            out=$(curl --no-progress-meter -f --max-time 15 "$token_url")
+            [[ -n "$out" ]] && out=$(jq -rn --argjson j "$out" '$j.token // .access_token // ""' 2> /dev/null)
+            log -d -d -d "curl + jq output: $out"
+            [[ -n "$out" ]] && authstring=("-H" "Authorization: Bearer $out") && \
+              log -d -d "Using token for $site"
           fi
         fi
         hdrfile=$(maketemp)
@@ -1258,7 +1263,7 @@ use_sudo_exec() { # utility_function
 
   local check=$1 check_name=$1
   check_name=$(strip_modifiers "$check_name")
-  local rcvalue=() regex rp out use_sudo=false SUDO_EXEC_DEBUG=0 ret=0
+  local rcvalue=() regex rp out use_sudo=false ret=0
 
   # Loop through sudo_regexes to see if $check matches a regex to use sudo
   for regex in "${sudo_regexes[@]}"; do
@@ -1267,12 +1272,12 @@ use_sudo_exec() { # utility_function
 
   # Read config file to see if there are specific settings for $sw
   if [[ -n "$rcfile_contents" ]]; then
-    log -d -d -d "Reading $rcfile for $PROGNAME::$check use_sudo setting"
-    rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$check" use_sudo)
+    log -d -d -d "Reading $rcfile for $PROGNAME::$check_name use_sudo setting"
+    rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$check_name" use_sudo)
     log -d -d -d "Config use_sudo == ${rcvalue[*]}"
     (( ${#rcvalue[@]} > 0 )) && use_sudo=${rcvalue[0]}
-    log -d -d -d "Reading $rcfile for $PROGNAME::$check user_user setting"
-    rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$check" sudo_user)
+    log -d -d -d "Reading $rcfile for $PROGNAME::$check_name user_user setting"
+    rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$check_name" sudo_user)
     log -d -d -d "Config sudo_user == ${rcvalue[*]}"
     (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
   fi
@@ -1289,7 +1294,7 @@ use_sudo_exec() { # utility_function
     [[ "$check" == "printer_ink_check" ]] && args+=(PRINTER="$PRINTER")
     log -v -v "Using sudo as $sudo_user to $func"
     rp=$(realpath "$0")
-    log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $func ${args[@]}'"
+    log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $func ${args[*]}'"
     out=$(sudo -n -u "$sudo_user" "$rp" -X "$func" "${args[@]}")
     # Return code 19 when docker_filter is enabled and container is older than seconds
     (( $? == 19 )) && { log -d "Returning 19" ; return 19 ; }
@@ -1487,7 +1492,7 @@ execute_check() { # utility_function
     gitlab)          out=$(scm_project -l "$project") ; ret=$? ;;
     gitlab_tags)     out=$(scm_project -T -l "$project") ; ret=$? ;;
     pacman)          out=$(os_package -a "$project") ; ret=$? ;;
-    $PROGNAME)       out=$($PROGNAME) ; ret=$? ;;
+    "$PROGNAME")     out=$("$PROGNAME") ; ret=$? ;;
     *)
       log -e "Unknown package check: $tag"
       return 1 ;;
@@ -1588,41 +1593,41 @@ usage() {
   echo "Program-related options:"
   # Second line indent
   local ss=18
-  usage_fold -s $ss -- "-c RCFILE     : path to RCFILE file (default: $rcfile)"
-  usage_fold -s $ss -- "-u USER     x : drop privileges to USER if run as root (default: none)"
-  usage_fold -s $ss -- "-p PRINTOPT   : print information (${bu}help${ubu} for option list)"
-  usage_fold -s $ss -- "-1            : print information in a single column with '-p PRINTOPT'"
-  usage_fold -s $ss -- "-w WAIT     x : latest checks results are cached for WAIT minutes (default: $cache_lifetime minutes)"
-  usage_fold -s $ss -- "-r RETRY    x : delay between check retries for RETRY seconds (default: $retry_delay seconds)"
-  usage_fold -s $ss -- "-P PRINTER  x : ip address for printer (for SOFTWARE == ink)"
-  usage_fold -s $ss -- "-R REGEX   +x : a regex for commands that need sudo"
-  usage_fold -s $ss -- "-C COMPOSE  x : Use docker compose file COMPOSE for docker compose commands"
-  usage_fold -s $ss -- "-S SECONDS  x : number of SECONDS for docker container updates (default: $docker_seconds seconds)"
-  usage_fold -s $ss -- "-X FUNC       : Run check with sudo"
-  usage_fold -s $ss -- "-x SUDOUSER x : User to run sudo command as for -X (default: none)"
+  usage_fold -s "$ss" -- "-c RCFILE     : path to RCFILE file (default: $rcfile)"
+  usage_fold -s "$ss" -- "-u USER     x : drop privileges to USER if run as root (default: none)"
+  usage_fold -s "$ss" -- "-p PRINTOPT   : print information (${bu}help${ubu} for option list)"
+  usage_fold -s "$ss" -- "-1            : print information in a single column with '-p PRINTOPT'"
+  usage_fold -s "$ss" -- "-w WAIT     x : latest checks results are cached for WAIT minutes (default: $cache_lifetime minutes)"
+  usage_fold -s "$ss" -- "-r RETRY    x : delay between check retries for RETRY seconds (default: $retry_delay seconds)"
+  usage_fold -s "$ss" -- "-P PRINTER  x : ip address for printer (for SOFTWARE == ink)"
+  usage_fold -s "$ss" -- "-R REGEX   +x : a regex for commands that need sudo"
+  usage_fold -s "$ss" -- "-C COMPOSE  x : Use docker compose file COMPOSE for docker compose commands"
+  usage_fold -s "$ss" -- "-S SECONDS  x : number of SECONDS for docker container updates (default: $docker_seconds seconds)"
+  usage_fold -s "$ss" -- "-X FUNC       : Run check with sudo"
+  usage_fold -s "$ss" -- "-x SUDOUSER x : User to run sudo command as for -X (default: none)"
   echo
   # Check related options
-  usage_fold -s $ss -- "-L LIST       : use LIST for each SOFTWARE argument as if LIST:SOFTWARE give as arguments"
-  usage_fold -s $ss -- "-D            : print versions for docker containers that started in last (-S) SECONDS seconds"
-  usage_fold -s $ss -- "-V MINVER   x : when getting a version, use the minor version MINVER (e.g ${bu}1.2${ubu} to find ${bu}1.2.4${ubu})"
-  usage_fold -s $ss -- "-f SOFTWARE + : force updating latest SOFTWARE (default: update if cache expired)"
-  usage_fold -s $ss -- "-F            : force updating all latest software (default: update if cache expired)"
+  usage_fold -s "$ss" -- "-L LIST       : use LIST for each SOFTWARE argument as if LIST:SOFTWARE give as arguments"
+  usage_fold -s "$ss" -- "-D            : print versions for docker containers that started in last (-S) SECONDS seconds"
+  usage_fold -s "$ss" -- "-V MINVER   x : when getting a version, use the minor version MINVER (e.g ${bu}1.2${ubu} to find ${bu}1.2.4${ubu})"
+  usage_fold -s "$ss" -- "-f SOFTWARE + : force updating latest SOFTWARE (default: update if cache expired)"
+  usage_fold -s "$ss" -- "-F            : force updating all latest software (default: update if cache expired)"
   echo
   echo " Output related options:"
-  usage_fold -s $ss -- "-o FILE     x : save JSON output to FILE instead"
-  usage_fold -s $ss -- "-j          x : print output in JSON format to screen"
-  usage_fold -s $ss -- "-t          x : print output in text format to screen"
-  usage_fold -s $ss -- "-m          x : publish output to mqtt server"
-  usage_fold -s $ss -- "-i          x : include invalid version results ('---') when updating (default: skip)"
-  usage_fold -s $ss -- "-T            : Test Mode: print what would happen in a run"
+  usage_fold -s "$ss" -- "-o FILE     x : save JSON output to FILE instead"
+  usage_fold -s "$ss" -- "-j          x : print output in JSON format to screen"
+  usage_fold -s "$ss" -- "-t          x : print output in text format to screen"
+  usage_fold -s "$ss" -- "-m          x : publish output to mqtt server"
+  usage_fold -s "$ss" -- "-i          x : include invalid version results ('---') when updating (default: skip)"
+  usage_fold -s "$ss" -- "-T            : Test Mode: print what would happen in a run"
 
   echo
   echo "MQTT-related Options:"
-  usage_fold -s $ss -- "-M            : mqtt test mode: do not publish to mqtt; print instead"
-  usage_fold -s $ss -- "-H HOST_NAME  : when prepending key names, use host_name (default: ${bu}${host_name}_${ubu})"
-  usage_fold -s $ss -- "-I INK_TOPIC  : use INK_TOPIC when publishing printer_ink_check to MQTT (default: $ink_topic)"
-  usage_fold -s $ss -- "-n          x : prepend mqtt key name with ${bu}${host_name}_${ubu} (default with ${bu}all${ubu})"
-  usage_fold -s $ss -- "-N          x : do not prepend mqtt key name with ${bu}${host_name}_${ubu} (default with ${bu}latest${ubu})"
+  usage_fold -s "$ss" -- "-M            : mqtt test mode: do not publish to mqtt; print instead"
+  usage_fold -s "$ss" -- "-H HOST_NAME  : when prepending key names, use host_name (default: ${bu}${host_name}_${ubu})"
+  usage_fold -s "$ss" -- "-I INK_TOPIC  : use INK_TOPIC when publishing printer_ink_check to MQTT (default: $ink_topic)"
+  usage_fold -s "$ss" -- "-n          x : prepend mqtt key name with ${bu}${host_name}_${ubu} (default with ${bu}all${ubu})"
+  usage_fold -s "$ss" -- "-N          x : do not prepend mqtt key name with ${bu}${host_name}_${ubu} (default with ${bu}latest${ubu})"
   echo "+ : option can be used more than once"
   echo "x : overrides config settings"
   echo
@@ -1669,7 +1674,7 @@ main() {
 
   # App Lists
   local all_checks=() app_checks=() docker_checks=() latest_checks=() non_auto_latest_checks=()
-  local check_list=() helper_list=() utility_list=()
+  local check_list=() utility_list=()
   mapfile -t app_checks < <(awk '
     /^[^#].+[(]) {[[:space:]]+#[[:space:]]*app_check_function/ {
       gsub(/\(\)/,"",$1)
@@ -1679,11 +1684,6 @@ main() {
   all_checks+=("${app_checks[@]}")
   mapfile -t check_list < <(awk '
     /^[^#].+[(]) {[[:space:]]+#[[:space:]]*check_function/ {
-      gsub(/\(\)/,"",$1)
-      print $1
-    }' "${SOURCED_LIBS[@]}")
-  mapfile -t helper_list < <(awk '
-    /^[^#].+[(]) {[[:space:]]+#[[:space:]]*helper_function/ {
       gsub(/\(\)/,"",$1)
       print $1
     }' "${SOURCED_LIBS[@]}")
@@ -1776,7 +1776,7 @@ main() {
            log -e "Invalid value for SECONDS ($OPTARG)" && usage 1
          fi ;;
       X) shift ; sudo_exec "$@" ; exit $? ;;
-      x) sudo_user=$OPTARG ;;
+      x) sudo_user=$OPTARG ; sudo_user_set=true ;;
 
       # Check related options
       L) update_list=$OPTARG ; update=true ;;
@@ -1884,7 +1884,7 @@ main() {
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && cache_lifetime=${rcvalue[0]}
 
     rcvalue=() ; ! $retry_delay_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" retry_delay)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcvalue[01]}
+    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcvalue[0]}
 
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" max_retries)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && max_retries=${rcvalue[0]}
@@ -1921,11 +1921,11 @@ main() {
     (( ${#rcvalue[@]} > 0 )) && mqtt_password=${rcvalue[0]}
 
     rcvalue=() ; ! $host_name_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt host_name)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && host_name=${rcvalue[0]}
+    [[ ${#rcvalue[@]} -gt 0 ]] && host_name=${rcvalue[0]}
     rcvalue=() ; ! $ink_topic_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt ink_topic)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && ink_topic=${rcvalue[0]}
+    [[ ${#rcvalue[@]} -gt 0 ]] && ink_topic=${rcvalue[0]}
     rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt prepend_name)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && prepend_name=${rcvalue[0]}
+    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^(true|false)$ ]] && prepend_name=${rcvalue[0]}
 
   fi # if [[ -n "$rcfile_contents" ]]; then
   local print_opts=(
@@ -1970,7 +1970,7 @@ main() {
           exit ;;
       u*) print_list "$print_single" -l "Utility Functions" "${utility_list[@]}"
           exit ;;
-      v*) echo Version $PROGVER ; exit 0 ;;
+      v*) echo "Version $PROGVER" ; exit 0 ;;
       e*) # Add new options for [$PROGNAME] to list_reserved_words array above
           echo "Example RCFILE (for \$HOME/.config/${PROGNAME}rc or $PROGDATA/${PROGNAME}rc)"
           echo "  [$PROGNAME]"
@@ -2092,7 +2092,6 @@ main() {
     (( ${#sudo_regexes[@]} > 0 ))   && printf "[DEBUG] [GLOBAL SETTINGS]" && set | grep ^sudo_regexes= >&2
     [[ -n "$mqtt_server" ]]         && log -d "[GLOBAL SETTINGS] mqtt_server = '$mqtt_server'"
     [[ -n "$mqtt_username" ]]       && log -d "[GLOBAL SETTINGS] mqtt_username = '$mqtt_username'"
-    [[ -n "$mqtt_password" ]]       && log -d -d -d "[GLOBAL SETTINGS] mqtt_password = ''$mqtt_password''"
     [[ -n "$mqtt_server" && -n "$prepend_name" ]] && log -d "[GLOBAL SETTINGS] prepend_name = '$prepend_name'"
     [[ -n "$mqtt_server" && -n "$ink_topic" ]]    && log -d "[GLOBAL SETTINGS] ink_topic = '$ink_topic'"
     echo
@@ -2108,7 +2107,7 @@ main() {
   saved_docker_seconds=$docker_seconds
   saved_compose_file=$compose_file
 
-  local tmpstring sw_skip_vflag=() sw_auto_flags=()
+  local tmpstring sw_skip_vflag=() sw_auto_flags=() sw_latest=false
   local sw_name sw_check_set tmp_name sw_orig sw_tag sw_project
 
   # Process software list
@@ -2175,7 +2174,7 @@ main() {
       (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
 
       # include_invalid
-      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}t" include_invalid)
+      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" include_invalid)
       (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[0]}
 
       rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" compose_file)
@@ -2231,8 +2230,8 @@ main() {
       latest)
         log -d "Applying 'latest' specific settings"
         ! $prepend_name_set && prepend_name=false
-        sw_list=("${latest_list[@]}" "${latest_alias_list[@]}" "${sw_list[@]}")
         ;;
+      *) ;;
     esac
 
     if (( debug > 1 )); then
@@ -2313,16 +2312,18 @@ main() {
           *) ;;
         esac
       done
-      $docker_filter && [[ "$sw_name" != *_docker && ! "$sw_tag" =~ docker ]] && continue
-      sw_project=${sw_name%!!"$sw_tag"}
+      [[ "$tmp_name" == *_latest ]] && sw_latest=true
+      sw_project=${sw_name%!!"$sw_tag"*}
       ! $sw_check_set && tmp_name=$sw_project
-      sw_name=$tmp_name
+      sw_name=${tmp_name%_latest}
+      $docker_filter && [[ "$sw_name" != *_docker && ! "$sw_tag" =~ docker ]] && continue
 
       log -d -d "list = '$list'"
       log -d -d "listname = '$listname'"
       log -d -d "sw_name = '$sw_name'"
       log -d -d "tmp_name = '$tmp_name'"
       log -d -d "sw_check_set = '$sw_check_set'"
+      log -d -d "sw_latest = '$sw_latest'"
       log -d -d "sw_tag = '$sw_tag'"
       log -d -d "sw_project = '$sw_project'"
       log -d -d "sw_skip_vflag = '${sw_skip_vflag[*]}'"
@@ -2358,9 +2359,6 @@ main() {
 
       # Set COMPOSE_FILE if necessary
       [[ -n "$compose_file" ]] && export COMPOSE_FILE=$compose_file
-
-      found=false
-      [[ "$sw_orig" =~ !!$CHECK_LIST ]] && found=true
 
       # If software is "ink" but printer is not set, go to the next software
       if [[ "$sw_name" == "printer_ink_check" && -z "$PRINTER" ]]; then
@@ -2414,7 +2412,7 @@ main() {
         (( i > 0 )) && log -v "Retrying for $sw_name (try $i of $retries) after $delay wait" && sleep "$delay"
 
         unset ret version
-        if [[ "$sw_name" == *"_latest" ]] && ! ${CACHE_DIR_PREPARED:-false}; then
+        if $sw_latest && ! ${CACHE_DIR_PREPARED:-false}; then
           # && prepare_cache_dir "$cache_dir"
           local cache_parent
           if [[ -n "$cache_dir" ]]; then
@@ -2441,16 +2439,19 @@ main() {
           CACHE_DIR_PREPARED=true
         fi
 
-        log -d -d "Determining if using cache"
-        log -d -d "sw_name = '$sw_name'"
-        log -d -d "force_all = '$force_all'"
-        log -d -d "id -u = '$(id -u)'"
-        log -d -d "force_list = '${force_list[*]}'"
+        log -d -d -d "Determining if using cache:"
+        log -d -d -d "sw_latest = '$sw_latest' (looking for true)"
+        log -d -d -d "force_all = '$force_all' (looking for false)"
+        log -d -d -d "id -u = '$(id -u)' (looking for != 0)"
+        log -d -d -d "force_list = '${force_list[*]}'"
+        log -d -d -d "sw_name = '$sw_name' (should not be in force_list)"
+        log -d -d -d "sw = '$sw' (should not be in force_list)"
+        log -d -d -d "cache_file = '$cache_dir"/"${sw_name//\//__}${minver:+_$minver}' (should be readable)"
         # If -f and -F not used, user is not root, sw IS a latest check, and 
         # cache_file is readable, read the cache file if not stale
-        if ! $force_all && [[ $(id -u) != 0 && \
+        if $sw_latest && ! $force_all && [[ $(id -u) != 0 && \
           " ${force_list[*]} " != *" $sw_name "* && " ${force_list[*]} " != *" $sw "* && \
-            "$sw_name" == *"_latest" && -r "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}" ]]; then
+            -r "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}" ]]; then
 
           log -d "Using cache for $sw_name"
           stamp=$(stat -c "%Y" "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}")
@@ -2465,6 +2466,7 @@ main() {
             update_time=$stamp
           fi
         else
+          log -d "Not using cache for $sw_name"
           (( debug > 0 )) && $force_all && log -d "Forced update"
           (( debug > 0 )) && [[ " ${force_list[*]} " == *" $sw "* ]] && log -d "Forced update"
 
@@ -2487,7 +2489,7 @@ main() {
           # Run through sudo exec if necessary
           # Return code 19 when docker_filter is enabled and container is older than seconds
           local version
-          version=$(use_sudo_exec "$@")
+          version=$(use_sudo_exec "$sw")
           ret=$?
 
           # If check not run as sudo_user, run normally
@@ -2513,7 +2515,7 @@ main() {
             break
           fi
 
-          if [[ "$sw_name" == *"_latest" ]]; then
+          if $sw_latest; then
             log -d "Writing latest update for $sw_name to cache"
             echo "$version" > "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}"
             # shellcheck disable=SC2153
@@ -2555,11 +2557,11 @@ main() {
         printf -v mqtt_output '{ "version": "%s" }' "$version"
         [[ "$sw_name" == "printer_ink_check" ]] && mqtt_output=$version
 
-        if ! $prepend_name_set && [[ "$sw_name" == *"_latest" || " ${remote_list[*]} " == *" $sw "* ]]; then
+        if ! $prepend_name_set && [[ "$sw_name" == *"_latest" ]]; then
           prepend_name=false
         fi
 
-        if ! $prepend_name_set && [[ " ${app_list[*]} " == *" $sw "* ]]; then
+        if ! $prepend_name_set && [[ " ${app_checks[*]} " == *" $sw "* ]]; then
           prepend_name=true
         fi
 
