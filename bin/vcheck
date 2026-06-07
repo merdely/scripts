@@ -62,7 +62,7 @@ trap 'exit 1' INT TERM
 if ! command -v mapfile &> /dev/null; then
   mapfile() {
     local _mapfile_trim=0 _mapfile_var="" _mapfile_line="" _mapfile_i=0
-    # Only handle the -t flag (strip trailing newlines)
+    # Only handle the -t flag (strip trailing carriage returns)
     [[ "${1:-}" == "-t" ]] && { _mapfile_trim=1; shift; }
     # If var name not passed, use MAPFILE as the variable
     _mapfile_var=${1:-MAPFILE}
@@ -291,7 +291,7 @@ drop_privs() { # utility_function
 gen_authstring() { # utility_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Site parameter missing" ; return 1 ; }
-  local section=${1:-} key=${2:-token} token="" authstring=()
+  local section=${1:-} key=${2:-token} token=()
   mapfile -t token < <(get_config_value "$rcfile" "$section" "$key")
   if (( ${#token[@]} > 0 )); then
     echo "-H"
