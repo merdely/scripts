@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # Define variables for this program
-vcheck() { echo $PROGVER; } # Define check for this program
-PROGNAME=vcheck             # The name of this program
-PROGDATA=/etc/vcheck        # Default program data directory
-PROGVER=1.1.0               # Program version
-ALPINE_VER=""               # Global placeholder for current Alpine Linux version
-SUDO_EXEC=false             # Is this being run through sudo_exec
-SOURCED_LIBS=("$0")         # Array of sourced libraries
-DEBUG_EXIT=5                # Number of -d flags to print debug info and exit
+vcheck() { echo "$PROGVER"; } # Define check for this program
+PROGNAME=vcheck               # The name of this program
+PROGDATA=/etc/vcheck          # Default program data directory
+PROGVER=1.1.0                 # Program version
+ALPINE_VER=""                 # Global placeholder for current Alpine Linux version
+SUDO_EXEC=false               # Is this being run through sudo_exec
+SOURCED_LIBS=("$0")           # Array of sourced libraries
+DEBUG_EXIT=5                  # Number of -d flags to print debug info and exit
 export PROGNAME PROGVER PROGDATA ALPINE_VER SUDO_EXEC SOURCED_LIBS DEBUG_EXIT
 
 # Add common bin dirs to the PATH
@@ -571,7 +571,7 @@ curl_api() { # check_function
   [[ -z "$1" ]] && check_name=${FUNCNAME[1]}
 
   # shellcheck disable=SC2154
-  [[ -z "$rcfile_contents" ]] && { log -e "Cannot read $rcfile for $check_name" ; return 1; }
+  [[ ! -s "$rcfile" ]] && { log -e "Cannot read $rcfile for $check_name" ; return 1; }
   mapfile -t url      < <(get_config_value "$rcfile" "$check_name" url)
   mapfile -t username < <(get_config_value "$rcfile" "$check_name" username)
   mapfile -t password < <(get_config_value "$rcfile" "$check_name" password)
@@ -1306,7 +1306,7 @@ use_sudo_exec() { # utility_function
   done
 
   # Read config file to see if there are specific settings for $sw
-  if [[ -n "$rcfile_contents" ]]; then
+  if [[ -s "$rcfile" ]]; then
     log -d -d -d "Reading $rcfile for $PROGNAME::$check_name use_sudo setting"
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$check_name" use_sudo)
     log -d -d -d "Config use_sudo == ${rcvalue[*]}"
@@ -1944,7 +1944,7 @@ main() {
   case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
   # Read configuration settings
-  if [[ -z "$exec_user" && -n "$rcfile_contents" ]]; then
+  if [[ -z "$exec_user" && -s "$rcfile" ]]; then
     mapfile -t arr < <(get_config_value "$rcfile" "$PROGNAME" user)
     (( ${#arr[@]} > 0 )) && exec_user=${arr[0]}
     unset arr
@@ -1955,7 +1955,7 @@ main() {
 
   # Read configuration file options
   local rcvalue=()
-  if [[ -n "$rcfile_contents" ]]; then
+  if [[ -s "$rcfile" ]]; then
     rcvalue=(); mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
     (( ${#rcvalue[@]} > 0 )) && cache_dir=${rcvalue[0]}
 
@@ -2003,7 +2003,7 @@ main() {
     rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt prepend_name)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^(true|false)$ ]] && prepend_name=${rcvalue[0]}
 
-  fi # if [[ -n "$rcfile_contents" ]]; then
+  fi # if [[ -s "$rcfile" ]]; then
   local print_opts=(
     help
     app_checks
@@ -2204,7 +2204,7 @@ main() {
     # If command line parameter is "list:sw", do update
     elif [[ -n "$update_list" || "$list" =~ ^[0-9a-zA_Z_-]+:: ]]; then
       sw_list=("${list#*::}")
-      if [[ "$list" == "$update_list" && -n "$rcfile_contents" ]]; then
+      if [[ "$list" == "$update_list" && -s "$rcfile" ]]; then
         log -d "Reading configfile for software list for ${list//\\/\\\\} (update_list)"
         read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
         log -d "Setting software list to '${sw_list[*]}' for $list"
@@ -2216,7 +2216,7 @@ main() {
       update=true
 
     # If sw is a list defined in the config, load its software in sw list
-    elif [[ " ${list_reserved_words[*]} " != *" $list "* && "$list" != *!!* && -n "$rcfile_contents" ]]; then
+    elif [[ " ${list_reserved_words[*]} " != *" $list "* && "$list" != *!!* && -s "$rcfile" ]]; then
       log -d "Reading configfile for software list for ${list//\\/\\\\}"
       read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
       log -d "Setting software list to '${sw_list[*]}' for $list"
@@ -2228,7 +2228,7 @@ main() {
     (( ${#sw_list[@]} == 0 )) && sw_list=("$list")
 
     unset rcoutput_file rcoutput_mode
-    if [[ -n "$rcfile_contents" && "$list" != *!!* ]]; then
+    if [[ -s "$rcfile" && "$list" != *!!* ]]; then
       # output_mode
       rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_mode)
       (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[0]} && \
@@ -2252,7 +2252,7 @@ main() {
     # related to containers that were restarted within docker_seconds seconds
     if $update && [[ "$list" == docker ]]; then
       docker_seconds_local=$docker_seconds
-      if [[ -n "$rcfile_contents" && "$list" != *!!* ]]; then
+      if [[ -s "$rcfile" && "$list" != *!!* ]]; then
         rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" docker_seconds)
         (( ${#rcvalue[@]} > 0 )) && docker_seconds_local=${rcvalue[0]}
       fi
@@ -2321,7 +2321,7 @@ main() {
       [[ "$listname" == "$sw" ]] && unset listname
       tmp_name=$sw
 
-      rcvalue=() ; [[ -n "$rcfile_contents" && "$sw" != *!!* ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${sw//\\/\\\\}" check)
+      rcvalue=() ; [[ -s "$rcfile" && "$sw" != *!!* ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${sw//\\/\\\\}" check)
       (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[0]} && sw_check_set=true && \
         log -d "Read check '$sw' for $tmp_name"
       sw_orig=$sw
@@ -2399,7 +2399,7 @@ main() {
       log -d "Processing $sw_name${listname:+ for "$listname"}"
 
       unset rcoutput_file rcoutput_mode
-      if [[ -n "$rcfile_contents" ]]; then
+      if [[ -s "$rcfile" ]]; then
         # See if check is defined
         # rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" check)
         # (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[0]} && \
@@ -2431,7 +2431,7 @@ main() {
       delay=$retry_delay
       retries=$max_retries
 
-      if [[ -n "$rcfile_contents" ]]; then
+      if [[ -s "$rcfile" ]]; then
         log -d "Reading cache_lifetime retry_delay max_retries settings from config for $sw_name"
         # Check if this version check has a setting for cache_lifetime and use it if it does
         rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" cache_lifetime)
@@ -2555,7 +2555,7 @@ main() {
           done
           log -d -d "Checking to see if $sw should be run with sudo (use_sudo = '$use_sudo)'"
 
-          if [[ -n "$rcfile_contents" ]]; then
+          if [[ -s "$rcfile" ]]; then
             # Read config file to see if there are specific settings for $sw
             rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" use_sudo)
             (( ${#rcvalue[@]} > 0 )) && use_sudo=${rcvalue[0]}
@@ -2596,8 +2596,8 @@ main() {
           if $sw_latest; then
             log -d "Writing latest update for $sw_name to cache"
             echo "$version" > "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}"
-            # shellcheck disable=SC2153
-            (( $(id -u) == 0 )) && chown "$SUDO_USER":"$(id -g "$SUDO_USER")" "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}"
+            (( $(id -u) == 0 )) && [[ -n "$sudo_user" ]] && \
+              chown "$sudo_user":"$(id -g "$sudo_user")" "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}"
           fi
         fi
         # If version is set, move on
