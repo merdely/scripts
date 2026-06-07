@@ -157,35 +157,53 @@ get_config_value() { # utility_function
   # If 3 arguments provided
   (( $# >= 3 )) && section=$2 && key=$3
 
-  # Escape metacharacters in key
-  key=$(sed 's/[[\.*^$()+?{|]/\\&/g' <<< "$key")
   if [[ -n "$section" ]]; then
-    # Escape metacharacters in section
-    section=$(sed 's/[[\.*^$()+?{|]/\\&/g' <<< "${section:-}")
-
     awk -v section="$section" -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
       BEGIN {
         in_section = 0
+        section_header = "[" section "]"
+        # Build key matcher: key followed by optional space then : or =
       }
-      $0 ~ /^[[:space:]]*\[/ {
-        in_section = 0
+      {
+        # Left-trim the line for comparisons
+        ltrimmed = $0
+        sub(/^[[:space:]]+/, "", ltrimmed)
       }
-      $0 ~ "^[[:space:]]*\\["section"\\]" {
-        in_section = 1
+      /^[[:space:]]*\[/ {
+        in_section = (index(ltrimmed, section_header) == 1 && \
+                      substr(ltrimmed, length(section_header) + 1) ~ /^[[:space:]]*$/)
+        next
       }
-      in_section == 1 && $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
-        sub(/^[^:=]+[:=]/, "")
-        if (ltrim == 1) sub(/^[[:space:]]+/, "")
-        if (rtrim == 1) sub(/[[:space:]]+$/,"")
-        print
+      in_section {
+        # Check if line starts with key followed by optional whitespace then : or =
+        if (index(ltrimmed, key) == 1) {
+          rest = substr(ltrimmed, length(key) + 1)
+          if (rest ~ /^[[:space:]]*[:=]/) {
+            sub(/^[^:=]+[:=]/, "", ltrimmed)
+            if (ltrim == 1) sub(/^[[:space:]]+/, "", ltrimmed)
+            if (rtrim == 1) sub(/[[:space:]]+$/, "", ltrimmed)
+            print ltrimmed
+          }
+        }
       }' <<< "$config_string"
   else
     awk -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
-      $0 ~ "^[[:space:]]*"key"[[:space:]]*[:=]" {
-        sub(/^[^:=]+[:=]/, "")
-        if (ltrim == 1) sub(/^[[:space:]]+/, "")
-        if (rtrim == 1) sub(/[[:space:]]+$/, "")
-        print
+      {
+        # Left-trim the line for comparisons
+        ltrimmed = $0
+        sub(/^[[:space:]]+/, "", ltrimmed)
+      }
+      {
+        # Check if line starts with key followed by optional whitespace then : or =
+        if (index(ltrimmed, key) == 1) {
+          rest = substr(ltrimmed, length(key) + 1)
+          if (rest ~ /^[[:space:]]*[:=]/) {
+            sub(/^[^:=]+[:=]/, "", ltrimmed)
+            if (ltrim == 1) sub(/^[[:space:]]+/, "", ltrimmed)
+            if (rtrim == 1) sub(/[[:space:]]+$/, "", ltrimmed)
+            print ltrimmed
+          }
+        }
       }' <<< "$config_string"
   fi
 }
@@ -267,7 +285,7 @@ gen_authstring() { # utility_function
   (( $# == 0 )) && { log -e "Site parameter missing" ; return 1 ; }
   local section=$1 key=${2:-token}
   local token authstring=()
-  mapfile -t token < <(get_config_value -s "$rcfile_contents" "$section" "$key")
+  mapfile -t token < <(get_config_value "$rcfile" "$section" "$key")
   if (( ${#token[@]} > 0 )); then
     echo "-H"
     echo "Authorization: Bearer ${token[0]}"
@@ -566,10 +584,10 @@ curl_api() { # check_function
 
   # shellcheck disable=SC2154
   [[ -z "$rcfile_contents" ]] && { log -e "Cannot read $rcfile for $check_name" ; return 1; }
-  mapfile -t url      < <(get_config_value -s "$rcfile_contents" "$check_name" url)
-  mapfile -t username < <(get_config_value -s "$rcfile_contents" "$check_name" username)
-  mapfile -t password < <(get_config_value -s "$rcfile_contents" "$check_name" password)
-  mapfile -t apikey   < <(get_config_value -s "$rcfile_contents" "$check_name" apikey)
+  mapfile -t url      < <(get_config_value "$rcfile" "$check_name" url)
+  mapfile -t username < <(get_config_value "$rcfile" "$check_name" username)
+  mapfile -t password < <(get_config_value "$rcfile" "$check_name" password)
+  mapfile -t apikey   < <(get_config_value "$rcfile" "$check_name" apikey)
 
   out=$(maketemp)
   (( ${#url[@]} == 0 ))      && { log -e "Could not read $check_name URL from $rcfile" ; return 1 ; }
@@ -903,26 +921,26 @@ docker_tags() { # check_function
   [[ "$site" == "quay.io" ]] && site=docker.io
   case "$site" in
     code.forgejo.org)
-      mapfile -t username < <(get_config_value -s "$rcfile_contents" forgejo username)
-      mapfile -t token    < <(get_config_value -s "$rcfile_contents" forgejo token)
+      mapfile -t username < <(get_config_value "$rcfile" forgejo username)
+      mapfile -t token    < <(get_config_value "$rcfile" forgejo token)
       # uri="https://$site/v1/repos"
       ;;
     codeberg.org)
-      mapfile -t username < <(get_config_value -s "$rcfile_contents" codeberg username)
-      mapfile -t token    < <(get_config_value -s "$rcfile_contents" codeberg token)
+      mapfile -t username < <(get_config_value "$rcfile" codeberg username)
+      mapfile -t token    < <(get_config_value "$rcfile" codeberg token)
       ;;
     docker.gitea.com)
-      mapfile -t username < <(get_config_value -s "$rcfile_contents" gitea username)
-      mapfile -t token    < <(get_config_value -s "$rcfile_contents" gitea token)
+      mapfile -t username < <(get_config_value "$rcfile" gitea username)
+      mapfile -t token    < <(get_config_value "$rcfile" gitea token)
       ;;
     docker.io)
-      mapfile -t username < <(get_config_value -s "$rcfile_contents" dockerhub username)
-      mapfile -t token    < <(get_config_value -s "$rcfile_contents" dockerhub token)
+      mapfile -t username < <(get_config_value "$rcfile" dockerhub username)
+      mapfile -t token    < <(get_config_value "$rcfile" dockerhub token)
       ;;
     ghcr.io|lscr.io)
       site=ghcr.io
-      mapfile -t username < <(get_config_value -s "$rcfile_contents" github username)
-      mapfile -t token    < <(get_config_value -s "$rcfile_contents" github token)
+      mapfile -t username < <(get_config_value "$rcfile" github username)
+      mapfile -t token    < <(get_config_value "$rcfile" github token)
       ;;
     *) log -e "Unknown site for skopeo ($site)" && return 1 ;;
   esac
@@ -1302,11 +1320,11 @@ use_sudo_exec() { # utility_function
   # Read config file to see if there are specific settings for $sw
   if [[ -n "$rcfile_contents" ]]; then
     log -d -d -d "Reading $rcfile for $PROGNAME::$check_name use_sudo setting"
-    rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$check_name" use_sudo)
+    rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$check_name" use_sudo)
     log -d -d -d "Config use_sudo == ${rcvalue[*]}"
     (( ${#rcvalue[@]} > 0 )) && use_sudo=${rcvalue[0]}
     log -d -d -d "Reading $rcfile for $PROGNAME::$check_name user_user setting"
-    rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$check_name" sudo_user)
+    rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$check_name" sudo_user)
     log -d -d -d "Config sudo_user == ${rcvalue[*]}"
     (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
   fi
@@ -1853,8 +1871,8 @@ main() {
   local checks=() lists=() section_list=() section item
   mapfile -t section_list < <(get_section_list)
   for section in "${section_list[@]}"; do
-    mapfile -t checks < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$section" check)
-    mapfile -t lists < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$section" list)
+    mapfile -t checks < <(get_config_value "$rcfile" "$PROGNAME::$section" check)
+    mapfile -t lists < <(get_config_value "$rcfile" "$PROGNAME::$section" list)
 
     if (( ${#checks[@]} > 0 )); then
       all_checks+=("$section")
@@ -1892,7 +1910,7 @@ main() {
 
   # Read configuration settings
   if [[ -z "$exec_user" && -n "$rcfile_contents" ]]; then
-    mapfile -t arr < <(get_config_value -s "$rcfile_contents" "$PROGNAME" user)
+    mapfile -t arr < <(get_config_value "$rcfile" "$PROGNAME" user)
     (( ${#arr[@]} > 0 )) && exec_user=${arr[0]}
     unset arr
   fi
@@ -1903,51 +1921,51 @@ main() {
   # Read configuration file options
   local rcvalue=()
   if [[ -n "$rcfile_contents" ]]; then
-    rcvalue=(); mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" cache_dir)
+    rcvalue=(); mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
     (( ${#rcvalue[@]} > 0 )) && cache_dir=${rcvalue[0]}
 
-    rcvalue=() ; ! $cache_lifetime_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" cache_lifetime)
+    rcvalue=() ; ! $cache_lifetime_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_lifetime)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && cache_lifetime=${rcvalue[0]}
 
-    rcvalue=() ; ! $retry_delay_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" retry_delay)
+    rcvalue=() ; ! $retry_delay_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" retry_delay)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcvalue[0]}
 
-    rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" max_retries)
+    rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" max_retries)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && max_retries=${rcvalue[0]}
 
-    rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" docker_seconds)
+    rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && docker_seconds=${rcvalue[0]}
 
-    rcvalue=() ; ! $printer_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" printer)
+    rcvalue=() ; ! $printer_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" printer)
     (( ${#rcvalue[@]} > 0 )) && PRINTER=${rcvalue[0]}
 
-    rcvalue=() ; ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" sudo_user)
+    rcvalue=() ; ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" sudo_user)
     (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
 
     # Deal with multiple sudo_regex lines
     local rcsudo_regex
     if ! $sudo_regex_set; then
-      rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" sudo_regex)
+      rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" sudo_regex)
       for rcsudo_regex in "${rcvalue[@]}"; do
         sudo_regexes+=("$rcsudo_regex")
       done
     fi
 
-    rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" appimage_path)
+    rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" appimage_path)
     (( ${#rcvalue[@]} > 0 )) && appimage_path=${rcvalue[0]}
 
-    rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt server)
+    rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt server)
     (( ${#rcvalue[@]} > 0 )) && mqtt_server=${rcvalue[0]}
-    rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt username)
+    rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt username)
     (( ${#rcvalue[@]} > 0 )) && mqtt_username=${rcvalue[0]}
-    rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt password)
+    rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt password)
     (( ${#rcvalue[@]} > 0 )) && mqtt_password=${rcvalue[0]}
 
-    rcvalue=() ; ! $host_name_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt host_name)
+    rcvalue=() ; ! $host_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt host_name)
     [[ ${#rcvalue[@]} -gt 0 ]] && host_name=${rcvalue[0]}
-    rcvalue=() ; ! $ink_topic_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt ink_topic)
+    rcvalue=() ; ! $ink_topic_set && mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt ink_topic)
     [[ ${#rcvalue[@]} -gt 0 ]] && ink_topic=${rcvalue[0]}
-    rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" mqtt prepend_name)
+    rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt prepend_name)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^(true|false)$ ]] && prepend_name=${rcvalue[0]}
 
   fi # if [[ -n "$rcfile_contents" ]]; then
@@ -2153,7 +2171,7 @@ main() {
       sw_list=("${list#*::}")
       if [[ "$list" == "$update_list" && -n "$rcfile_contents" ]]; then
         log -d "Reading configfile for software list for ${list//\\/\\\\} (update_list)"
-        read -ra sw_list <<< "$(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
+        read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
         log -d "Setting software list to '${sw_list[*]}' for $list"
       fi
       [[ -n "$update_list" ]] && list=$update_list
@@ -2165,7 +2183,7 @@ main() {
     # If sw is a list defined in the config, load its software in sw list
     elif [[ " ${list_reserved_words[*]} " != *" $list "* && "$list" != *!!* && -n "$rcfile_contents" ]]; then
       log -d "Reading configfile for software list for ${list//\\/\\\\}"
-      read -ra sw_list <<< "$(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
+      read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
       log -d "Setting software list to '${sw_list[*]}' for $list"
       # Add check for this program if list=all
       [[ "$list" == "all" ]] && { sw_list+=("$PROGNAME") ; log -d "Adding self to all sw_list" ; }
@@ -2177,21 +2195,21 @@ main() {
     unset rcoutput_file rcoutput_mode
     if [[ -n "$rcfile_contents" && "$list" != *!!* ]]; then
       # output_mode
-      rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" output_mode)
+      rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_mode)
       (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[0]} && \
         case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
       # output_file
-      rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" output_file)
+      rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_file)
       (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[0]} && output_mode=json
       log -d "Reading ${list//\\/\\\\} config settings: output_file = '$output_file' output_mode = '$output_mode'"
 
       # prepend_name
-      rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" prepend_name)
+      rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" prepend_name)
       (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
 
       # include_invalid
-      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" include_invalid)
+      rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" include_invalid)
       (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[0]}
     fi
 
@@ -2200,7 +2218,7 @@ main() {
     if $update && [[ "$list" == docker ]]; then
       docker_seconds_local=$docker_seconds
       if [[ -n "$rcfile_contents" && "$list" != *!!* ]]; then
-        rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$list" docker_seconds)
+        rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" docker_seconds)
         (( ${#rcvalue[@]} > 0 )) && docker_seconds_local=${rcvalue[0]}
       fi
 
@@ -2268,7 +2286,7 @@ main() {
       [[ "$listname" == "$sw" ]] && unset listname
       tmp_name=$sw
 
-      rcvalue=() ; [[ -n "$rcfile_contents" && "$sw" != *!!* ]] && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${sw//\\/\\\\}" check)
+      rcvalue=() ; [[ -n "$rcfile_contents" && "$sw" != *!!* ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${sw//\\/\\\\}" check)
       (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[0]} && sw_check_set=true && \
         log -d "Read check '$sw' for $tmp_name"
       sw_orig=$sw
@@ -2348,22 +2366,22 @@ main() {
       unset rcoutput_file rcoutput_mode
       if [[ -n "$rcfile_contents" ]]; then
         # See if check is defined
-        # rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$list" check)
+        # rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" check)
         # (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[0]} && \
         #   log -d "Read check '$sw' for $sw_name"
 
         # output_mode
-        rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" output_mode)
+        rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_mode)
         (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[0]} && \
           case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
         # output_file
-        rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" output_file)
+        rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_file)
         (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[0]} && output_mode=json
         log -d "Reading $sw_name config settings: output_file = '$output_file' output_mode = '$output_mode'"
 
         # prepend_name
-        rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" prepend_name)
+        rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" prepend_name)
         (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
       fi
 
@@ -2381,15 +2399,15 @@ main() {
       if [[ -n "$rcfile_contents" ]]; then
         log -d "Reading cache_lifetime retry_delay max_retries settings from config for $sw_name"
         # Check if this version check has a setting for cache_lifetime and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" cache_lifetime)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" cache_lifetime)
         (( ${#rcvalue[@]} > 0 )) && lifetime=${rcvalue[0]}
 
         # Check if this version check has a setting for retry_delay and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" retry_delay)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" retry_delay)
         (( ${#rcvalue[@]} > 0 )) && delay=${rcvalue[0]}
 
         # Check if this version check has a setting for max_retries and use it if it does
-        rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" max_retries)
+        rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" max_retries)
         (( ${#rcvalue[@]} > 0 )) && retries=${rcvalue[0]}
       fi
 
@@ -2504,9 +2522,9 @@ main() {
 
           if [[ -n "$rcfile_contents" ]]; then
             # Read config file to see if there are specific settings for $sw
-            rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" use_sudo)
+            rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" use_sudo)
             (( ${#rcvalue[@]} > 0 )) && use_sudo=${rcvalue[0]}
-            rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" sudo_user)
+            rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" sudo_user)
             (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
           fi
 
