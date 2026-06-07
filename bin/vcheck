@@ -805,12 +805,6 @@ docker_inspect() { # check_function
 docker_logs() { # check_function
   log -d -d -d "Running: ${FUNCNAME[0]} $*"
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  if [[ -z "$COMPOSE_FILE" ]]; then
-    log -e "${FUNCNAME[1]}: COMPOSE_FILE not set"
-    [[ -n "$SUDO_USER" ]] && log -e "Check sudoers: add COMPOSE_FILE to env_keep for $LOGNAME"
-    return 1
-  fi
-  [[ ! -r "$COMPOSE_FILE" ]] && { log -e "${FUNCNAME[1]}: Cannot read compose file ($COMPOSE_FILE)" ; return 1 ; }
   (( $# == 0 )) && { log -e "You must supply docker name" ; return 1 ; }
   [[ "$1" == "-h" ]] && { log "usage: docker_logs dockername" ; return 0 ; }
 
@@ -1630,7 +1624,6 @@ usage() {
   usage_fold -s "$ss" -- "-r RETRY    x : delay between check retries for RETRY seconds (default: $retry_delay seconds)"
   usage_fold -s "$ss" -- "-P PRINTER  x : ip address for printer (for SOFTWARE == ink)"
   usage_fold -s "$ss" -- "-R REGEX   +x : a regex for commands that need sudo"
-  usage_fold -s "$ss" -- "-C COMPOSE  x : Use docker compose file COMPOSE for docker compose commands"
   usage_fold -s "$ss" -- "-S SECONDS  x : number of SECONDS for docker container updates (default: $docker_seconds seconds)"
   usage_fold -s "$ss" -- "-X FUNC       : Run check with sudo"
   usage_fold -s "$ss" -- "-x SUDOUSER x : User to run sudo command as for -X (default: none)"
@@ -1764,7 +1757,7 @@ main() {
   sudo_user_set=false
   update=false
   unset compose_file sudo_user exec_user PRINTER minver print_opt update_list
-  while getopts ":hdvqc:u:p:1w:r:P:R:C:S:X:x:L:DV:f:Fo:OtjmiTMH:INn" opt; do
+  while getopts ":hdvqc:u:p:1w:r:P:R:S:X:x:L:DV:f:Fo:OtjmiTMH:INn" opt; do
     case $opt in
       # Base options
       :) case $OPTARG in
@@ -1796,7 +1789,6 @@ main() {
          fi ;;
       P) PRINTER=$OPTARG ; printer_set=true ;;
       R) sudo_regexes+=("$OPTARG") ; sudo_regex_set=true ;;
-      C) compose_file="$OPTARG" ; compose_file_set=true ;;
       S) if [[ $OPTARG =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]]; then
            docker_seconds=$OPTARG
            docker_seconds_set=true
@@ -2385,9 +2377,6 @@ main() {
         rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" compose_file)
         (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[0]}
       fi
-
-      # Set COMPOSE_FILE if necessary
-      [[ -n "$compose_file" ]] && export COMPOSE_FILE=$compose_file
 
       # If software is "ink" but printer is not set, go to the next software
       if [[ "$sw_name" == "printer_ink_check" && -z "$PRINTER" ]]; then
