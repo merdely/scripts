@@ -1689,7 +1689,7 @@ main() {
   # Set some variables
   rcfile=$HOME/.config/"${PROGNAME}"rc
   [[ ! -r $rcfile && -r "$PROGDATA"/"${PROGNAME}"rc ]] && rcfile="$PROGDATA"/"${PROGNAME}"rc
-  list_reserved_words=(docker user cache_dir cache_lifetime retry_delay max_retries compose_file docker_seconds sudo_regex sudo_user printer)
+  list_reserved_words=(docker user cache_dir cache_lifetime retry_delay max_retries docker_seconds sudo_regex sudo_user printer)
 
   if command -v hostname > /dev/null 2>&1; then
     host_name=$(hostname)
@@ -1735,7 +1735,6 @@ main() {
   quiet=0
   appimage_path=$HOME/Applications
   cache_lifetime_set=false
-  compose_file_set=false
   docker_filter=false
   docker_seconds=30
   docker_seconds_set=false
@@ -1762,7 +1761,7 @@ main() {
   sudo_regex_set=false
   sudo_user_set=false
   update=false
-  unset compose_file sudo_user exec_user PRINTER minver print_opt update_list
+  unset sudo_user exec_user PRINTER minver print_opt update_list
   while getopts ":hdvqc:u:p:1w:r:P:R:S:X:x:L:DV:f:Fo:OtjmiTMH:INn" opt; do
     case $opt in
       # Base options
@@ -1916,9 +1915,6 @@ main() {
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" max_retries)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && max_retries=${rcvalue[0]}
 
-    rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" compose_file)
-    (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[0]}
-
     rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME" docker_seconds)
     [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && docker_seconds=${rcvalue[0]}
 
@@ -2006,7 +2002,6 @@ main() {
           echo "  cache_lifetime: minutes       $(printf '%*s' "${#PROGNAME}" " ") # defaults to $cache_lifetime"
           echo "  retry_delay: seconds          $(printf '%*s' "${#PROGNAME}" " ") # defaults to $retry_delay"
           echo "  max_retries: number           $(printf '%*s' "${#PROGNAME}" " ") # defaults to $max_retries"
-          echo "  compose_file: /home/u/compose.yml   # no default"
           echo "  docker_seconds: seconds       $(printf '%*s' "${#PROGNAME}" " ") # defaults to $docker_seconds"
           echo "  include_invalid: true/false   $(printf '%*s' "${#PROGNAME}" " ") # defaults to $include_invalid"
           echo "  sudo_regex: _latest$          $(printf '%*s' "${#PROGNAME}" " ") # no default"
@@ -2022,7 +2017,6 @@ main() {
           echo "  output_file: file"
           echo "  output_mode: text/json/mqtt"
           echo "  include_invalid: true/false"
-          echo "  compose_file: /home/u/project.yaml"
           echo
           echo "  [$PROGNAME:version_check_function_name]"
           echo "  output_file: file"
@@ -2033,7 +2027,6 @@ main() {
           echo "  cache_lifetime: minutes"
           echo "  retry_delay: seconds"
           echo "  max_retries: number"
-          echo "  compose_file: /home/u/software.yaml"
           echo
           echo "  [mqtt]"
           echo "  server: mqtt.example.com"
@@ -2108,7 +2101,6 @@ main() {
     log -d -d "[GLOBAL SETTINGS] output_file_set = '$output_file_set'"
     log -d "[GLOBAL SETTINGS] output_mode = '$output_mode'"
     log -d -d "[GLOBAL SETTINGS] output_mode_set = '$output_mode_set'"
-    log -d "[GLOBAL SETTINGS] compose_file = '$compose_file'"
     log -d "[GLOBAL SETTINGS] docker_seconds = '$docker_seconds'"
     log -d "[GLOBAL SETTINGS] retry_delay = '$retry_delay'"
     log -d "[GLOBAL SETTINGS] printer = '$PRINTER'"
@@ -2132,7 +2124,6 @@ main() {
   saved_output_mode=$output_mode
   saved_include_invalid=$include_invalid
   saved_docker_seconds=$docker_seconds
-  saved_compose_file=$compose_file
 
   local tmpstring sw_skip_vflag=() sw_auto_flags=() sw_latest=false
   local sw_name sw_check_set tmp_name sw_orig sw_tag sw_project
@@ -2146,7 +2137,6 @@ main() {
     output_mode=$saved_output_mode
     include_invalid=$saved_include_invalid
     docker_seconds=$saved_docker_seconds
-    compose_file=$saved_compose_file
     sw_list=()
 
     # If list=docker, load docker checks
@@ -2203,9 +2193,6 @@ main() {
       # include_invalid
       rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" include_invalid)
       (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[0]}
-
-      rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::${list//\\/\\\\}" compose_file)
-      (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[0]}
     fi
 
     # If -L docker was given and docker_seconds is set, only look for checks
@@ -2266,7 +2253,6 @@ main() {
       [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[$list SETTINGS] output_mode = '$output_mode'"
       [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[$list SETTINGS] include_invalid = '$include_invalid'"
       [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[$list SETTINGS] docker_seconds = '$docker_seconds'"
-      [[ "$compose_file" != "$saved_compose_file" ]] && log -d "[$list SETTINGS] compose_file = '$compose_file'"
       log -d "[$list SETTINGS] list = '${sw_list[*]}'"
       echo
     fi
@@ -2379,9 +2365,6 @@ main() {
         # prepend_name
         rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" prepend_name)
         (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
-
-        rcvalue=() ; ! $compose_file_set && mapfile -t rcvalue < <(get_config_value -s "$rcfile_contents" "$PROGNAME::$sw_name" compose_file)
-        (( ${#rcvalue[@]} > 0 )) && compose_file=${rcvalue[0]}
       fi
 
       # If software is "ink" but printer is not set, go to the next software
@@ -2437,7 +2420,6 @@ main() {
         [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] output_mode = '$output_mode'"
         [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] include_invalid = '$include_invalid'"
         [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] docker_seconds = '$docker_seconds'"
-        [[ "$compose_file" != "$saved_compose_file" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] compose_file = '$compose_file'"
         [[ "$lifetime" != "$cache_lifetime" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] lifetime = '$lifetime'"
         [[ "$delay" != "$retry_delay" ]]       && log -d "[${listname:+$listname:}$sw_name SETTINGS] delay = '$delay'"
         [[ "$retries" != "$max_retries" ]]     && log -d "[${listname:+$listname:}$sw_name SETTINGS] retries = '$retries'"
