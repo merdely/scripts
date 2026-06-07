@@ -123,7 +123,7 @@ get_config_value() { # utility_function
   # No section: variable=( $(get_config_value file key) )
   # Section:    variable=( $(get_config_value file section key) )
 
-  local opt OPTARG OPTIND=1 ltrim=1 rtrim=1 string=false
+  local opt OPTARG OPTIND=1 ltrim=1 rtrim=1
 
   # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
   local localdebug=${debug:-false} ncm=false
@@ -132,27 +132,20 @@ get_config_value() { # utility_function
   ! $ncm && shopt -u nocasematch ; unset ncm
 
   # Handle options -L and -T for preserving leading/trailing whitespace in values
-  while getopts ":sLT" opt;do case "$opt" in s)string=true;;L)ltrim=0;;T)rtrim=0;;*);;esac;done;shift $((OPTIND-1))
+  while getopts ":LT" opt;do case "$opt" in L)ltrim=0;;T)rtrim=0;;*);;esac;done;shift $((OPTIND-1))
 
   # Require at least two arguments (file and key with section being optional)
   (( $# < 2 )) && return 1
 
-  local configfile=$1 config_string="" section="" key=$2
-  if $string; then
-    config_string=$1
-  else
-    # Replace ^~ with $HOME
-    [[ "$configfile" == ~* ]] && configfile=$HOME${configfile#~}
+  local configfile=$1 section="" key=$2
+  # Replace ^~ with $HOME
+  [[ "$configfile" == ~* ]] && configfile=$HOME${configfile#~}
 
-    # Validate that configfile can be read
-    if [[ ! -r "$configfile" ]]; then
-      $localdebug && echo "Warning: Cannot read ${configfile##*/} for ${section:+[$section] }$key" >&2
-      return 1
-    fi
-    config_string=$(cat "$configfile")
+  # Validate that configfile can be read
+  if [[ ! -r "$configfile" ]]; then
+    $localdebug && echo "Warning: Cannot read ${configfile##*/} for ${section:+[$section] }$key" >&2
+    return 1
   fi
-
-  [[ -z "$config_string" ]] && { echo "Warning: Cannot read config contents" >&2 ; return 1 ; }
 
   # If 3 arguments provided
   (( $# >= 3 )) && section=$2 && key=$3
@@ -185,7 +178,7 @@ get_config_value() { # utility_function
             print ltrimmed
           }
         }
-      }' <<< "$config_string"
+      }' "$configfile"
   else
     awk -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
       {
@@ -204,7 +197,7 @@ get_config_value() { # utility_function
             print ltrimmed
           }
         }
-      }' <<< "$config_string"
+      }' "$configfile"
   fi
 }
 
@@ -1846,10 +1839,8 @@ main() {
     exit 1
   fi
 
-  local rcfile_contents
   if [[ -n "$rcfile" && -s "$rcfile" ]]; then
     log -d "Using $rcfile for configfile"
-    rcfile_contents=$(cat "$rcfile")
   fi
   if [[ ! -s "$rcfile" ]]; then
     log -d -d "Not using a config file (rcfile = '$rcfile)'"
@@ -1899,10 +1890,11 @@ main() {
   local cur_section cur_type cur_val
   while IFS='|' read -r cur_section cur_type cur_val; do
     case "$cur_section" in
-      section) section_list+=("$cur_type") ;;
+      section) section_list+=("$cur_type") ; checks=() ;;
       *) section=$cur_section
          case "$cur_type" in
            check)
+             (( ${#checks[@]} > 0 )) && log -w "Multiple checks set in $section, using last one"
              checks=("$cur_val")
              if (( ${#checks[@]} > 0 )); then
                all_checks+=("$section")
@@ -2027,7 +2019,7 @@ main() {
     "Application Version"
   )
 
-  local i=0 n=0 checks=()
+  local i=0 n=0
   if [[ -n "$print_opt" ]]; then
     case "$print_opt" in
       help)
@@ -2227,7 +2219,6 @@ main() {
     log -d -d "Defaulting software list to $list for $list"
     (( ${#sw_list[@]} == 0 )) && sw_list=("$list")
 
-    unset rcoutput_file rcoutput_mode
     if [[ -s "$rcfile" && "$list" != *!!* ]]; then
       # output_mode
       rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_mode)
@@ -2264,7 +2255,6 @@ main() {
         # reverse check back for the check name and add it to the list
         container_list=()
         for sw_list_item in "${sw_list[@]}"; do
-          echo 'mapfile -t containers < <(image_search -C '"$sw_list_item"')' >&2
           mapfile -t containers < <(image_search -C "$sw_list_item")
 
           for container in "${containers[@]}"; do
@@ -2328,6 +2318,7 @@ main() {
 
       # For dynamic/auto checks, strip off preceding 
       sw_name=$sw
+      sw_latest=false
       # sw_tag=$(grep -Po "(?<=!!)$CHECK_LIST$" <<< "$sw_name")
       sw_tag=$(sed -r "s/^.*"'!!'"$CHECK_LIST$/\1/" <<< "$sw_name")
       while [[ "$sw_name" =~ ^$CHECK_MODIFIERS ]]; do
@@ -2398,7 +2389,6 @@ main() {
 
       log -d "Processing $sw_name${listname:+ for "$listname"}"
 
-      unset rcoutput_file rcoutput_mode
       if [[ -s "$rcfile" ]]; then
         # See if check is defined
         # rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" check)
@@ -2596,8 +2586,8 @@ main() {
           if $sw_latest; then
             log -d "Writing latest update for $sw_name to cache"
             echo "$version" > "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}"
-            (( $(id -u) == 0 )) && [[ -n "$sudo_user" ]] && \
-              chown "$sudo_user":"$(id -g "$sudo_user")" "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}"
+            (( $(id -u) == 0 )) && [[ -n "$SUDO_USER" ]] && \
+              chown "$SUDO_USER":"$(id -g "$SUDO_USER")" "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}"
           fi
         fi
         # If version is set, move on
