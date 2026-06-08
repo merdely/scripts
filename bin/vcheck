@@ -2213,7 +2213,7 @@ main() {
   local sw_name="" sw_check_set="" tmp_name="" sw_orig="" sw_tag="" sw_project=""
   local docker_seconds_local=0 container_list="" containers=""
   local sw_list_item="" started_at=0 started_secs=0 now=0 stamp=0 lifetime=0 delay=0
-  local retries=0 ret=0 version"" update_time=0 use_sudo="" regex="" topic="" tmpjson=""
+  local retries=0 ret=0 version="" update_time=0 use_sudo="" regex="" topic="" tmpjson=""
 
   # Process software list
   log -d -d "Software list: ${software[*]}"
