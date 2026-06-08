@@ -420,7 +420,7 @@ sudo_exec() { # utility_function
   SUDO_EXEC=true
   export SUDO_EXEC
   # Check to see if function is in app_list
-  [[ " ${check_list[*]} ${all_checks[*]} " != *" ${1:-} "* ]] && { log -e "Invalid app_check function: ${1:-}" ; return 1 ; }
+  [[ " ${check_list[*]:-} ${all_checks[*]:-} " != *" ${1:-} "* ]] && { log -e "Invalid app_check function: ${1:-}" ; return 1 ; }
   log -d "Executing '${1:-} ${*:2} as $(id -un)" >&2
 
   # Execute check function
@@ -689,7 +689,7 @@ docker_copy() { # check_function
   fi
 
   mapfile -t files < <(compgen -G "$tmp/$catfiles")
-  log -d -d "Running: cat ${files[*]}"
+  log -d -d "Running: cat ${files[*]:-}"
   out=$(cat "${files[@]}")
   log -d -d -d -d "cat output: $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
@@ -729,7 +729,7 @@ docker_exec() { # check_function
   log -d -d "container = '$container'"
   [[ -z "$container" ]] && { log -e "Could not determine container for '${1:-}'" ; return 1 ; }
 
-  log -d -d "Executing: docker exec -u nobody $container ${command[*]}"
+  log -d -d "Executing: docker exec -u nobody $container ${command[*]:-}"
   # shellcheck disable=SC2048,SC2086
   out=$(docker exec -u nobody "$container" "${command[@]}" 2>&1)
   log -d -d "docker exec output = $out"
@@ -1037,7 +1037,7 @@ docker_tags() { # check_function
     local results=() arr=() link="" next_path=""
     while [[ -n "$page_url" ]]; do
       (( page++ ))
-      log -d -d "Running: curl --no-progress-meter -Lfo $cmdout ${curl_args[*]} ${authstring[*]} $page_url"
+      log -d -d "Running: curl --no-progress-meter -Lfo $cmdout ${curl_args[*]:-} ${authstring[*]:-} $page_url"
       code=$(curl --no-progress-meter -Lfo "$cmdout" "${curl_args[@]}" "${authstring[@]}" "$page_url") || \
         { log -e "Could not download from $site (page $page)" ; log -d -d -d "Curl output: $(cat "$cmdout")" ; break ; }
       if [[ "$code" == "401" ]]; then
@@ -1129,7 +1129,7 @@ git_checkout() { # check_function
       out=$(git -C "$dir" tag)
       log -d -d "git tag output: $out"
       ;;
-    *) echo "Unknown mode for ${FUNCNAME[*]}" ; return 1 ;;
+    *) echo "Unknown mode for ${FUNCNAME[*]:-}" ; return 1 ;;
   esac
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
   return 1
@@ -1312,7 +1312,7 @@ use_sudo_exec() { # utility_function
   local rcvalue=() regex="" rp="" out="" use_sudo=false ret=0
 
   # Loop through sudo_regexes to see if $check matches a regex to use sudo
-  for regex in "${sudo_regexes[@]}"; do
+  [[ -n "${sudo_regexes:-}" ]] && for regex in "${sudo_regexes[@]}"; do
     [[ "${FUNCNAME[1]}" =~ $regex ]] && use_sudo=true
   done
 
@@ -1320,12 +1320,12 @@ use_sudo_exec() { # utility_function
   if [[ -s "$rcfile" ]]; then
     log -d -d -d "Reading $rcfile for $PROGNAME::$check_name use_sudo setting"
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$check_name" use_sudo)
-    log -d -d -d "Config use_sudo == ${rcvalue[*]}"
-    (( ${#rcvalue[@]} > 0 )) && use_sudo=${rcvalue[0]}
+    log -d -d -d "Config use_sudo == ${rcvalue[*]:-}"
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && use_sudo=${rcvalue[0]}
     log -d -d -d "Reading $rcfile for $PROGNAME::$check_name user_user setting"
     rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$check_name" sudo_user)
-    log -d -d -d "Config sudo_user == ${rcvalue[*]}"
-    (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
+    log -d -d -d "Config sudo_user == ${rcvalue[*]:-}"
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && sudo_user=${rcvalue[0]}
   fi
 
   # Do not run as sudo_user if $sudo_user is not defined
@@ -1340,7 +1340,7 @@ use_sudo_exec() { # utility_function
     [[ "$check" == "printer_ink_check" ]] && args+=(PRINTER="$PRINTER")
     log -v -v "Using sudo as $sudo_user to $func"
     rp=$(realpath "$0")
-    log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $func ${args[*]}'"
+    log -d "[sudo] running 'sudo -n -u $sudo_user $rp -X $func ${args[*]:-}'"
     out=$(sudo -n -u "$sudo_user" "$rp" -X "$func" "${args[@]}")
     ret=$?
     # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
@@ -1499,11 +1499,11 @@ execute_check() { # utility_function
   log -d -d "project = '$project'"
   log -d -d "xmlfilter = '$xmlfilter'"
   log -d -d "prejq = '$prejqfilter'"
-  log -d -d "presed = '${presed[*]}'"
-  log -d -d "search = '${search[*]}'"
-  log -d -d "remove = '${remove[*]}'"
+  log -d -d "presed = '${presed[*]:-}'"
+  log -d -d "search = '${search[*]:-}'"
+  log -d -d "remove = '${remove[*]:-}'"
   log -d -d "postjq = '$postjqfilter'"
-  log -d -d "postsed = '${postsed[*]}'"
+  log -d -d "postsed = '${postsed[*]:-}'"
   log -d -d "skip = '$skipverfilter'"
 
   local ret=0
@@ -1566,23 +1566,23 @@ execute_check() { # utility_function
   fi
 
   # Apply presed, if set
-  [[ -n "$out" ]] && for sedstring in "${presed[@]}"; do
+  [[ -n "$out" && -n "${presed:-}" ]] && for sedstring in "${presed[@]}"; do
     log -d "Applying presed: sed -r '$sedstring'"
     out=$(sed -r "$sedstring" <<< "$out")
     log -d -d "sed output: $out"
   done
 
   # Apply search grep filter
-  if (( ${#search[@]} > 0 )); then
-    log -d "Searching for '$(IFS='|'; echo "${search[*]}")'"
-    out=$(grep -E -- "($(IFS='|'; echo "${search[*]}"))" <<< "$out")
+  if [[ -n "${search:-}" && "${#search[@]}" -gt 0 ]]; then
+    log -d "Searching for '$(IFS='|'; echo "${search[*]:-}")'"
+    out=$(grep -E -- "($(IFS='|'; echo "${search[*]:-}"))" <<< "$out")
     log -d -d -d "search grep output: $out"
   fi
 
   # Apply remove grep filter
-  if (( ${#remove[@]} > 0 )); then
-    log -d "Searching for '$(IFS='|'; echo "${remove[*]}")'"
-    out=$(echo "$out" | grep -Ev -- "($(IFS='|'; echo "${remove[*]}"))")
+  if [[ "${remove:-}" && "${#remove[@]}" -gt 0 ]]; then
+    log -d "Searching for '$(IFS='|'; echo "${remove[*]:-}")'"
+    out=$(echo "$out" | grep -Ev -- "($(IFS='|'; echo "${remove[*]:-}"))")
     log -d -d -d "remove grep output: $out"
   fi
 
@@ -1605,7 +1605,7 @@ execute_check() { # utility_function
   log -d -d "tail -n1 output = '$out'"
 
   # Apply postsed, if set
-  [[ -n "$out" ]] && for sedstring in "${postsed[@]}"; do
+  [[ -n "$out" && -n "${postsed:-}" ]] && for sedstring in "${postsed[@]}"; do
     log -d "Applying postsed: sed -r '$sedstring'"
     out=$(sed -r "$sedstring" <<< "$out")
     log -d -d "sed output: $out"
@@ -1962,8 +1962,11 @@ main() {
   local rcvalue=()
   if [[ -z "${exec_user:-}" && -s "$rcfile" ]]; then
     mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" user)
-    (( ${#rcvalue[@]} > 0 )) && exec_user=${rcvalue[0]}
+    set | grep ^rcvalue
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && exec_user=${rcvalue[0]}
   fi
+  set | grep ^rcvalue
+  echo exec_user=$exec_user
 
   # Drop privileges if running as root and $exec_user is defined
   [[ $(id -u) == 0 && -n "$exec_user" ]] && drop_privs "$exec_user" "${args_orig[@]}"
@@ -1971,22 +1974,22 @@ main() {
   # Read configuration file options
   if [[ -s "$rcfile" ]]; then
     rcvalue=(); mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
-    (( ${#rcvalue[@]} > 0 )) && cache_dir=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && cache_dir=${rcvalue[0]}
 
     rcvalue=() ; ! $cache_lifetime_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_lifetime)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && cache_lifetime=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && cache_lifetime=${rcvalue[0]}
 
     rcvalue=() ; ! $retry_delay_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" retry_delay)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^([0-9]+|\.[0-9]+|[0-9]+\.[0-9]+)$ ]] && retry_delay=${rcvalue[0]}
 
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" max_retries)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && max_retries=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && max_retries=${rcvalue[0]}
 
     rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" docker_seconds)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && docker_seconds=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^[0-9]+$ ]] && docker_seconds=${rcvalue[0]}
 
     rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" docker_user)
-    if (( ${#rcvalue[@]} > 0 )); then
+    if [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]]; then
       if id "${rcvalue[0]}" &> /dev/null; then
         docker_user=${rcvalue[0]}
       else
@@ -1995,37 +1998,37 @@ main() {
     fi
 
     rcvalue=() ; ! $printer_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" printer)
-    (( ${#rcvalue[@]} > 0 )) && PRINTER=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && PRINTER=${rcvalue[0]}
 
     rcvalue=() ; ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" sudo_user)
-    (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && sudo_user=${rcvalue[0]}
 
     # Deal with multiple sudo_regex lines
     local rcsudo_regex=""
     if ! $sudo_regex_set; then
       rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" sudo_regex)
-      for rcsudo_regex in "${rcvalue[@]}"; do
+      [[ -n "${rcvalue:-}" ]] && for rcsudo_regex in "${rcvalue[@]}"; do
         sudo_regexes+=("$rcsudo_regex")
       done
     fi
 
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" appimage_path)
-    (( ${#rcvalue[@]} > 0 )) && appimage_path=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && appimage_path=${rcvalue[0]}
 
     local mqtt_server="" mqtt_username="" mqtt_password=""
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt server)
-    (( ${#rcvalue[@]} > 0 )) && mqtt_server=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && mqtt_server=${rcvalue[0]}
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt username)
-    (( ${#rcvalue[@]} > 0 )) && mqtt_username=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && mqtt_username=${rcvalue[0]}
     rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt password)
-    (( ${#rcvalue[@]} > 0 )) && mqtt_password=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && mqtt_password=${rcvalue[0]}
 
     rcvalue=() ; ! $host_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt host_name)
-    [[ ${#rcvalue[@]} -gt 0 ]] && host_name=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && host_name=${rcvalue[0]}
     rcvalue=() ; ! $ink_topic_set && mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt ink_topic)
-    [[ ${#rcvalue[@]} -gt 0 ]] && ink_topic=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && ink_topic=${rcvalue[0]}
     rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" mqtt prepend_name)
-    [[ ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^(true|false)$ ]] && prepend_name=${rcvalue[0]}
+    [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 && ${rcvalue[0]} =~ ^(true|false)$ ]] && prepend_name=${rcvalue[0]}
 
   fi # if [[ -s "$rcfile" ]]; then
   local print_opts=(
@@ -2172,7 +2175,7 @@ main() {
 
   # Print debug info
   if (( DEBUG > 1 )); then
-    log -d "[GLOBAL SETTINGS] software list = '${software[*]}'"
+    log -d "[GLOBAL SETTINGS] software list = '${software[*]:-}'"
     log -d "[GLOBAL SETTINGS] update_list = '$update_list'"
     log -d "[GLOBAL SETTINGS] running as $(id -un)"
     log -d "[GLOBAL SETTINGS] rcfile = '$rcfile'"
@@ -2189,7 +2192,7 @@ main() {
     log -d "[GLOBAL SETTINGS] printer = '$PRINTER'"
     log -d "[GLOBAL SETTINGS] include_invalid = '$include_invalid'"
     log -d "[GLOBAL SETTINGS] force_all = '$force_all'"
-    (( ${#force_list[@]} > 0 ))     && log -d "[GLOBAL SETTINGS] force_list = '${force_list[*]}'"
+    (( ${#force_list[@]} > 0 ))     && log -d "[GLOBAL SETTINGS] force_list = '${force_list[*]:-}'"
     [[ -n "$sudo_user" ]]           && log -d "[GLOBAL SETTINGS] sudo_user = '$sudo_user'"
     (( ${#sudo_regexes[@]} > 0 ))   && printf "[DEBUG] [GLOBAL SETTINGS]" && set | grep ^sudo_regexes= >&2
     [[ -n "$mqtt_server" ]]         && log -d "[GLOBAL SETTINGS] mqtt_server = '$mqtt_server'"
@@ -2217,7 +2220,7 @@ main() {
   local retries=0 ret=0 version="" update_time=0 use_sudo="" regex="" topic="" tmpjson=""
 
   # Process software list
-  log -d -d "Software list: ${software[*]}"
+  log -d -d "Software list: ${software[*]:-}"
   for list in "${software[@]}"; do
     [[ -z "$list" ]] && continue
     prepend_name=$saved_prepend_name
@@ -2231,7 +2234,7 @@ main() {
     # If list=docker, load docker checks
     if [[ "$list" == "docker" ]]; then
       sw_list=("${docker_checks[@]}")
-      log -d "Setting software list to '${sw_list[*]}'"
+      log -d "Setting software list to '${sw_list[*]:-}'"
       if (( ${#sw_list[@]} == 0 )); then
         log "There are no docker checks"
         exit
@@ -2243,19 +2246,19 @@ main() {
       if [[ "$list" == "$update_list" && -s "$rcfile" ]]; then
         log -d "Reading configfile for software list for ${list//\\/\\\\} (update_list)"
         read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
-        log -d "Setting software list to '${sw_list[*]}' for $list"
+        log -d "Setting software list to '${sw_list[*]:-}' for $list"
       fi
       [[ -n "$update_list" ]] && list=$update_list
       list=${list%::*}
 
-      log -d "Processing an update of ${sw_list[*]} for $list"
+      log -d "Processing an update of ${sw_list[*]:-} for $list"
       update=true
 
     # If sw is a list defined in the config, load its software in sw list
-    elif [[ " ${list_reserved_words[*]} " != *" $list "* && "$list" != *!!* && -s "$rcfile" ]]; then
+    elif [[ " ${list_reserved_words[*]:-} " != *" $list "* && "$list" != *!!* && -s "$rcfile" ]]; then
       log -d "Reading configfile for software list for ${list//\\/\\\\}"
       read -ra sw_list <<< "$(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" "list" | tr '\n' ' ')"
-      log -d "Setting software list to '${sw_list[*]}' for $list"
+      log -d "Setting software list to '${sw_list[*]:-}' for $list"
       # Add check for this program if list=all
       [[ "$list" == "all" ]] && { sw_list+=("$PROGNAME") ; log -d "Adding self to all sw_list" ; }
     fi # if [[ "$list" == "docker" ]]; then
@@ -2266,24 +2269,24 @@ main() {
     if [[ -s "$rcfile" && "$list" != *!!* ]]; then
       # output_mode
       rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_mode)
-      (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[0]} && \
+      [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_mode=${rcvalue[0]} && \
         case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
       # output_file
       rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_file)
-      (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[0]} && output_mode=json
+      [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_file=${rcvalue[0]} && output_mode=json
       log -d "Reading ${list//\\/\\\\} config settings: output_file = '$output_file' output_mode = '$output_mode'"
 
       # prepend_name
       rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" prepend_name)
-      (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
+      [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && prepend_name=${rcvalue[0]}
 
       # include_invalid
       rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" include_invalid)
-      (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[0]}
+      [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && include_invalid=${rcvalue[0]}
 
       rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" docker_user)
-      if (( ${#rcvalue[@]} > 0 )); then
+      if [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]]; then
         if id "${rcvalue[0]}" &> /dev/null; then
           docker_user=${rcvalue[0]}
         else
@@ -2298,7 +2301,7 @@ main() {
       docker_seconds_local=$docker_seconds
       if [[ -s "$rcfile" && "$list" != *!!* ]]; then
         rcvalue=() ; ! $docker_seconds_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" docker_seconds)
-        (( ${#rcvalue[@]} > 0 )) && docker_seconds_local=${rcvalue[0]}
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && docker_seconds_local=${rcvalue[0]}
       fi
 
       if [[ -n "$docker_seconds_local" ]]; then
@@ -2320,21 +2323,21 @@ main() {
             log -d "Container Mode ($container): now = '$now' seconds = '$started_secs' diff = '$(( now - started_secs ))' docker_seconds_local = '$docker_seconds_local'"
             (( now - started_secs > docker_seconds_local )) && { log -d -d -d "$container not old enough" ; continue ; }
             log -d -d "Adding $container ($sw_list_item) to sw_list"
-            [[ " ${container_list[*]} " != *" $sw_list_item "* ]] && container_list+=("$sw_list_item")
+            [[ " ${container_list[*]:-} " != *" $sw_list_item "* ]] && container_list+=("$sw_list_item")
           done # for container in "${containers[@]}"; do
         done # for sw in "${sw_list[@]}"; do
-        log -d -d "container_list = '${container_list[*]}'"
+        log -d -d "container_list = '${container_list[*]:-}'"
         sw_list=("${container_list[@]}")
       fi # if [[ -n "$docker_seconds_local" ]]; then
     fi # if $update && [[ "$list" == docker ]]; then
 
     mapfile -t sw_list < <(printf '%s\n' "${sw_list[@]}" | sort -u)
-    log -d -d "Sorting software list: ${sw_list[*]}"
+    log -d -d "Sorting software list: ${sw_list[*]:-}"
 
     case "$list" in
       all)
         log -d "Applying 'all' specific settings"
-        [[ "${sw_list[*]}" == "all" ]] && log -e "'list' property not defined in [$PROGNAME:all] section of RCFILE" && exit 1
+        [[ "${sw_list[*]:-}" == "all" ]] && log -e "'list' property not defined in [$PROGNAME:all] section of RCFILE" && exit 1
         ! $prepend_name_set && prepend_name=true
         ;;
       latest)
@@ -2350,7 +2353,7 @@ main() {
       [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[$list SETTINGS] include_invalid = '$include_invalid'"
       [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[$list SETTINGS] docker_seconds = '$docker_seconds'"
       [[ "$docker_user" != "$saved_docker_user" ]] && log -d "[$list SETTINGS] docker_user = '$docker_user'"
-      log -d "[$list SETTINGS] list = '${sw_list[*]}'"
+      log -d "[$list SETTINGS] list = '${sw_list[*]:-}'"
       echo
     fi
 
@@ -2366,7 +2369,7 @@ main() {
       tmp_name=$sw
 
       rcvalue=() ; [[ -s "$rcfile" && "$sw" != *!!* ]] && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${sw//\\/\\\\}" check)
-      (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[0]} && sw_check_set=true && \
+      [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && sw=${rcvalue[0]} && sw_check_set=true && \
         log -d "Read check '$sw' for $tmp_name"
       sw_orig=$sw
 
@@ -2437,8 +2440,8 @@ main() {
       log -d -d "sw_latest = '$sw_latest'"
       log -d -d "sw_tag = '$sw_tag'"
       log -d -d "sw_project = '$sw_project'"
-      log -d -d "sw_skip_vflag = '${sw_skip_vflag[*]}'"
-      log -d -d "sw_auto_flags = '${sw_auto_flags[*]}'"
+      log -d -d "sw_skip_vflag = '${sw_skip_vflag[*]:-}'"
+      log -d -d "sw_auto_flags = '${sw_auto_flags[*]:-}'"
       log -d -d "sw_orig = '$sw_orig'"
 
       log -d "Processing $sw_name${listname:+ for "$listname"}"
@@ -2446,29 +2449,29 @@ main() {
       if [[ -s "$rcfile" ]]; then
         # See if check is defined
         # rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" check)
-        # (( ${#rcvalue[@]} > 0 )) && sw=${rcvalue[0]} && \
+        # [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && sw=${rcvalue[0]} && \
         #   log -d "Read check '$sw' for $sw_name"
 
         # output_mode
         rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_mode)
-        (( ${#rcvalue[@]} > 0 )) && output_mode=${rcvalue[0]} && \
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_mode=${rcvalue[0]} && \
           case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
         # output_file
         rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_file)
-        (( ${#rcvalue[@]} > 0 )) && output_file=${rcvalue[0]} && output_mode=json
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_file=${rcvalue[0]} && output_mode=json
         log -d "Reading $sw_name config settings: output_file = '$output_file' output_mode = '$output_mode'"
 
         # prepend_name
         rcvalue=() ; ! $prepend_name_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" prepend_name)
-        (( ${#rcvalue[@]} > 0 )) && prepend_name=${rcvalue[0]}
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && prepend_name=${rcvalue[0]}
 
         # include_invalid
         rcvalue=() ; ! $include_invalid_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" include_invalid)
-        (( ${#rcvalue[@]} > 0 )) && include_invalid=${rcvalue[0]}
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && include_invalid=${rcvalue[0]}
 
         rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" docker_user)
-        if (( ${#rcvalue[@]} > 0 )); then
+        if [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]]; then
           if id "${rcvalue[0]}" &> /dev/null; then
             docker_user=${rcvalue[0]}
           else
@@ -2492,15 +2495,15 @@ main() {
         log -d "Reading cache_lifetime retry_delay max_retries settings from config for $sw_name"
         # Check if this version check has a setting for cache_lifetime and use it if it does
         rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" cache_lifetime)
-        (( ${#rcvalue[@]} > 0 )) && lifetime=${rcvalue[0]}
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && lifetime=${rcvalue[0]}
 
         # Check if this version check has a setting for retry_delay and use it if it does
         rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" retry_delay)
-        (( ${#rcvalue[@]} > 0 )) && delay=${rcvalue[0]}
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && delay=${rcvalue[0]}
 
         # Check if this version check has a setting for max_retries and use it if it does
         rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" max_retries)
-        (( ${#rcvalue[@]} > 0 )) && retries=${rcvalue[0]}
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && retries=${rcvalue[0]}
       fi
 
       # If printonly mode, add to list and continue to next
@@ -2579,14 +2582,14 @@ main() {
         log -d -d -d "sw_latest = '$sw_latest' (looking for true)"
         log -d -d -d "force_all = '$force_all' (looking for false)"
         log -d -d -d "id -u = '$(id -u)' (looking for != 0)"
-        log -d -d -d "force_list = '${force_list[*]}'"
+        log -d -d -d "force_list = '${force_list[*]:-}'"
         log -d -d -d "sw_name = '$sw_name' (should not be in force_list)"
         log -d -d -d "sw = '$sw' (should not be in force_list)"
         log -d -d -d "cache_file = '$cache_dir"/"${sw_name//\//__}${minver:+_$minver}' (should be readable)"
         # If -f and -F not used, user is not root, sw IS a latest check, and 
         # cache_file is readable, read the cache file if not stale
         if $sw_latest && ! $force_all && [[ $(id -u) != 0 && \
-          " ${force_list[*]} " != *" $sw_name "* && " ${force_list[*]} " != *" $sw "* && \
+          " ${force_list[*]:-} " != *" $sw_name "* && " ${force_list[*]:-} " != *" $sw "* && \
             -r "$cache_dir"/"${sw_name//\//__}${minver:+_$minver}" ]]; then
 
           log -d "Using cache for $sw_name"
@@ -2604,11 +2607,11 @@ main() {
         else
           log -d "Not using cache for $sw_name"
           (( DEBUG > 0 )) && $force_all && log -d "Forced update"
-          (( DEBUG > 0 )) && [[ " ${force_list[*]} " == *" $sw "* ]] && log -d "Forced update"
+          (( DEBUG > 0 )) && [[ " ${force_list[*]:-} " == *" $sw "* ]] && log -d "Forced update"
 
           use_sudo=false
           # Loop through sudo_regexes to see if $sw_name matches a regex to use sudo
-          for regex in "${sudo_regexes[@]}"; do
+          [[ -n "${sudo_regexes:-}" ]] && for regex in "${sudo_regexes[@]}"; do
             [[ "$sw_name" =~ $regex ]] && use_sudo=true
           done
           log -d -d "Checking to see if $sw should be run with sudo (use_sudo = '$use_sudo)'"
@@ -2616,9 +2619,9 @@ main() {
           if [[ -s "$rcfile" ]]; then
             # Read config file to see if there are specific settings for $sw
             rcvalue=() ; mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" use_sudo)
-            (( ${#rcvalue[@]} > 0 )) && use_sudo=${rcvalue[0]}
+            [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && use_sudo=${rcvalue[0]}
             rcvalue=() ; $use_sudo && ! $sudo_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" sudo_user)
-            (( ${#rcvalue[@]} > 0 )) && sudo_user=${rcvalue[0]}
+            [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && sudo_user=${rcvalue[0]}
           fi
 
           ## EXECUTE CHECK
@@ -2630,9 +2633,10 @@ main() {
 
           # If check not run as sudo_user, run normally
           if [[ -z "$version" ]]; then
-            log -d -d "Running 'execute_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]} ${sw_auto_flags[*]}$sw_name' to get version"
+            log -d -d "Running 'execute_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]:-} ${sw_auto_flags[*]:-}$sw_name' to get version"
+            set | grep ^sw_auto_flags >&2
             version=$(execute_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" \
-              "${sw_auto_flags[@]}" "$sw_name")
+              "${sw_auto_flags[@]:-}" "$sw_name")
 
             ret=$?
           fi
@@ -2671,7 +2675,7 @@ main() {
       version=${version#V}
 
       # Append _latest to the end of sw_name for latest checks
-      $sw_latest && sw_name=${sw_name}_latest
+      $sw_latest && sw_name+=_latest
 
       # Prepare Output
       log -d "${listname:+$listname:}$sw_name printing $output_mode to $output_file"
@@ -2701,7 +2705,7 @@ main() {
           prepend_name=false
         fi
 
-        if ! $prepend_name_set && [[ " ${app_checks[*]} " == *" $sw "* ]]; then
+        if ! $prepend_name_set && [[ " ${app_checks[*]:-} " == *" $sw "* ]]; then
           prepend_name=true
         fi
 
