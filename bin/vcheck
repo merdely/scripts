@@ -386,7 +386,7 @@ print_list() { # utility_function
 
 # Strip check modifiers from a check string
 strip_modifiers() { # utility_function
-  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  log -d -d -d -d "Running: ${FUNCNAME[0]} $*"
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   [[ "${1:-}" == "-h" ]] && { log "usage: ${FUNCNAME[0]} check_string" ; return 0 ; }
   local check=${1:-}
@@ -1511,36 +1511,37 @@ execute_check() { # utility_function
   [[ "$tag" =~ (aur|docker_inspect|docker_inspect_image|pacman) ]] && skipverfilter=true
 
   case "$tag" in
-    # alpine_docker) out=$(alpine_docker_package "$project") ; ret=$? ;;
-    alpine_repo)     out=$(alpine_repo_package "$project") ; ret=$? ;;
-    appimage)        out=$(appimage_check "$project") ; ret=$? ;;
-    aur)             out=$(os_package -A "$project") ; ret=$? ;;
-    cat)             check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
-    codeberg)        out=$(scm_project -c "$project") ; ret=$? ;;
-    codeberg_tags)   out=$(scm_project -T -c "$project") ; ret=$? ;;
-    command)         out=$(command_check "$project") ; ret=$? ;;
-    curl)            out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
-    curlapi)         out=$(curl_api "$project") ; ret=$? ;;
-    docker_copy)     out=$(docker_copy "$project") ; ret=$? ;;
-    docker_exec)     out=$(docker_exec "$project") ; ret=$? ;;
-    docker_inspect)  out=$(docker_inspect "$project") ; ret=$? ;;
-    docker_logs)     out=$(docker_logs "$project") ; ret=$? ;;
-    docker_printenv) out=$(docker_printenv "$project") ; ret=$? ;;
-    docker_tags)     out=$(docker_tags "$project") ; ret=$? ;;
-    flatpak)         out=$(os_package -F "$project") ; ret=$? ;;
-    flathub)         out=$(flathub_app "$project") ; ret=$? ;;
-    forgejo)         out=$(scm_project -f "$project") ; ret=$? ;;
-    forgejo_tags)    out=$(scm_project -T -f "$project") ; ret=$? ;;
-    gitdescribe)     out=$(git_checkout -d "$project") ; ret=$? ;;
-    gittags)         out=$(git_checkout -t "$project") ; ret=$? ;;
-    gitea)           out=$(scm_project -t "$project") ; ret=$? ;;
-    gitea_tags)      out=$(scm_project -T -t "$project") ; ret=$? ;;
-    github)          out=$(scm_project -g "$project") ; ret=$? ;;
-    github_tags)     out=$(scm_project -T -g "$project") ; ret=$? ;;
-    gitlab)          out=$(scm_project -l "$project") ; ret=$? ;;
-    gitlab_tags)     out=$(scm_project -T -l "$project") ; ret=$? ;;
-    pacman)          out=$(os_package -a "$project") ; ret=$? ;;
-    "$PROGNAME")     out=$("$PROGNAME") ; ret=$? ;;
+    # alpine_docker)     out=$(alpine_docker_package "$project") ; ret=$? ;;
+    alpine_repo)       out=$(alpine_repo_package "$project") ; ret=$? ;;
+    appimage)          out=$(appimage_check "$project") ; ret=$? ;;
+    aur)               out=$(os_package -A "$project") ; ret=$? ;;
+    cat)               check_prog envsubst && out=$(cat "$(envsubst <<< "$project")" 2> /dev/null) ; ret=$? ;;
+    codeberg)          out=$(scm_project -c "$project") ; ret=$? ;;
+    codeberg_tags)     out=$(scm_project -T -c "$project") ; ret=$? ;;
+    command)           out=$(command_check "$project") ; ret=$? ;;
+    curl)              out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
+    curlapi)           out=$(curl_api "$project") ; ret=$? ;;
+    docker_copy)       out=$(docker_copy "$project") ; ret=$? ;;
+    docker_exec)       out=$(docker_exec "$project") ; ret=$? ;;
+    docker_inspect)    out=$(docker_inspect "$project") ; ret=$? ;;
+    docker_logs)       out=$(docker_logs "$project") ; ret=$? ;;
+    docker_printenv)   out=$(docker_printenv "$project") ; ret=$? ;;
+    docker_tags)       out=$(docker_tags "$project") ; ret=$? ;;
+    flatpak)           out=$(os_package -F "$project") ; ret=$? ;;
+    flathub)           out=$(flathub_app "$project") ; ret=$? ;;
+    forgejo)           out=$(scm_project -f "$project") ; ret=$? ;;
+    forgejo_tags)      out=$(scm_project -T -f "$project") ; ret=$? ;;
+    gitdescribe)       out=$(git_checkout -d "$project") ; ret=$? ;;
+    gittags)           out=$(git_checkout -t "$project") ; ret=$? ;;
+    gitea)             out=$(scm_project -t "$project") ; ret=$? ;;
+    gitea_tags)        out=$(scm_project -T -t "$project") ; ret=$? ;;
+    github)            out=$(scm_project -g "$project") ; ret=$? ;;
+    github_tags)       out=$(scm_project -T -g "$project") ; ret=$? ;;
+    gitlab)            out=$(scm_project -l "$project") ; ret=$? ;;
+    gitlab_tags)       out=$(scm_project -T -l "$project") ; ret=$? ;;
+    pacman)            out=$(os_package -a "$project") ; ret=$? ;;
+    printer_ink_check) printer_ink_check ; return ;;
+    "$PROGNAME")       out=$("$PROGNAME") ; ret=$? ;;
     *)
       log -e "Unknown package check: $tag"
       return 1 ;;
@@ -2672,6 +2673,7 @@ main() {
       # Prepare Output
       log -d "${listname:+$listname:}$sw_name printing $output_mode to $output_file"
 
+      local out=""
       # Output text immediately and go to next software
       if (( QUIET == 0 )) && [[ "$output_mode" == "text" || "$output_file" != "/dev/stdout" ]]; then
         if [[ "$sw_name" == "printer_ink_check" ]]; then
