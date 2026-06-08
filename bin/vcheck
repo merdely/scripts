@@ -2670,6 +2670,9 @@ main() {
       version=${version#v}
       version=${version#V}
 
+      # Append _latest to the end of sw_name for latest checks
+      $sw_latest && sw_name=${sw_name}_latest
+
       # Prepare Output
       log -d "${listname:+$listname:}$sw_name printing $output_mode to $output_file"
 
