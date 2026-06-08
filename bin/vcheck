@@ -1962,11 +1962,8 @@ main() {
   local rcvalue=()
   if [[ -z "${exec_user:-}" && -s "$rcfile" ]]; then
     mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" user)
-    set | grep ^rcvalue
     [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && exec_user=${rcvalue[0]}
   fi
-  set | grep ^rcvalue
-  echo exec_user=$exec_user
 
   # Drop privileges if running as root and $exec_user is defined
   [[ $(id -u) == 0 && -n "$exec_user" ]] && drop_privs "$exec_user" "${args_orig[@]}"
@@ -2634,7 +2631,6 @@ main() {
           # If check not run as sudo_user, run normally
           if [[ -z "$version" ]]; then
             log -d -d "Running 'execute_check -p $sw_project -t $sw_tag ${sw_skip_vflag[*]:-} ${sw_auto_flags[*]:-}$sw_name' to get version"
-            set | grep ^sw_auto_flags >&2
             version=$(execute_check -p "$sw_project" -t "$sw_tag" "${sw_skip_vflag[@]}" \
               "${sw_auto_flags[@]:-}" "$sw_name")
 
