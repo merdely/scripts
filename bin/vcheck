@@ -1163,7 +1163,7 @@ os_package() { # check_function
           /^_subver=/ { subver = $2 }
           /^_extver=/ { extver = $2 }
           /^_pkgver=/ { pkgver = $2 }
-          /^pkgver=/ && ! $2 ~ /\${?_pkgver/ { pkgver = $2 }
+          /^pkgver=/ && $2 !~ /\${?_pkgver/ { pkgver = $2 }
           /^pkgrel=/ { pkgrel = $2 }
         END {
           if (major != "" && subver != "")
