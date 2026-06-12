@@ -1200,7 +1200,7 @@ pacman_repo() { # check_function
   local pkg=${1:-} out=""
 
   check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
-  out=$(pacman -Ss "^$pkg$" 2> /dev/null)
+  out=$(pacman -Ss "^${pkg//+/\\+}$" 2> /dev/null)
   log -d -d -d "pacman output: $out"
   out=$(awk '{print $2;exit}' <<< "$out")
   log -d -d -d "awk output: $out"
