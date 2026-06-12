@@ -1159,18 +1159,18 @@ os_package() { # check_function
       curl --no-progress-meter -Lo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
       log -d -d -d "Curl output: $(cat "$out")"
       [[ -s "$out" ]] && out=$(awk -F= '
-          /^_major=/ { m = $2 }
-          /^_subver=/ { s = $2 }
-          /^pkgver=/ { pv = $2 }
-          /^pkgrel=/ { pr = $2 }
+          /^_major=/ { major = $2 }
+          /^_subver=/ { subver = $2 }
+          /^pkgver=/ { pkgver = $2 }
+          /^pkgrel=/ { pkgrel = $2 }
         END {
-          if (m != "" && s != "")
-            o=sprintf("%s.%s-%s\n",m,s,pr)
-          else if (pv != "")
-            o=sprintf("%s-%s\n",pv,pr)
-          gsub(/"/,"",o)
-          print o
-        }' "$out")
+          if (major != "" && subver != "")
+            out=sprintf("%s.%s-%s\n",major,subver,pkgrel)
+          else if (pkgver != "")
+            out=sprintf("%s-%s\n",pkgver,pkgrel)
+          gsub(/"/,"",out)
+          print out
+        }' "$out" | sed "s/'//g")
       log -d -d -d "awk output: $out"
       ;;
     flatpak)
