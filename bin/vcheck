@@ -1161,7 +1161,8 @@ os_package() { # check_function
       [[ -s "$out" ]] && out=$(awk -F= '
           /^_major=/ { major = $2 }
           /^_subver=/ { subver = $2 }
-          /^pkgver=/ { pkgver = $2 }
+          /^_pkgver=/ { pkgver = $2 }
+          /^pkgver=/ && ! $2 ~ /\${?_pkgver/ { pkgver = $2 }
           /^pkgrel=/ { pkgrel = $2 }
         END {
           if (major != "" && subver != "")
