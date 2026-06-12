@@ -1161,12 +1161,15 @@ os_package() { # check_function
       [[ -s "$out" ]] && out=$(awk -F= '
           /^_major=/ { major = $2 }
           /^_subver=/ { subver = $2 }
+          /^_extver=/ { extver = $2 }
           /^_pkgver=/ { pkgver = $2 }
           /^pkgver=/ && ! $2 ~ /\${?_pkgver/ { pkgver = $2 }
           /^pkgrel=/ { pkgrel = $2 }
         END {
           if (major != "" && subver != "")
             out=sprintf("%s.%s-%s\n",major,subver,pkgrel)
+          else if (pkgver != "" && extver != "")
+            out=sprintf("%s%s-%s\n",pkgver,extver,pkgrel)
           else if (pkgver != "")
             out=sprintf("%s-%s\n",pkgver,pkgrel)
           gsub(/"/,"",out)
