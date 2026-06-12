@@ -41,7 +41,7 @@ export SEMVER_REGEX
 
 # TODO automate this similar to how _latest was done before
 # Define list of check types
-CHECK_LIST='(alpine_repo|appimage|aur|cat|codeberg|codeberg_tags|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|forgejo_tags|gitdescribe|gitea|gitea_tags|gittags|github|github_tags|gitlab|gitlab_tags|pacman)(_latest)?'
+CHECK_LIST='(alpine_repo|appimage|aur|cat|codeberg|codeberg_tags|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|forgejo_tags|gitdescribe|gitea|gitea_tags|gittags|github|github_tags|gitlab|gitlab_tags|pacman|pacman_repo)(_latest)?'
 CHECK_MODIFIERS='(prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter)'
 export CHECK_LIST CHECK_MODIFIERS
 
@@ -1154,32 +1154,24 @@ os_package() { # check_function
 
   case "$pkgtype" in
     aur)
-      if command -v aur &> /dev/null; then
-        log -d -d "Using aur command for $pkg"
-        out=$(aur query -t info "$pkg")
-        log -d -d -d "aur query output: $out"
-        out=$(jq -rn --argjson j "$out" '$j.results[].Version' 2> /dev/null)
-        log -d -d -d "jq output: $out"
-      else
-        log -d -d "Using curl/awk via github for $pkg"
-        out=$(maketemp)
-        curl --no-progress-meter -Lo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
-        log -d -d -d "Curl output: $(cat "$out")"
-        [[ -s "$out" ]] && out=$(awk -F= '
-            /^_major=/ { m = $2 }
-            /^_subver=/ { s = $2 }
-            /^pkgver=/ { pv = $2 }
-            /^pkgrel=/ { pr = $2 }
-          END {
-            if (m != "" && s != "")
-              o=sprintf("%s.%s-%s\n",m,s,pr)
-            else if (pv != "")
-              o=sprintf("%s-%s\n",pv,pr)
-            gsub(/"/,"",o)
-            print o
-          }' "$out")
-        log -d -d -d "awk output: $out"
-      fi
+      log -d -d "Using curl/awk via github for $pkg"
+      out=$(maketemp)
+      curl --no-progress-meter -Lo "$out" "https://raw.githubusercontent.com/archlinux/aur/refs/heads/$pkg/PKGBUILD"
+      log -d -d -d "Curl output: $(cat "$out")"
+      [[ -s "$out" ]] && out=$(awk -F= '
+          /^_major=/ { m = $2 }
+          /^_subver=/ { s = $2 }
+          /^pkgver=/ { pv = $2 }
+          /^pkgrel=/ { pr = $2 }
+        END {
+          if (m != "" && s != "")
+            o=sprintf("%s.%s-%s\n",m,s,pr)
+          else if (pv != "")
+            o=sprintf("%s-%s\n",pv,pr)
+          gsub(/"/,"",o)
+          print o
+        }' "$out")
+      log -d -d -d "awk output: $out"
       ;;
     flatpak)
       out=$(flatpak list --columns=application,version)
@@ -1196,6 +1188,21 @@ os_package() { # check_function
       ;;
     *) log -e "Invalid package type ($pkgtype)" ; return 1 ;;
   esac
+  log -d -d -d "awk output: $out"
+  [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
+  return 1
+}
+
+# Get version information for an pacman package from the repo
+pacman_repo() { # check_function
+  log -d -d -d "Running: ${FUNCNAME[0]} $*"
+  (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
+  local pkg=${1:-} out=""
+
+  check_prog pacman "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
+  out=$(pacman -Ss "^$pkg$" 2> /dev/null)
+  log -d -d -d "pacman output: $out"
+  out=$(awk '{print $2;exit}' <<< "$out")
   log -d -d -d "awk output: $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
   return 1
@@ -1540,6 +1547,7 @@ execute_check() { # utility_function
     gitlab)            out=$(scm_project -l "$project") ; ret=$? ;;
     gitlab_tags)       out=$(scm_project -T -l "$project") ; ret=$? ;;
     pacman)            out=$(os_package -a "$project") ; ret=$? ;;
+    pacman_repo)       out=$(pacman_repo "$project") ; ret=$? ;;
     printer_ink_check) printer_ink_check ; return ;;
     "$PROGNAME")       out=$("$PROGNAME") ; ret=$? ;;
     *)
@@ -1720,7 +1728,7 @@ main() {
 
   # App Lists
   local all_checks=() app_checks=() docker_checks=() latest_checks=() non_auto_latest_checks=()
-  local check_list=() utility_list=()
+  local function_list=() check_list=() utility_list=() tmpstring=""
   mapfile -t app_checks < <(awk '
     /^[^#].+[(]) {[[:space:]]+#[[:space:]]*app_check_function/ {
       gsub(/\(\)/,"",$1)
@@ -1728,11 +1736,13 @@ main() {
     }' "${SOURCED_LIBS[@]}")
   app_checks+=("$PROGNAME")
   all_checks+=("${app_checks[@]}")
-  mapfile -t check_list < <(awk '
+  mapfile -t function_list < <(awk '
     /^[^#].+[(]) {[[:space:]]+#[[:space:]]*check_function/ {
       gsub(/\(\)/,"",$1)
       print $1
     }' "${SOURCED_LIBS[@]}")
+  tmpstring=${CHECK_LIST%)(_latest)?}
+  IFS='|' read -ra check_list <<< "${tmpstring#(}"
   mapfile -t utility_list < <(awk '
     /^[^#].+[(]) {[[:space:]]+#[[:space:]]*utility_function/ {
       gsub(/\(\)/,"",$1)
@@ -2062,7 +2072,8 @@ main() {
           exit ;;
         # print_list "$print_single" -l "Available print options" "${print_opts[@]}" ; exit ;;
       a*) print_list "$print_single" -l "Application Version Checks" "${app_checks[@]}" ; exit ;;
-      c*) print_list "$print_single" -l "Check Functions" "${check_list[@]}" ; exit ;;
+      c*) print_list "$print_single" -l "Checks" "${check_list[@]}" ; exit ;;
+      f*) print_list "$print_single" -l "Check Functions" "${function_list[@]}" ; exit ;;
       l*) print_list "$print_single" -l "Latest Application Version Checks" "${latest_checks[@]}" ; exit ;;
       n*) print_list "$print_single" -l "Non-Automatic Latest Application Version Checks" "${non_auto_latest_checks[@]}" ; exit ;;
       d*) print_list "$print_single" -l "Docker Checks" "${docker_checks[@]}"
@@ -2210,7 +2221,7 @@ main() {
   local saved_docker_user=$docker_user
 
   local list="" sw="" sw_list="" listname="" rcvalue=()
-  local tmpstring="" sw_skip_vflag=() sw_auto_flags=() sw_latest=false
+  local sw_skip_vflag=() sw_auto_flags=() sw_latest=false
   local sw_name="" sw_check_set="" tmp_name="" sw_orig="" sw_tag="" sw_project=""
   local docker_seconds_local=0 container_list="" containers=""
   local sw_list_item="" started_at=0 started_secs=0 now=0 stamp=0 lifetime=0 delay=0
