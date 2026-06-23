@@ -21,7 +21,7 @@ usage() {
 
 htmlmode=false
 listmode=false
-while getopts ":hlgi" opt; do
+while getopts ":hlgi:" opt; do
   case $opt in
     g) htmlmode=true;;
     l) listmode=true;;
