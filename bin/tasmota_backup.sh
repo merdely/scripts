@@ -5,10 +5,13 @@ progname=${progname%.sh}
 inifile=$HOME/.config/tasmotarc
 
 usage() {
-  echo "usage: $progname [-h] [-g|-l] [-i INIFILE]"
+  echo "usage: $progname [Options]"
+  echo "Options:"
   echo "  -h         : print this help text"
+  echo "  -b         : perform backup (default mode)"
   echo "  -g         : create html page with devices and links"
   echo "  -l         : list tasmota devices"
+  echo "  -L         : list tasmota devices with: name,ip,template,is-out-of-date,version"
   echo "  -i INIFILE : path to tasmota config file (ini format)"
   echo "Example INIFILE:"
   echo "    [tasmota]"
@@ -19,12 +22,13 @@ usage() {
   exit
 }
 
-htmlmode=false
-listmode=false
-while getopts ":hlgi:" opt; do
+mode=backup
+while getopts ":hblLgi:" opt; do
   case $opt in
-    g) htmlmode=true;;
-    l) listmode=true;;
+    b) mode=backup ;;
+    g) mode=html ;;
+    l) mode=list ;;
+    L) mode=listextended ;;
     i)
        if [ -r "$OPTARG" ]; then
          inifile=$OPTARG
@@ -33,15 +37,10 @@ while getopts ":hlgi:" opt; do
          exit 1
        fi
        ;;
-    *) usage;;
+    *) usage ;;
   esac
 done
 shift $((OPTIND -1))
-
-if $htmlmode && $listmode; then
-  echo "Error: One of -g and -l can be used" >&2
-  exit 1
-fi
 
 libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
 PATH="$libpath" . _config 2> /dev/null || { echo "Error: Cannot load _config library" >&2; exit 1; }
@@ -132,6 +131,7 @@ IFS="|"
 names=()
 ips=()
 versions=()
+templates=()
 failures=()
 ood=()
 total=0
@@ -142,32 +142,39 @@ for device in $tasmota_devices; do
   name=$(echo $device|cut -d, -f1)
   ip=$(echo $device|cut -d, -f2)
   ip=${ip% }
-  if [ -z "$name" ] || [ "$name" = "$ip" ]; then
-    out=$(curl -sLu admin:$tasmota_pass "http://$ip/cm?cmnd=DeviceName" 2>&1 | jq -r .DeviceName 2> /dev/null)
-    [ -n "$out" ] && [ "$out" != null ] && name=$out
+
+  status_json=$(curl -sLu admin:$tasmota_pass "http://$ip/cm?cmnd=STATUS%200")
+  if [[ -z "$status_json" ]] || ! jq -n --argjson j "$status_json" '$j' &> /dev/null; then
+    echo "Error: Could not get Status Info for $name via http" && failures+=($name) && continue
   fi
+
+  out=$(jq -rn --argjson j "$status_json" '$j.Status.DeviceName' 2> /dev/null)
+  [ -n "$out" ] && [ "$out" != null ] && name=$out
+
+  # Get Template
+  out=$(curl -sLu admin:$tasmota_pass "http://$ip/cm?cmnd=Template" 2>&1 | jq -r '.NAME' 2> /dev/null)
+  [ -n "$out" ] && [ "$out" != null ] && template=$out
+
+
   dirname=$(echo $name|sed 's/ /_/g')
   [ ${#name} -gt $long ] && long=${#name}
   [ $ip = unavailable ] && failures+=($name) && continue
 
   # Get Firmware Version
-  if ! $htmlmode; then
-    out=$(curl -sLu admin:$tasmota_pass "http://$ip/cm?cmnd=STATUS%202")
-    ! echo "$out" | grep -q "StatusFWR" && echo "Error: Could not get StatusFWR for $name via http" && failures+=($name) && continue
-    version=$(echo $out | jq -r '.StatusFWR.Version' | sed 's/(/_/;s/)//')
-  fi
+  version=$(jq -rn --argjson j "$status_json" '$j.StatusFWR.Version' | sed 's/(/_/;s/)//')
 
   [ "v${version%_release*}" != "$tasmota_version" ] && ood+=("$name")
   names+=($name)
   ips+=($ip)
-  $htmlmode && continue
-  versions+=($version)
+  versions+=("$version")
+  templates+=("$template")
+  [[ "$mode" == html ]] && continue
 
-  if ! $listmode && ! $htmlmode; then
+  if [[ "$mode" == backup ]]; then
     # Get MAC Address
     out=$(curl -sLu admin:$tasmota_pass "http://$ip/cm?cmnd=STATUS%205")
     ! echo "$out" | grep -q "StatusNET" && echo "Error: Could not get StatusNET for $name via http" && failures+=($name) && continue
-    mac=$(echo $out | jq -r '.StatusNET.Mac' | sed 's/://g')
+    mac=$(jq -rn --argjson j "$status_json" '$j.StatusNET.Mac' 2> /dev/null | tr -d :)
 
     filename=$(date "+$mac-%F_%H_%M_%S_$version.dmp")
     mkdir -p $backups/$dirname
@@ -183,7 +190,7 @@ for device in $tasmota_devices; do
 done
 IFS=$OIFS
 
-if ! $listmode && ! $htmlmode; then
+if [[ "$mode" == backup ]]; then
   echo
   echo SUMMARY:
   echo --------
@@ -199,7 +206,7 @@ if ! $listmode && ! $htmlmode; then
     IFS=$OIFS
   fi
 else
-  if $htmlmode; then
+  if [[ "$mode" == html ]]; then
     cat <<-EOF
     <html>
     <head>
@@ -260,8 +267,12 @@ EOF
   fi
   one_printed=false
   for i in $(seq 0 $((${#names[@]}-1))); do
-    if $htmlmode; then
+    if [[ "$mode" == html ]]; then
       printf "  <li><a href='http://%s/'>%-${long}s</a>\n" "${ips[$i]}" "${names[$i]}"
+    elif [[ "$mode" == listextended ]]; then
+      ood=false
+      [ "v${versions[$i]%_release*}" != "$tasmota_version" ] && ood=true
+      echo "${names[$i]},${ips[$i]},${templates[$i]},$ood,v${versions[$i]%_release*}"
     else
       if ! $one_printed; then
         echo "Tasmota Devices (${#names[@]}):"
@@ -274,27 +285,27 @@ EOF
       printf "  - %-${long}s : %s%s\n" "${names[$i]}" "${versions[$i]}" "$vtag"
     fi
   done
-  if $htmlmode; then
+  if [[ "$mode" == html ]]; then
     echo "</ul>"
   fi
   if [ ${#failures[@]} -gt 0 ]; then
     OIFS=$IFS
     IFS=,
-    if $htmlmode; then
+    if [[ "$mode" == html ]]; then
       echo "<p>Could not connect to: ${failures[*]}</p>"
     else
       echo "Could not connect to: ${failures[*]}" >&2
     fi
     IFS=$OIFS
   fi
-  if $htmlmode; then
+  if [[ "$mode" == html ]]; then
     echo "<p>Previous <a href="list.php">Device List Pages</p>"
     echo "</body>"
     echo "</html>"
   fi
 fi
 
-if ! $htmlmode; then
+if [[ "$mode" != listextended ]]; then
   echo "Most recent Tasmota release: $tasmota_version"
   if [ ${#ood[@]} -gt 0 ]; then
     OIFS=$IFS
@@ -302,7 +313,7 @@ if ! $htmlmode; then
     list="${ood[*]}"
     IFS=$OIFS
     list="${list//,/, }"
-    if $htmlmode; then
+    if [[ "$mode" == html ]]; then
       echo "<p>Most recent Tasmota release: $tasmota_version<br />"
       echo "Device that need updates: $list</p>"
     else
