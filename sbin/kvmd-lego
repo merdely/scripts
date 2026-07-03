@@ -1,0 +1,153 @@
+#!/bin/bash
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#    Copyright (C) 2026       Michael Erdely <mike@erdelynet.com>            #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
+
+
+set -e
+export LC_ALL=C
+
+user=kvmd-certbot
+conf_dir=/etc/lego
+pst_dir=/var/lib/kvmd/pst/data
+data_dir="$pst_dir/lego"
+ssl_dir="$pst_dir/ssl"
+
+function restart_if_running() {
+  if systemctl is-active --quiet "$2"; then
+    echo "=> systemctl $1 $2"
+    systemctl "$1" "$2" || true
+  fi
+}
+
+function run_lego() (
+  cd "$conf_dir"
+  if [[ ! -d "$data_dir" ]]; then
+    kvmd-pstrun -- bash -c "mkdir -p -m 775 \"$data_dir\" ; chown root:\"$user\" \"$data_dir\""
+  fi
+  sudo -u "$user" kvmd-pstrun -- lego || return 1
+  out=$(sudo -u "$user" lego certificates list) || return 1
+  if grep -q ^kvmd$ <<< "$out"; then
+    path=$(awk 'f==1&&/ Certificate Path: /{sub(/^.* Certificate Path: /,"");print;exit}/^$/{f=0}/^kvmd$/{f=1}' <<< "$out")
+    if [[ -z "$path" ]] || ! sudo -u "$user" test -e "$path"; then
+      echo "Error: Cannot find certfile ($path)"
+      return 1
+    fi
+    sudo -u "$user" kvmd-pstrun -- bash -c "
+      cat \"$path\" > \"${path%.crt}.bundle.pem\"
+      cat \"${path%.crt}.issuer.crt\" >> \"${path%.crt}.bundle.pem\"
+    "
+  else
+    return 1
+  fi
+)
+
+function usage() {
+  echo "Usage: ${0##*/} [Options]"
+  echo "Options:"
+  echo " -h : This help text"
+  echo " -c : Install certificate for cloud"
+  echo " -n : Install certificate for nginx"
+  echo " -v : Install certificate for vnc"
+  echo "Note: This program must be run as root"
+  exit "${1:-0}"
+}
+
+install_cloud=false
+install_nginx=false
+install_vnc=false
+while getopts ":hcnv" opt; do
+  case $opt in
+    c) install_cloud=true ;;
+    n) install_nginx=true ;;
+    v) install_vnc=true ;;
+    h) usage ;;
+    :) echo "-$OPTARG requires an argument" ; exit 1 ;;
+    \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
+  esac
+done
+shift $(( OPTIND - 1 ))
+
+if [[ "$(whoami)" != root ]]; then
+  echo "Error: This program must be run as root" >&2
+  exit 1
+fi
+
+if run_lego; then
+  if $install_cloud; then
+    kvmd-pstrun -- bash -c "
+      mkdir -p \"$ssl_dir/cloud\"
+      cp \"$data_dir/certificates/kvmd.bundle.pem\" \"$ssl_dir/cloud/server.crt\"
+      cp -p \"$data_dir/certificates/kvmd.key\" \"$ssl_dir/cloud/server.key\"
+      chmod 640 \"$ssl_dir/cloud/server.key\"
+      chown root:kvmd-nginx \"$ssl_dir/cloud/server.key\"
+    "
+    restart_if_running reload kvmd-nginx
+    if [[ $(realpath /etc/kvmd/cloud/ssl/server.crt) != "$ssl_dir/cloud/server.crt" ]] || \
+       [[ $(realpath /etc/kvmd/cloud/ssl/server.key) != "$ssl_dir/cloud/server.key" ]]; then
+      echo "Run: "
+      echo "  rw"
+      echo "  ln -sfT \"$ssl_dir/cloud/server.crt\" \"/etc/kvmd/cloud/ssl/server.crt\""
+      echo "  ln -sfT \"$ssl_dir/cloud/server.key\" \"/etc/kvmd/cloud/ssl/server.key\""
+      echo "  ro"
+      echo "  systemctl restart kvmd-nginx"
+    fi
+  elif $install_nginx; then
+    kvmd-pstrun -- bash -c "
+      mkdir -p \"$ssl_dir/nginx\"
+      cp \"$data_dir/certificates/kvmd.bundle.pem\" \"$ssl_dir/nginx/server.crt\"
+      cp -p \"$data_dir/certificates/kvmd.key\" \"$ssl_dir/nginx/server.key\"
+      chmod 640 \"$ssl_dir/nginx/server.key\"
+      chown root:kvmd-nginx \"$ssl_dir/nginx/server.key\"
+    "
+    restart_if_running reload kvmd-nginx
+    if [[ $(realpath /etc/kvmd/nginx/ssl/server.crt) != "$ssl_dir/nginx/server.crt" ]] || \
+       [[ $(realpath /etc/kvmd/nginx/ssl/server.key) != "$ssl_dir/nginx/server.key" ]]; then
+      echo "Run: "
+      echo "  rw"
+      echo "  ln -sfT \"$ssl_dir/nginx/server.crt\" \"/etc/kvmd/nginx/ssl/server.crt\""
+      echo "  ln -sfT \"$ssl_dir/nginx/server.key\" \"/etc/kvmd/nginx/ssl/server.key\""
+      echo "  ro"
+      echo "  systemctl restart kvmd-nginx"
+    fi
+  elif $install_vnc; then
+    kvmd-pstrun -- bash -c "
+      mkdir -p \"$ssl_dir/vnc\"
+      cp \"$data_dir/certificates/kvmd.bundle.pem\" \"$ssl_dir/vnc/server.crt\"
+      cp -p \"$data_dir/certificates/kvmd.key\" \"$ssl_dir/vnc/server.key\"
+      chmod 640 \"$ssl_dir/vnc/server.key\"
+      chown root:kvmd-vnc \"$ssl_dir/vnc/server.key\"
+    "
+    restart_if_running reload kvmd-vnc
+    if [[ $(realpath /etc/kvmd/vnc/ssl/server.crt) != "$ssl_dir/vnc/server.crt" ]] || \
+       [[ $(realpath /etc/kvmd/vnc/ssl/server.key) != "$ssl_dir/vnc/server.key" ]]; then
+      echo "Run: "
+      echo "  rw"
+      echo "  ln -sfT \"$ssl_dir/vnc/server.crt\" \"/etc/kvmd/vnc/ssl/server.crt\""
+      echo "  ln -sfT \"$ssl_dir/vnc/server.key\" \"/etc/kvmd/vnc/ssl/server.key\""
+      echo "  ro"
+      echo "  systemctl restart kvmd-vnc"
+    fi
+  fi
+else
+  exit 1
+fi
+
