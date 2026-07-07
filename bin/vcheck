@@ -2711,8 +2711,6 @@ main() {
       # Prepare Output
       log -d "${listname:+$listname:}$sw_name printing $output_mode to $output_file"
 
-      local jq_args=()
-      $compact_json && jq_args+=(-c)
       local out=""
       # Output text immediately and go to next software
       if (( QUIET == 0 )) && [[ "$output_mode" == "text" || "$output_file" != "/dev/stdout" ]]; then
@@ -2768,12 +2766,10 @@ main() {
         tmpjson=${json_string:-"[]"}
       # Printing to json file
       elif [[ -s "$output_file" ]] && jq -e 'type=="array"' "$output_file" &> /dev/null; then
-        tmpjson=$(jq -r "${jq_args[@]}" '.' "$output_file" 2> /dev/null)
+        tmpjson=$(jq -r '.' "$output_file" 2> /dev/null)
       elif [[ -s "$output_file" ]] && jq -r '.' "$output_file" &> /dev/null; then
-        tmpjson=$(jq -rs "${jq_args[@]}" '.' "$output_file" 2> /dev/null)
+        tmpjson=$(jq -rs '.' "$output_file" 2> /dev/null)
       fi
-
-      log -d tmpjson=$tmpjson
 
       # If tmpjson is not valid json with "[ ... ]", reset to "[]"
       if ! jq -n --argjson j "$tmpjson" '$j[]' &> /dev/null; then
@@ -2783,7 +2779,7 @@ main() {
       # Save printer ink info to json string
       if [[ "$sw_name" == "printer_ink_check" ]]; then
         ! $include_invalid && grep -q '^[[:space:]]*"error":' <<< "$version" && continue
-        tmpjson=$(jq -n "${jq_args[@]}" --argjson j "$tmpjson" --argjson new "$version" '
+        tmpjson=$(jq -n --argjson j "$tmpjson" --argjson new "$version" '
           if $j | any(.[]; .name == $new.name and .ip == $new.ip)
           then $j | map(if .name == $new.name and .ip == $new.ip then $new else . end)
           else $j + [$new]
@@ -2792,7 +2788,7 @@ main() {
       # Save software version info to json string
       else
         ! $include_invalid && [[ "$version" == "---" ]] && continue
-        tmpjson=$(jq -n "${jq_args[@]}" --argjson j "$tmpjson" --arg n "$sw_name" --arg v "$version" --arg t "${update_time:-$(date +%s)}" '
+        tmpjson=$(jq -n --argjson j "$tmpjson" --arg n "$sw_name" --arg v "$version" --arg t "${update_time:-$(date +%s)}" '
           if $j | any(.[]; .name == $n)
           then $j | map(if .name == $n then {name: $n, version: $v, time: ($t|tonumber)} else . end)
           else $j + [{name: $n, version: $v, time: ($t|tonumber)}]
@@ -2824,9 +2820,9 @@ main() {
           else
             log -d -d "Writing to $output_file.new"
             if $compact_json; then
-              jq -rcn "${jq_args[@]}" --argjson j "$tmpjson" '$j.[]' 2> /dev/null > "$output_file".new
+              jq -rcn --argjson j "$tmpjson" '$j.[]' 2> /dev/null > "$output_file".new
             else
-              jq -rn "${jq_args[@]}" --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file".new
+              jq -rn --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file".new
             fi
             if [[ ! -s "$output_file".new ]]; then
               log -d -d "Could not write to $output_file.new"
@@ -2843,7 +2839,7 @@ main() {
               jq -rcn "${jq_args[@]}" --argjson j "$tmpjson" '$j.[]' 2> /dev/null > "$output_file" || \
                 log -e "Error: Could not write to file $output_file"
             else
-              jq -rn "${jq_args[@]}" --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file" || \
+              jq -rn --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file" || \
                 log -e "Error: Could not write to file $output_file"
             fi
           fi
@@ -2863,9 +2859,9 @@ main() {
   if [[ "$output_mode" == "json" && "$output_file" == "/dev/stdout" ]]; then
     log -d "Printing json string to the screen"
     if $compact_json; then
-      jq -rcn "${jq_args[@]}" --argjson j "$json_string" '$j.[]'
+      jq -rcn --argjson j "$json_string" '$j.[]'
     else
-      jq -rn "${jq_args[@]}" --argjson j "$json_string" '$j'
+      jq -rn --argjson j "$json_string" '$j'
     fi
   fi
 
