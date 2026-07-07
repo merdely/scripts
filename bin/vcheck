@@ -1674,8 +1674,9 @@ usage() {
   usage_fold -s "$ss" -- "-F            : force updating all latest software (default: update if cache expired)"
   echo
   echo " Output related options:"
-  usage_fold -s "$ss" -- "-o FILE     x : save JSON output to FILE instead"
+  usage_fold -s "$ss" -- "-o FILE     x : save JSON output to FILE (default: output to screen)"
   usage_fold -s "$ss" -- "-j          x : print output in JSON format to screen"
+  usage_fold -s "$ss" -- "-C          x : print JSON output in compact format"
   usage_fold -s "$ss" -- "-t          x : print output in text format to screen"
   usage_fold -s "$ss" -- "-m          x : publish output to mqtt server"
   usage_fold -s "$ss" -- "-i          x : include invalid version results ('---') when updating (default: skip)"
@@ -1766,6 +1767,8 @@ main() {
   local appimage_path=$HOME/Applications
   local cache_lifetime=60    # Number of minutes to wait between _latest checks
   local cache_lifetime_set=false
+  local compact_json=false
+  local compact_json_set=false
   local docker_filter=false
   local docker_seconds=30
   local docker_seconds_set=false
@@ -1798,7 +1801,7 @@ main() {
   local update=false
   local sudo_user="" exec_user="" PRINTER="" minver="" print_opt="" update_list=""
   local opt="" OPTARG="" OPTIND=1
-  while getopts ":hdvqc:u:p:1w:r:P:R:S:X:x:L:DV:f:Fo:OtjmiTMH:INn" opt; do
+  while getopts ":hdvqc:u:p:1w:r:P:R:S:X:x:L:DV:f:Fo:OtjCmiTMH:INn" opt; do
     case $opt in
       # Base options
       :) case $OPTARG in
@@ -1852,6 +1855,7 @@ main() {
       # Output Options
       o) output_file=$OPTARG     ; output_file_set=true ; output_mode=json ; output_mode_set=true ;;
       j) output_file=/dev/stdout ; output_file_set=true ; output_mode=json ; output_mode_set=true ;;
+      C) compact_json=true ; compact_json_set=true ; output_mode=json ; output_mode_set=true ;;
       t) output_file=/dev/stdout ; output_file_set=true ; output_mode=text ; output_mode_set=true ;;
       m) output_file=/dev/stdout ; output_file_set=true ; output_mode=mqtt ; output_mode_set=true ;;
       i) include_invalid=true ; include_invalid_set=true ;;
@@ -1971,6 +1975,8 @@ main() {
 
   # Validate output_mode
   case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
+  # Validate compact_json
+  case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;;*)compact_json=false;; esac
 
   # Read configuration settings
   local rcvalue=()
@@ -2220,6 +2226,7 @@ main() {
   local saved_prepend_name=$prepend_name
   local saved_output_file=$output_file
   local saved_output_mode=$output_mode
+  local saved_compact_json=$compact_json
   local saved_include_invalid=$include_invalid
   local saved_docker_seconds=$docker_seconds
   local saved_docker_user=$docker_user
@@ -2238,6 +2245,7 @@ main() {
     prepend_name=$saved_prepend_name
     output_file=$saved_output_file
     output_mode=$saved_output_mode
+    compact_json=$saved_compact_json
     include_invalid=$saved_include_invalid
     docker_seconds=$saved_docker_seconds
     docker_user=$saved_docker_user
@@ -2283,6 +2291,11 @@ main() {
       rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_mode)
       [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_mode=${rcvalue[0]} && \
         case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
+
+      # compact_json
+      rcvalue=() ; ! $compact_json_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" compact_json)
+      [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && compact_json=${rcvalue[0]} && \
+        case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;;*)compact_json=false;; esac
 
       # output_file
       rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_file)
@@ -2362,6 +2375,7 @@ main() {
     if (( DEBUG > 1 )); then
       [[ "$output_file" != "$saved_output_file" ]] && log -d "[$list SETTINGS] output_file = '$output_file'"
       [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[$list SETTINGS] output_mode = '$output_mode'"
+      [[ "$compact_json" != "$saved_compact_json" ]] && log -d "[$list SETTINGS] compact_json = '$compact_json'"
       [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[$list SETTINGS] include_invalid = '$include_invalid'"
       [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[$list SETTINGS] docker_seconds = '$docker_seconds'"
       [[ "$docker_user" != "$saved_docker_user" ]] && log -d "[$list SETTINGS] docker_user = '$docker_user'"
@@ -2469,6 +2483,11 @@ main() {
         [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_mode=${rcvalue[0]} && \
           case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
 
+        # compact_json
+        rcvalue=() ; ! $compact_json_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" compact_json)
+        [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && compact_json=${rcvalue[0]} && \
+          case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;;*)compact_json=false;; esac
+
         # output_file
         rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_file)
         [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_file=${rcvalue[0]} && output_mode=json
@@ -2543,6 +2562,7 @@ main() {
       if (( DEBUG > 1 )) && [[ "$listname" != "$sw_name" ]]; then
         [[ "$output_file" != "$saved_output_file" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] output_file = '$output_file'"
         [[ "$output_mode" != "$saved_output_mode" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] output_mode = '$output_mode'"
+        [[ "$compact_json" != "$saved_compact_json" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] compact_json = '$compact_json'"
         [[ "$include_invalid" != "$saved_include_invalid" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] include_invalid = '$include_invalid'"
         [[ "$docker_seconds" != "$saved_docker_seconds" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] docker_seconds = '$docker_seconds'"
         [[ "$docker_user" != "$saved_docker_user" ]] && log -d "[${listname:+$listname:}$sw_name SETTINGS] docker_user = '$docker_user'"
@@ -2691,6 +2711,8 @@ main() {
       # Prepare Output
       log -d "${listname:+$listname:}$sw_name printing $output_mode to $output_file"
 
+      local jq_args=()
+      $compact_json && jq_args+=(-c)
       local out=""
       # Output text immediately and go to next software
       if (( QUIET == 0 )) && [[ "$output_mode" == "text" || "$output_file" != "/dev/stdout" ]]; then
@@ -2745,9 +2767,13 @@ main() {
       if [[ "$output_file" == "/dev/stdout" ]]; then
         tmpjson=${json_string:-"[]"}
       # Printing to json file
-      elif [[ -s "$output_file" ]] && jq -r '.[]' "$output_file" &> /dev/null; then
-        tmpjson=$(jq -r '.' "$output_file" 2> /dev/null)
+      elif [[ -s "$output_file" ]] && jq -e 'type=="array"' "$output_file" &> /dev/null; then
+        tmpjson=$(jq -r "${jq_args[@]}" '.' "$output_file" 2> /dev/null)
+      elif [[ -s "$output_file" ]] && jq -r '.' "$output_file" &> /dev/null; then
+        tmpjson=$(jq -rs "${jq_args[@]}" '.' "$output_file" 2> /dev/null)
       fi
+
+      log -d tmpjson=$tmpjson
 
       # If tmpjson is not valid json with "[ ... ]", reset to "[]"
       if ! jq -n --argjson j "$tmpjson" '$j[]' &> /dev/null; then
@@ -2757,7 +2783,7 @@ main() {
       # Save printer ink info to json string
       if [[ "$sw_name" == "printer_ink_check" ]]; then
         ! $include_invalid && grep -q '^[[:space:]]*"error":' <<< "$version" && continue
-        tmpjson=$(jq -n --argjson j "$tmpjson" --argjson new "$version" '
+        tmpjson=$(jq -n "${jq_args[@]}" --argjson j "$tmpjson" --argjson new "$version" '
           if $j | any(.[]; .name == $new.name and .ip == $new.ip)
           then $j | map(if .name == $new.name and .ip == $new.ip then $new else . end)
           else $j + [$new]
@@ -2766,7 +2792,7 @@ main() {
       # Save software version info to json string
       else
         ! $include_invalid && [[ "$version" == "---" ]] && continue
-        tmpjson=$(jq -n --argjson j "$tmpjson" --arg n "$sw_name" --arg v "$version" --arg t "${update_time:-$(date +%s)}" '
+        tmpjson=$(jq -n "${jq_args[@]}" --argjson j "$tmpjson" --arg n "$sw_name" --arg v "$version" --arg t "${update_time:-$(date +%s)}" '
           if $j | any(.[]; .name == $n)
           then $j | map(if .name == $n then {name: $n, version: $v, time: ($t|tonumber)} else . end)
           else $j + [{name: $n, version: $v, time: ($t|tonumber)}]
@@ -2797,7 +2823,11 @@ main() {
             direct_write=true
           else
             log -d -d "Writing to $output_file.new"
-            jq -rn --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file".new
+            if $compact_json; then
+              jq -rcn "${jq_args[@]}" --argjson j "$tmpjson" '$j.[]' 2> /dev/null > "$output_file".new
+            else
+              jq -rn "${jq_args[@]}" --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file".new
+            fi
             if [[ ! -s "$output_file".new ]]; then
               log -d -d "Could not write to $output_file.new"
               direct_write=true
@@ -2809,8 +2839,13 @@ main() {
           fi
           if $direct_write; then
             log -d -d "Writing directly to $output_file"
-            jq -rn --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file" || \
-              log -e "Error: Could not write to file $output_file"
+            if $compact_json; then
+              jq -rcn "${jq_args[@]}" --argjson j "$tmpjson" '$j.[]' 2> /dev/null > "$output_file" || \
+                log -e "Error: Could not write to file $output_file"
+            else
+              jq -rn "${jq_args[@]}" --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file" || \
+                log -e "Error: Could not write to file $output_file"
+            fi
           fi
           if [[ -s "$output_file" ]]; then
             log -v "JSON Output saved to '$output_file'"
@@ -2827,7 +2862,11 @@ main() {
   # Print global json_string to the screen
   if [[ "$output_mode" == "json" && "$output_file" == "/dev/stdout" ]]; then
     log -d "Printing json string to the screen"
-    jq -rn --argjson j "$json_string" '$j'
+    if $compact_json; then
+      jq -rcn "${jq_args[@]}" --argjson j "$json_string" '$j.[]'
+    else
+      jq -rn "${jq_args[@]}" --argjson j "$json_string" '$j'
+    fi
   fi
 
   # If in Print Only mode, print list of software
