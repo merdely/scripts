@@ -30,7 +30,7 @@ shift $(( OPTIND - 1 ))
 COMPOSE_FILE="${1:-docker-compose.yaml}"
 
 # Check if compose file exists
-if [ ! -f "$COMPOSE_FILE" ]; then
+if [[ ! -f "$COMPOSE_FILE" ]]; then
     echo "UNKNOWN: Compose file $COMPOSE_FILE not found"
     exit 3
 fi
@@ -45,7 +45,7 @@ cd "$COMPOSE_DIR" || {
 
 # Get expected services
 EXPECTED_SERVICES=$($COMPOSE_CMD -f "$(basename "$COMPOSE_FILE")" config --services 2>/dev/null)
-if [ $? -ne 0 ]; then
+if [[ $? -ne 0 ]]; then
     echo "UNKNOWN: Failed to parse compose file"
     exit 3
 fi
@@ -54,7 +54,7 @@ EXPECTED_COUNT=$(echo "$EXPECTED_SERVICES" | wc -l)
 
 # Get running containers with their status
 CONTAINERS=$($COMPOSE_CMD -f "$(basename "$COMPOSE_FILE")" ps --format json 2>/dev/null)
-if [ $? -ne 0 ]; then
+if [[ $? -ne 0 ]]; then
     echo "UNKNOWN: Failed to get container status"
     exit 3
 fi
@@ -80,7 +80,7 @@ while IFS= read -r service; do
     STATE=$(echo "$SERVICE_INFO" | jq -r '.State')
     HEALTH=$(echo "$SERVICE_INFO" | jq -r '.Health // "none"')
 
-    if [ "$STATE" != "running"  && " ${ignore_list[*]} " != *" $service "* ]; then
+    if [[ "$STATE" != "running"  && " ${ignore_list[*]} " != *" $service "* ]]; then
         NOT_RUNNING+=("$service")
         continue
     fi
@@ -104,10 +104,10 @@ while IFS= read -r service; do
 done <<< "$EXPECTED_SERVICES"
 
 # Determine exit status and message
-if [ ${#UNHEALTHY[@]} -gt 0 ]; then
+if [[ ${#UNHEALTHY[@]} -gt 0 ]]; then
     echo "CRITICAL: ${#UNHEALTHY[@]} unhealthy service(s): ${UNHEALTHY[*]} | running=$RUNNING_COUNT expected=$EXPECTED_COUNT healthy=$HEALTHY_COUNT unhealthy=${#UNHEALTHY[@]}"
     exit 2
-elif [ ${#NOT_RUNNING[@]} -gt 0 ]; then
+elif [[ ${#NOT_RUNNING[@]} -gt 0 ]]; then
     echo "WARNING: ${#NOT_RUNNING[@]} service(s) not running: ${NOT_RUNNING[*]} | running=$RUNNING_COUNT expected=$EXPECTED_COUNT healthy=$HEALTHY_COUNT unhealthy=${#UNHEALTHY[@]}"
     exit 1
 else
