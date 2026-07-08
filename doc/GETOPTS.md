@@ -3,7 +3,7 @@
 ## Simple example:
 
 ```bash
-while getopts ":ab:" opt; do
+while getopts ":hab:" opt; do
   case $opt in
     a) a=true ;;
     b) b=$OPTARG ;;
