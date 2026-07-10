@@ -138,11 +138,11 @@ get_config_value() { # utility_function
 
   # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
   shopt -q nocasematch && ncm=true ; shopt -s nocasematch
-  case "$localdebug" in true|debug|y|yes|on|[1-9]|[1-9]0|[0-9][1-9]|[1-9][0-9]0|[0-9][0-9][1-9])localdebug=true;;*)localdebug=false;;esac
+  case "$localdebug" in true|debug|y|yes|on|[1-9]|[1-9]0|[0-9][1-9]|[1-9][0-9]0|[0-9][0-9][1-9])localdebug=true;; *) localdebug=false;;esac
   ! $ncm && shopt -u nocasematch ; ncm=false
 
   # Handle options -L and -T for preserving leading/trailing whitespace in values
-  while getopts ":LT" opt;do case "$opt" in L)ltrim=0;;T)rtrim=0;;*);;esac;done;shift $((OPTIND-1))
+  while getopts ":LT" opt;do case "$opt" in L)ltrim=0;;T)rtrim=0;; *) ;;esac;done;shift $((OPTIND-1))
 
   # Require at least two arguments (file and key with section being optional)
   (( $# < 2 )) && return 1
@@ -213,7 +213,7 @@ get_config_value() { # utility_function
 
 # Calculate the number of seconds from docker's Created/RunningFor fields
 calc_seconds() { # utility_function
-  [[ ! "${1:-}" =~ ^[0-9]+" "[^[:space:]]+" ago"$ ]] && { echo 0 ; return 1 ; }
+  [[ ! "${1:-}" =~ ^[0-9]+' '[^[:space:]]+' ago'$ ]] && { echo 0 ; return 1 ; }
 
   case "${1:-}" in
     *second*) echo "${1%% *}" ;;
@@ -613,7 +613,7 @@ docker_container_search() { # utility_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
   log -d -d -d "docker ps output = '$docker_ps'"
@@ -655,7 +655,7 @@ docker_copy() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
   if (( $# == 1 )); then
     if [[ "${1:-}" == *!!*!!* ]]; then
@@ -706,7 +706,7 @@ docker_exec() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d returning DOCKER_TOO_OLD;return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d returning DOCKER_TOO_OLD;return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
   if (( $# == 1 )); then
     if [[ "${1:-}" == *!!* ]]; then
@@ -747,7 +747,7 @@ docker_image_search() { # utility_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
   docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
   log -d -d -d "docker ps output = '$docker_ps'"
@@ -788,7 +788,7 @@ docker_inspect() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
   container=$(docker_container_search "${1:-}")
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
@@ -830,7 +830,7 @@ docker_logs() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
   log -d "image_search = '$image_search'"
 
@@ -856,7 +856,7 @@ docker_printenv() { # check_function
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
-  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;;*)log -d "use_sudo_exec error $ret";return 1;;esac
+  case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
   if (( $# == 1 )); then
     if [[ "${1:-}" == *!!* ]]; then
@@ -1658,11 +1658,11 @@ usage() {
   usage_fold -s "$ss" -- "-u USER     x : drop privileges to USER if run as root (default: none)"
   usage_fold -s "$ss" -- "-p PRINTOPT   : print information (${bu}help${ubu} for option list)"
   usage_fold -s "$ss" -- "-1            : print information in a single column with '-p PRINTOPT'"
-  usage_fold -s "$ss" -- "-w WAIT     x : latest checks results are cached for WAIT minutes (default: $cache_lifetime minutes)"
-  usage_fold -s "$ss" -- "-r RETRY    x : delay between check retries for RETRY seconds (default: $retry_delay seconds)"
+  usage_fold -s "$ss" -- "-w WAIT     x : latest checks results are cached for WAIT minutes (default: ${cache_lifetime:-} minutes)"
+  usage_fold -s "$ss" -- "-r RETRY    x : delay between check retries for RETRY seconds (default: ${retry_delay:-} seconds)"
   usage_fold -s "$ss" -- "-P PRINTER  x : ip address for printer (for SOFTWARE == ink)"
   usage_fold -s "$ss" -- "-R REGEX   +x : a regex for commands that need sudo"
-  usage_fold -s "$ss" -- "-S SECONDS  x : number of SECONDS for docker container updates (default: $docker_seconds seconds)"
+  usage_fold -s "$ss" -- "-S SECONDS  x : number of SECONDS for docker container updates (default: ${docker_seconds:-} seconds)"
   usage_fold -s "$ss" -- "-X FUNC       : Run check with sudo"
   usage_fold -s "$ss" -- "-x SUDOUSER x : User to run sudo command as for -X (default: none)"
   echo
@@ -1685,10 +1685,10 @@ usage() {
   echo
   echo "MQTT-related Options:"
   usage_fold -s "$ss" -- "-M            : mqtt test mode: do not publish to mqtt; print instead"
-  usage_fold -s "$ss" -- "-H HOST_NAME  : when prepending key names, use host_name (default: ${bu}${host_name}_${ubu})"
-  usage_fold -s "$ss" -- "-I INK_TOPIC  : use INK_TOPIC when publishing printer_ink_check to MQTT (default: $ink_topic)"
-  usage_fold -s "$ss" -- "-n          x : prepend mqtt key name with ${bu}${host_name}_${ubu} (default with ${bu}all${ubu})"
-  usage_fold -s "$ss" -- "-N          x : do not prepend mqtt key name with ${bu}${host_name}_${ubu} (default with ${bu}latest${ubu})"
+  usage_fold -s "$ss" -- "-H HOST_NAME  : when prepending key names, use host_name (default: ${bu}${host_name:-}_${ubu})"
+  usage_fold -s "$ss" -- "-I INK_TOPIC  : use INK_TOPIC when publishing printer_ink_check to MQTT (default: ${ink_topic:-})"
+  usage_fold -s "$ss" -- "-n          x : prepend mqtt key name with ${bu}${host_name:-}_${ubu} (default with ${bu}all${ubu})"
+  usage_fold -s "$ss" -- "-N          x : do not prepend mqtt key name with ${bu}${host_name:-}_${ubu} (default with ${bu}latest${ubu})"
   echo "+ : option can be used more than once"
   echo "x : overrides config settings"
   echo
@@ -1974,9 +1974,9 @@ main() {
   all_output=""
 
   # Validate output_mode
-  case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
+  case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *) output_mode=text;output_file=/dev/stdout;; esac
   # Validate compact_json
-  case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;;*)compact_json=false;; esac
+  case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;; *) compact_json=false;; esac
 
   # Read configuration settings
   local rcvalue=()
@@ -2290,12 +2290,12 @@ main() {
       # output_mode
       rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_mode)
       [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_mode=${rcvalue[0]} && \
-        case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
+        case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *) output_mode=text;output_file=/dev/stdout;; esac
 
       # compact_json
       rcvalue=() ; ! $compact_json_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" compact_json)
       [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && compact_json=${rcvalue[0]} && \
-        case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;;*)compact_json=false;; esac
+        case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;; *) compact_json=false;; esac
 
       # output_file
       rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" output_file)
@@ -2481,12 +2481,12 @@ main() {
         # output_mode
         rcvalue=() ; ! $output_mode_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_mode)
         [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && output_mode=${rcvalue[0]} && \
-          case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *)output_mode=text;output_file=/dev/stdout;; esac
+          case "$output_mode" in json);;mqtt)output_file=/dev/stdout;; *) output_mode=text;output_file=/dev/stdout;; esac
 
         # compact_json
         rcvalue=() ; ! $compact_json_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::${list//\\/\\\\}" compact_json)
         [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && compact_json=${rcvalue[0]} && \
-          case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;;*)compact_json=false;; esac
+          case "$compact_json" in 1|on|On|ON|t|T|true|True|TRUE|y|Y|yes|Yes|YES)compact_json=true;; *) compact_json=false;; esac
 
         # output_file
         rcvalue=() ; ! $output_file_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" output_file)
