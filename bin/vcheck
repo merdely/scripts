@@ -2577,7 +2577,7 @@ main() {
 
       # If not-force and check is for latest version, respect timestamp
       i=0
-      update_time==0
+      update_time=0
       while (( i <= retries )); do
         # If a retry, sleep for $delay
         (( i > 0 )) && log -d "Retrying for $sw_name (try $i of $retries) after $delay wait" && sleep "$delay"
@@ -2836,7 +2836,7 @@ main() {
           if $direct_write; then
             log -d -d "Writing directly to $output_file"
             if $compact_json; then
-              jq -rcn "${jq_args[@]}" --argjson j "$tmpjson" '$j.[]' 2> /dev/null > "$output_file" || \
+              jq -rcn --argjson j "$tmpjson" '$j.[]' 2> /dev/null > "$output_file" || \
                 log -e "Error: Could not write to file $output_file"
             else
               jq -rn --argjson j "$tmpjson" '$j' 2> /dev/null > "$output_file" || \
