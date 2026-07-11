@@ -45,7 +45,7 @@ shift $((OPTIND -1))
 libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
 PATH="$libpath" . _config 2> /dev/null || { echo "Error: Cannot load _config library" >&2; exit 1; }
 
-if [ -r $inifile ]; then
+if [ -r "$inifile" ]; then
   ha_token=$(get_config_value "$inifile" tasmota ha_token)
   entity=$(get_config_value "$inifile" tasmota entity)
   tasmota_pass=$(get_config_value "$inifile" tasmota tasmota_pass)
@@ -71,11 +71,10 @@ device_specified=false
 device_list=()
 while [ -n "$1" ]; do
   if [[ $1 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    device_list+=($1)
+    device_list+=("$1")
   else
     if ! $dig_found; then
-      which dig &> /dev/null
-      if [ $? = 0 ]; then
+      if which dig &> /dev/null; then
         dig_found=true
       else
         echo "Error: dig command not found" >&2
@@ -84,15 +83,15 @@ while [ -n "$1" ]; do
     fi
     h=$1
     t=${h%%.*}
-    [ -n "$dns_domain" ] && [ $t = $h ] && h=$h.$dns_domain
-    i=$(dig +short $h)
+    [ -n "$dns_domain" ] && [ "$t" = "$h" ] && h=$h.$dns_domain
+    i=$(dig +short "$h")
     if [[ $i =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-      device_list+=($i)
+      device_list+=("$i")
     else
       h=tasmota-$h
-      i=$(dig +short $h)
+      i=$(dig +short "$h")
       if [[ $i =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        device_list+=($i)
+        device_list+=("$i")
       else
         echo "Warning: Could not find IP for $1" >&2
       fi
@@ -102,7 +101,7 @@ while [ -n "$1" ]; do
 done
 
 if $device_specified; then
-  tasmota_devices="${device_list[@]}"
+  tasmota_devices="${device_list[*]}"
   tasmota_devices="${tasmota_devices// /|}"
 else
   tasmota_devices=$(curl -sL -H "Authorization: Bearer $ha_token" "$ha_url/api/states/$entity" | \
@@ -139,52 +138,52 @@ done=0
 long=0
 for device in $tasmota_devices; do
   total=$((total+1))
-  name=$(echo $device|cut -d, -f1)
-  ip=$(echo $device|cut -d, -f2)
+  name=$(echo "$device"|cut -d, -f1)
+  ip=$(echo "$device"|cut -d, -f2)
   ip=${ip% }
 
-  status_json=$(curl -sLu admin:$tasmota_pass "http://$ip/cm?cmnd=STATUS%200")
+  status_json=$(curl -sLu admin:"$tasmota_pass" "http://$ip/cm?cmnd=STATUS%200")
   if [[ -z "$status_json" ]] || ! jq -n --argjson j "$status_json" '$j' &> /dev/null; then
-    echo "Error: Could not get Status Info for $name via http" && failures+=($name) && continue
+    echo "Error: Could not get Status Info for $name via http" && failures+=("$name") && continue
   fi
 
   out=$(jq -rn --argjson j "$status_json" '$j.Status.DeviceName' 2> /dev/null)
   [ -n "$out" ] && [ "$out" != null ] && name=$out
 
   # Get Template
-  out=$(curl -sLu admin:$tasmota_pass "http://$ip/cm?cmnd=Template" 2>&1 | jq -r '.NAME' 2> /dev/null)
+  out=$(curl -sLu admin:"$tasmota_pass" "http://$ip/cm?cmnd=Template" 2>&1 | jq -r '.NAME' 2> /dev/null)
   [ -n "$out" ] && [ "$out" != null ] && template=$out
 
 
-  dirname=$(echo $name|sed 's/ /_/g')
-  [ ${#name} -gt $long ] && long=${#name}
-  [ $ip = unavailable ] && failures+=($name) && continue
+  dirname=${name// /_}
+  [ ${#name} -gt "$long" ] && long=${#name}
+  [ "$ip" = unavailable ] && failures+=("$name") && continue
 
   # Get Firmware Version
   version=$(jq -rn --argjson j "$status_json" '$j.StatusFWR.Version' | sed 's/(/_/;s/)//')
 
   [ "v${version%_release*}" != "$tasmota_version" ] && ood+=("$name")
-  names+=($name)
-  ips+=($ip)
+  names+=("$name")
+  ips+=("$ip")
   versions+=("$version")
   templates+=("$template")
   [[ "$mode" == html ]] && continue
 
   if [[ "$mode" == backup ]]; then
     # Get MAC Address
-    out=$(curl -sLu admin:$tasmota_pass "http://$ip/cm?cmnd=STATUS%205")
-    ! echo "$out" | grep -q "StatusNET" && echo "Error: Could not get StatusNET for $name via http" && failures+=($name) && continue
+    out=$(curl -sLu admin:"$tasmota_pass" "http://$ip/cm?cmnd=STATUS%205")
+    ! echo "$out" | grep -q "StatusNET" && echo "Error: Could not get StatusNET for $name via http" && failures+=("$name") && continue
     mac=$(jq -rn --argjson j "$status_json" '$j.StatusNET.Mac' 2> /dev/null | tr -d :)
 
     filename=$(date "+$mac-%F_%H_%M_%S_$version.dmp")
-    mkdir -p $backups/$dirname
-    decode-config -w --source http://$ip --password $tasmota_pass --backup-file $backups/$dirname/$filename
-    if [ -r $backups/$dirname/$filename ]; then
+    mkdir -p "$backups/$dirname"
+    decode-config -w --source http://"$ip" --password "$tasmota_pass" --backup-file "$backups/$dirname/$filename"
+    if [ -r "$backups/$dirname/$filename" ]; then
       done=$((done+1))
-      rm -f $backups/$dirname/latest.dmp
-      ln -s $backups/$dirname/$filename $backups/$dirname/latest.dmp
+      rm -f "$backups/$dirname/latest.dmp"
+      ln -s "$backups/$dirname/$filename" "$backups/$dirname/latest.dmp"
     else
-      failures+=($name)
+      failures+=("$name")
     fi
   fi
 done
@@ -270,9 +269,9 @@ EOF
     if [[ "$mode" == html ]]; then
       printf "  <li><a href='http://%s/'>%-${long}s</a>\n" "${ips[$i]}" "${names[$i]}"
     elif [[ "$mode" == listextended ]]; then
-      ood=false
-      [ "v${versions[$i]%_release*}" != "$tasmota_version" ] && ood=true
-      echo "${names[$i]},${ips[$i]},${templates[$i]},$ood,v${versions[$i]%_release*}"
+      is_ood=false
+      [ "v${versions[$i]%_release*}" != "$tasmota_version" ] && is_ood=true
+      echo "${names[$i]},${ips[$i]},${templates[$i]},$is_ood,v${versions[$i]%_release*}"
     else
       if ! $one_printed; then
         echo "Tasmota Devices (${#names[@]}):"
@@ -299,7 +298,7 @@ EOF
     IFS=$OIFS
   fi
   if [[ "$mode" == html ]]; then
-    echo "<p>Previous <a href="list.php">Device List Pages</p>"
+    echo "<p>Previous <a href='list.php'>Device List Pages</p>"
     echo "</body>"
     echo "</html>"
   fi
