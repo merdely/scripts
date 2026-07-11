@@ -4,9 +4,9 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
+# import re
 import requests
-import shlex
+# import shlex
 import subprocess
 import sys
 import tempfile
@@ -47,6 +47,7 @@ if not flags.raw:
     quit(1)
 
 # Determine the location of notify-send
+command = 'notify-send'
 possible_paths = [ "/usr/bin/notify-send", "/usr/local/bin/notify-send" ]
 notify_send = None
 for path in possible_paths:
@@ -58,11 +59,6 @@ for path in possible_paths:
 if not notify_send:
     print(f"{command} not found in the specified paths.")
     quit()
-
-if flags.debug_to_file:
-    cache_dir = Path.home() / ".cache" / "ntfy"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    debug_file = (cache_dir / "ntfy_send.log").open("a")
 
 # Need to build arg_list here
 actions = {}
@@ -76,6 +72,9 @@ app_name = "ntfy-send"
 
 if flags.debug:
     print(flags.raw, file=sys.stderr)
+cache_dir = Path.home() / ".cache" / "ntfy"
+cache_dir.mkdir(parents=True, exist_ok=True)
+debug_file = (cache_dir / "ntfy_send.log").open("a")
 if flags.debug_to_file:
     print(flags.raw, file=debug_file)
 
@@ -85,10 +84,10 @@ if "id" in ntfy_raw.keys():
     elif flags.debug_to_file:
         print(f"id: {ntfy_raw['id']}", file=debug_file)
 
+tmp_file = None
 icon_file = None
 if "icon" in ntfy_raw.keys():
     icon_file = ntfy_raw['icon']
-    tmp_file = None
     if ntfy_raw['icon'].startswith("https://") or ntfy_raw['icon'].startswith("http://"):
         try:
             response = requests.get(ntfy_raw['icon'])
