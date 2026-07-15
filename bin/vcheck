@@ -712,12 +712,14 @@ docker_exec() { # check_function
   local tmparr=()
   if (( $# == 1 )); then
     if [[ "${1:-}" == *!!* ]]; then
+      log -d "Making arguments an array for parsing: ${1:-}"
       IFS='!!' read -ra tmparr <<< "${1:-}"
       image_search=${tmparr[0]}
       read -ra command <<< "${tmparr[2]}"
       if (( ${#tmparr[@]} > 4 )) && [[ "${tmparr[@]}" == docker_user=* ]]; then
         docker_user=${tmparr[4]##*=}
       fi
+      log -d "image_search=$imagesearch docker_user=$docker_user command=${command[*]}"
     else
       image_search=${1:-}
       read -ra command <<< "$*"
