@@ -2417,7 +2417,7 @@ main() {
           docker_user=*)
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#docker_user=*!!}
-            sw_auto_flags+=(-u "${tmpstring#prejq=}")   # The last one will be used
+            sw_auto_flags+=(-u "${tmpstring#docker_user=}")   # The last one will be used
             ;;
           prejq=*)
             tmpstring=${sw_name%%!!*}
