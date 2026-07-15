@@ -1541,7 +1541,7 @@ execute_check() { # utility_function
     curl)              out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
     curlapi)           out=$(curl_api "$project") ; ret=$? ;;
     docker_copy)       out=$(docker_copy "$project") ; ret=$? ;;
-    docker_exec)       out=$(docker_exec "$docker_user" $project") ; ret=$? ;;
+    docker_exec)       out=$(docker_exec "$docker_user" "$project") ; ret=$? ;;
     docker_inspect)    out=$(docker_inspect "$project") ; ret=$? ;;
     docker_logs)       out=$(docker_logs "$project") ; ret=$? ;;
     docker_printenv)   out=$(docker_printenv "$project") ; ret=$? ;;
