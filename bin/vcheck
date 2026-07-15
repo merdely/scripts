@@ -42,7 +42,7 @@ export SEMVER_REGEX
 # TODO automate this similar to how _latest was done before
 # Define list of check types
 CHECK_LIST='(alpine_repo|appimage|aur|cat|codeberg|codeberg_tags|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|forgejo_tags|gitdescribe|gitea|gitea_tags|gittags|github|github_tags|gitlab|gitlab_tags|pacman|pacman_repo)(_latest)?'
-CHECK_MODIFIERS='(docker_user=|prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter)'
+CHECK_MODIFIERS='(prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter)'
 export CHECK_LIST CHECK_MODIFIERS
 
 # Store all temp files in a tempdir and delete the directory on exit
@@ -703,9 +703,6 @@ docker_exec() { # check_function
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local container="" image="" image_search="" command=() out="" ret=0
 
-  local docker_user_arg=() docker_user="$1"
-  shift
-
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
   out=$(use_sudo_exec "$@") ; ret=$?
@@ -732,10 +729,9 @@ docker_exec() { # check_function
   log -d -d "container = '$container'"
   [[ -z "$container" ]] && { log -e "Could not determine container for '${1:-}'" ; return 1 ; }
 
-  [[ -n "$docker_user" && "$docker_user" != "-" ]] && docker_user_arg=(-u "$docker_user")
-  log -d -d "Executing: docker exec -u ${docker_user_arg[*]} $container ${command[*]:-}"
+  log -d -d "Executing: docker exec -u nobody $container ${command[*]:-}"
   # shellcheck disable=SC2048,SC2086
-  out=$(docker exec -u "${docker_user_arg[@]}" "$container" "${command[@]}" 2>&1)
+  out=$(docker exec -u nobody "$container" "${command[@]}" 2>&1)
   log -d -d "docker exec output = $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
   return 1
@@ -1488,9 +1484,8 @@ execute_check() { # utility_function
 
   local remove=() search=() presed=() postsed=() skipverfilter=false
   local project="" tmp="" prejqfilter="" postjqfilter="" xmlfilter="" sedstring="" tag=""
-  local docker_user=${docker_user:-nobody}
   local opt="" OPTARG="" OPTIND=1
-  while getopts ":p:t:J:j:x:r:s:P:S:u:vV" opt; do
+  while getopts ":p:t:J:j:x:r:s:P:S:vV" opt; do
     case "$opt" in
       p) project=$OPTARG ;;
       t) tag=$OPTARG ;;
@@ -1501,7 +1496,6 @@ execute_check() { # utility_function
       s) search+=("$OPTARG") ;;
       P) presed+=("$OPTARG") ;;
       S) postsed+=("$OPTARG") ;;
-      u) docker_user=$OPTARG ;;    # Uses last one given
       v) skipverfilter=true ;;
       V) skipverfilter=false ;;
       *) log -w "Invalid flag ($OPTARG)" ;;
@@ -1513,7 +1507,6 @@ execute_check() { # utility_function
   local check=${1:-}
 
   log -d -d "check = '$check'"
-  log -d -d "docker_user = '$docker_user'"
   log -d -d "tag = '$tag'"
   log -d -d "project = '$project'"
   log -d -d "xmlfilter = '$xmlfilter'"
@@ -1541,7 +1534,7 @@ execute_check() { # utility_function
     curl)              out=$(curl --no-progress-meter -L "$project") ; ret=$? ;;
     curlapi)           out=$(curl_api "$project") ; ret=$? ;;
     docker_copy)       out=$(docker_copy "$project") ; ret=$? ;;
-    docker_exec)       out=$(docker_exec "$docker_user" "$project") ; ret=$? ;;
+    docker_exec)       out=$(docker_exec "$project") ; ret=$? ;;
     docker_inspect)    out=$(docker_inspect "$project") ; ret=$? ;;
     docker_logs)       out=$(docker_logs "$project") ; ret=$? ;;
     docker_printenv)   out=$(docker_printenv "$project") ; ret=$? ;;
@@ -2414,11 +2407,6 @@ main() {
       sw_tag=$(sed -r "s/^.*"'!!'"$CHECK_LIST$/\1/" <<< "$sw_name")
       while [[ "$sw_name" =~ ^$CHECK_MODIFIERS ]]; do
         case "$sw_name" in
-          docker_user=*)
-            tmpstring=${sw_name%%!!*}
-            sw_name=${sw_name#docker_user=*!!}
-            sw_auto_flags+=(-u "${tmpstring#docker_user=}")   # The last one will be used
-            ;;
           prejq=*)
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#prejq=*!!}
