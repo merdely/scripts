@@ -714,6 +714,7 @@ docker_exec() { # check_function
     if [[ "${1:-}" == *!!* ]]; then
       log -d "Making arguments an array for parsing: ${1:-}"
       IFS='!!' read -ra tmparr <<< "${1:-}"
+      log -d "tmparr=${tmparr[*]}"
       image_search=${tmparr[0]}
       read -ra command <<< "${tmparr[2]}"
       if (( ${#tmparr[@]} > 4 )) && [[ "${tmparr[@]}" == docker_user=* ]]; then
