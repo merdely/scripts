@@ -1490,7 +1490,7 @@ execute_check() { # utility_function
   local project="" tmp="" prejqfilter="" postjqfilter="" xmlfilter="" sedstring="" tag=""
   local docker_user=${docker_user:-nobody}
   local opt="" OPTARG="" OPTIND=1
-  while getopts ":p:t:J:j:x:r:s:P:S:vV" opt; do
+  while getopts ":p:t:J:j:x:r:s:P:S:u:vV" opt; do
     case "$opt" in
       p) project=$OPTARG ;;
       t) tag=$OPTARG ;;
