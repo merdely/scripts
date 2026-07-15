@@ -702,6 +702,7 @@ docker_exec() { # check_function
   check_prog docker "${FUNCNAME[0]} via ${FUNCNAME[1]}" || return 1
   (( $# == 0 )) && { log -e "Argument required for ${FUNCNAME[0]}" ; return 1 ; }
   local container="" image="" image_search="" command=() out="" ret=0
+  local docker_args=()
 
   # Run through sudo exec if necessary
   # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
@@ -729,9 +730,10 @@ docker_exec() { # check_function
   log -d -d "container = '$container'"
   [[ -z "$container" ]] && { log -e "Could not determine container for '${1:-}'" ; return 1 ; }
 
-  log -d -d "Executing: docker exec -u nobody $container ${command[*]:-}"
+  [[ -n "$docker_user" && "$docker_user" != "-" ]] && docker_args=(-u "$docker_user")
+  log -d -d "Executing: docker exec ${docker_args[*]} $container ${command[*]:-}"
   # shellcheck disable=SC2048,SC2086
-  out=$(docker exec -u nobody "$container" "${command[@]}" 2>&1)
+  out=$(docker exec "${docker_args[@]}" "$container" "${command[@]}" 2>&1)
   log -d -d "docker exec output = $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
   return 1
@@ -2008,7 +2010,7 @@ main() {
 
     rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" docker_user)
     if [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]]; then
-      if id "${rcvalue[0]}" &> /dev/null; then
+      if id "${rcvalue[0]}" &> /dev/null || [[ "${rcvalue[0]}" == "-" ]]; then
         docker_user=${rcvalue[0]}
       else
         log -w "Cannot set docker_user to ${rcvalue[0]}: user does not exist"
@@ -2313,7 +2315,7 @@ main() {
 
       rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$list" docker_user)
       if [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]]; then
-        if id "${rcvalue[0]}" &> /dev/null; then
+        if id "${rcvalue[0]}" &> /dev/null || [[ "${rcvalue[0]}" == "-" ]]; then
           docker_user=${rcvalue[0]}
         else
           log -w "Cannot set docker_user to ${rcvalue[0]}: user does not exist"
@@ -2504,7 +2506,7 @@ main() {
 
         rcvalue=() ; ! $docker_user_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME::$sw_name" docker_user)
         if [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]]; then
-          if id "${rcvalue[0]}" &> /dev/null; then
+          if id "${rcvalue[0]}" &> /dev/null || [[ "${rcvalue[0]}" == "-" ]]; then
             docker_user=${rcvalue[0]}
           else
             log -w "Cannot set docker_user to ${rcvalue[0]}: user does not exist"
