@@ -733,9 +733,9 @@ docker_exec() { # check_function
   [[ -z "$container" ]] && { log -e "Could not determine container for '${1:-}'" ; return 1 ; }
 
   [[ -n "$docker_user" && "$docker_user" != "-" ]] && docker_user_arg=(-u "$docker_user")
-  log -d -d "Executing: docker exec ${docker_user_arg[*]} $container ${command[*]:-}"
+  log -d -d "Executing: docker exec -u ${docker_user_arg[*]} $container ${command[*]:-}"
   # shellcheck disable=SC2048,SC2086
-  out=$(docker exec "${docker_user_arg[@]}" "$container" "${command[@]}" 2>&1)
+  out=$(docker exec -u "${docker_user_arg[@]}" "$container" "${command[@]}" 2>&1)
   log -d -d "docker exec output = $out"
   [[ -n "$out" ]] && { echo "$out" ; return 0 ; }
   return 1
