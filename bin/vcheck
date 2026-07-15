@@ -719,7 +719,7 @@ docker_exec() { # check_function
       if (( ${#tmparr[@]} > 4 )) && [[ "${tmparr[@]}" == docker_user=* ]]; then
         docker_user=${tmparr[4]##*=}
       fi
-      log -d "image_search=$imagesearch docker_user=$docker_user command=${command[*]}"
+      log -d "image_search=$image_search docker_user=$docker_user command=${command[*]}"
     else
       image_search=${1:-}
       read -ra command <<< "$*"
