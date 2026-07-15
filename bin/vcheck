@@ -1341,6 +1341,7 @@ use_sudo_exec() { # utility_function
 
   # Do not run as sudo_user if $sudo_user is not defined
   [[ -z "${sudo_user:-}" ]] && { log -d "sudo_user not defined" ; return 2 ; }
+  [[ "${sudo_user:-}" == "-" ]] && { log -d "sudo_user disabled with '-'" ; return 2 ; }
 
   if $use_sudo && [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     local func=${FUNCNAME[1]} rp=""
@@ -1664,7 +1665,7 @@ usage() {
   usage_fold -s "$ss" -- "-R REGEX   +x : a regex for commands that need sudo"
   usage_fold -s "$ss" -- "-S SECONDS  x : number of SECONDS for docker container updates (default: ${docker_seconds:-} seconds)"
   usage_fold -s "$ss" -- "-X FUNC       : Run check with sudo"
-  usage_fold -s "$ss" -- "-x SUDOUSER x : User to run sudo command as for -X (default: none)"
+  usage_fold -s "$ss" -- "-x SUDOUSER x : User to run sudo command as for -X (default: none, disable: -)"
   echo
   # Check related options
   usage_fold -s "$ss" -- "-L LIST       : use LIST for each SOFTWARE argument as if LIST:SOFTWARE give as arguments"
@@ -2646,6 +2647,7 @@ main() {
           [[ -n "${sudo_regexes:-}" ]] && for regex in "${sudo_regexes[@]}"; do
             [[ "$sw_name" =~ $regex ]] && use_sudo=true
           done
+          [[ "$use_sudo" == "-" ]] && use_sudo=false
           log -d -d "Checking to see if $sw should be run with sudo (use_sudo = '$use_sudo)'"
 
           if [[ -s "$rcfile" ]]; then

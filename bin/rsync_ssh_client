@@ -1,16 +1,17 @@
 #!/bin/sh
 
+uname=$(uname -s)
 [ -z "$SSH_ORIGINAL_COMMAND" ] && echo "This script is for use with SSH + rsync + authorized_keys command" && exit 1
 
 if [ "$SSH_ORIGINAL_COMMAND" = backup_list ]; then
-  if [ $(uname -s) = Darwin ]; then
+  if [ "$uname" = Darwin ]; then
     cat /var/root/.timemachine/backup_list
   else
     cat /etc/timemachine/backup_list
   fi
   exit 0
 elif [ "$SSH_ORIGINAL_COMMAND" = exclude_list ]; then
-  if [ $(uname -s) = Darwin ]; then
+  if [ "$uname" = Darwin ]; then
     cat /var/root/.timemachine/exclude_list
   else
     cat /etc/timemachine/exclude_list
@@ -24,8 +25,8 @@ if ! echo "$SSH_ORIGINAL_COMMAND" | grep -qE "^rsync --server --sender -v?lH?ogD
   exit 1
 fi
 
-if [ $(uname -s) = Darwin ] || [ $(uname -s) = OpenBSD ]; then
-  /usr/bin/nice -n 19 $SSH_ORIGINAL_COMMAND
+if [ "$uname" = Darwin ] || [ "$uname" = OpenBSD ]; then
+  /usr/bin/nice -n 19 "$SSH_ORIGINAL_COMMAND"
 else
-  /usr/bin/nice -n 19 /usr/bin/ionice -c 2 $SSH_ORIGINAL_COMMAND
+  /usr/bin/nice -n 19 /usr/bin/ionice -c 2 "$SSH_ORIGINAL_COMMAND"
 fi
