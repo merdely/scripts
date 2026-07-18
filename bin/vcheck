@@ -1666,6 +1666,7 @@ usage() {
   # Second line indent
   local ss=18
   usage_fold -s "$ss" -- "-c RCFILE     : path to RCFILE file (default: $rcfile)"
+  usage_fold -s "$ss" -- "-e CACHEDIR   : path to CACHEDIR directory (default: $cache_dir)"
   usage_fold -s "$ss" -- "-u USER     x : drop privileges to USER if run as root (default: none)"
   usage_fold -s "$ss" -- "-p PRINTOPT   : print information (${bu}help${ubu} for option list)"
   usage_fold -s "$ss" -- "-1            : print information in a single column with '-p PRINTOPT'"
@@ -1776,6 +1777,7 @@ main() {
   for i in "$@"; do [[ "$i" == "--help" ]] && usage verbose; done
   for i in "$@"; do [[ "$i" == "--version" ]] && echo "Version $PROGVER" && exit ; done
   local appimage_path=$HOME/Applications
+  local cache_dir_set=false
   local cache_lifetime=60    # Number of minutes to wait between _latest checks
   local cache_lifetime_set=false
   local compact_json=false
@@ -1812,7 +1814,7 @@ main() {
   local update=false
   local sudo_user="" exec_user="" PRINTER="" minver="" print_opt="" update_list=""
   local opt="" OPTARG="" OPTIND=1
-  while getopts ":hdvqc:u:p:1w:r:P:R:S:X:x:L:DV:f:Fo:OtjCmiTMH:INn" opt; do
+  while getopts ":hdvqc:e:u:p:1w:r:P:R:S:X:x:L:DV:f:Fo:OtjCmiTMH:INn" opt; do
     case $opt in
       # Base options
       :) case $OPTARG in
@@ -1824,6 +1826,7 @@ main() {
 
       # Program-related options: -c and -u are silently dropped by drop_privs
       c) rcfile=$OPTARG ; rcfile_set=true ;;
+      e) cache_dir=$OPTARG ; cache_dir_set=true ;;
       u) [[ $(id -u) != 0 ]] && log -e "-u only works for root" && exit 1
          if id "$OPTARG" &> /dev/null; then
            exec_user=$OPTARG
@@ -2001,7 +2004,7 @@ main() {
 
   # Read configuration file options
   if [[ -s "$rcfile" ]]; then
-    rcvalue=(); mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
+    rcvalue=(); ! $cache_dir_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_dir)
     [[ -n "${rcvalue:-}" && ${#rcvalue[@]} -gt 0 ]] && cache_dir=${rcvalue[0]}
 
     rcvalue=() ; ! $cache_lifetime_set && mapfile -t rcvalue < <(get_config_value "$rcfile" "$PROGNAME" cache_lifetime)
