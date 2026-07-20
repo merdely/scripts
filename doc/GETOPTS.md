@@ -3,12 +3,13 @@
 ## Simple example:
 
 ```bash
+usage() { echo "usage: ${0##*} [-h] [-a] [-b b]" ; exit "${1:-0}" ; }
 # local OPTIND=1 OPTARG="" opt=""
 while getopts ":hab:" opt; do
   case $opt in
     a) a=true ;;
     b) b=$OPTARG ;;
-    h) echo usage ; exit ;;
+    h) usage ;;
     :) echo "-$OPTARG requires an argument" ; exit 1 ;;
     \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
   esac
