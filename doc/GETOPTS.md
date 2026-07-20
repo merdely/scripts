@@ -3,6 +3,7 @@
 ## Simple example:
 
 ```bash
+# local OPTIND=1 OPTARG="" opt=""
 while getopts ":hab:" opt; do
   case $opt in
     a) a=true ;;
