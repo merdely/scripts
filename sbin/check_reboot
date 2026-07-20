@@ -216,8 +216,8 @@ if command -v systemctl &>/dev/null; then
         user_services["$user"]="${user_services["$user"]} ${svc#"$user":}"
       done
     done
+    echo
   fi
-  echo
 
     (( ${#system_services[@]} > 0 )) &&
       echo "Restart system services with:" &&
@@ -287,10 +287,8 @@ if command -v loginctl &>/dev/null; then
     done < <(ps -u "$user" -o pid=,comm= 2>/dev/null)
   done < <(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1, $2, $3, $4, $5}')
 
-  echo "User sessions running outdated binaries:"
-  if [[ ${#flagged_sessions[@]} -eq 0 ]]; then
-    echo " none"
-  else
+  if (( ${#flagged_sessions[@]} > 0 )); then
+    echo "User sessions running outdated binaries:"
     printf '%s\n' "${flagged_sessions[@]}"
   fi
 
