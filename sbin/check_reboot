@@ -18,13 +18,14 @@ while getopts ":hv" opt; do
     \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
   esac
 done
-shift $(( OPTIND - 1 ))
+shift $((OPTIND - 1))
 
-$verbose && echo "Determine if the system or any services need to be restarted"
+"$verbose" && echo "Determine if the system or any services need to be restarted"
 
 # shellcheck disable=SC1091
 [[ -r /etc/os-release ]] && source /etc/os-release
 
+# Check kernel version
 kernchecked=false
 if [[ -e /usr/bin/needs-restarting ]]; then
   kernchecked=true
@@ -44,13 +45,13 @@ if [[ -f /var/run/reboot-required.pkgs ]]; then
   cat /var/run/reboot-required.pkgs
   echo
 fi
-if ! $kernchecked && [[ -x /usr/bin/pacman ]]; then
+if ! "$kernchecked" && [[ -x /usr/bin/pacman ]]; then
   kernchecked=true
-  if pacman -Q linux-rpi-pikvm > /dev/null 2>&1; then
+  if pacman -Q linux-rpi-pikvm >/dev/null 2>&1; then
     #filever=$(zcat /boot/initramfs-linux.img | strings | awk -F '[= ]' '$1=="vermagic"&&$2{print $2;exit}')
     filever=$(pacman -Q linux-rpi-pikvm | cut -d " " -f 2-)-rpi
   else
-    filever=$(file /boot/vmlinuz-"$(awk -F'[(@]' '{print $2}' /proc/version)" |\
+    filever=$(file /boot/vmlinuz-"$(awk -F'[(@]' '{print $2}' /proc/version)" |
       sed -r 's/^.*version (.*) \(.*$/\1/')
   fi
   if [[ "$filever" != "$(uname -r)" ]]; then
@@ -58,8 +59,10 @@ if ! $kernchecked && [[ -x /usr/bin/pacman ]]; then
     echo
   fi
 fi
-! $kernchecked && echo "Warning: Kernel reboot requirement not checked"
-if command -v lsof &> /dev/null; then
+! "$kernchecked" && echo "Warning: Kernel reboot requirement not checked"
+
+# Check for updated libs/binaries
+if command -v lsof &>/dev/null; then
   libs=$(lsof -nlPOXbw +c0 | awk '
     /DEL.*lib/ {
       pid = $2
@@ -107,13 +110,192 @@ if command -v lsof &> /dev/null; then
         #gsub(/^[[:space:]]+|[[:space:]]+$/, "", p)
       }
       printf "%s (%s): %s\n", p, pid, lib
-    }' | grep -Ev "^firewalld \([0-9]+\): /memfd:libffi$" | sort -u | column -t)
+    }' | grep -Ev "^firewalld \([0-9]+\): /memfd:libffi$" | sort -u | column -t | sed 's/^/ /')
   if [[ -n "$libs" ]]; then
     echo "Library Updates Requiring Restart/Reboot:"
-    cat <<< "$libs"
+    cat <<<"$libs"
     echo
   fi
 else
   echo "Warning: Could not check for processes and libraries that have been updated (missing lsof)"
+fi
+
+pid_outdated() {
+  local pid="$1"
+
+  if [[ -e "/proc/$pid/exe" ]]; then
+    local exe_link
+    exe_link=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
+    if [[ "$exe_link" == *"(deleted)"* ]]; then
+      echo "exe replaced: $exe_link"
+      return
+    fi
+  fi
+
+  if [[ -r "/proc/$pid/maps" ]]; then
+    local deleted_lib
+    deleted_lib=$(grep -oP '(?<=\s)/\S+\.so\S*\s+\(deleted\)' "/proc/$pid/maps" 2>/dev/null | head -1 || true)
+    if [[ -n "$deleted_lib" ]]; then
+      echo "lib replaced: $deleted_lib"
+      return
+    fi
+  fi
+}
+
+# Check systemd services
+if command -v systemctl &>/dev/null; then
+  declare -A flagged_services
+  flagged_users=()
+
+  # usage: check_services [-u USER]   ## -u USER: check user services for a logged-in user
+  check_services() {
+    local OPTIND=1 OPTARG="" opt="" user=""
+    while getopts ":u:" opt; do
+      case $opt in
+        u) user="$OPTARG" ;;
+        :) echo "-$OPTARG requires an argument" ; exit 1 ;;
+        \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
+      esac
+    done
+    shift $(( OPTIND - 1 ))
+
+    while read -r unit; do
+      [[ -z "$unit" ]] && continue
+
+      pid=$(systemctl show -p MainPID --value "$unit" 2>/dev/null || echo 0)
+      [[ "$pid" == "0" || -z "$pid" ]] && continue
+
+      reason=$(pid_outdated "$pid")
+      if [[ -n "$reason" ]]; then
+        flagged_services["${user:+$user:}$unit"]="$reason"
+        [[ -n "$user" && " ${flagged_users[*]} " != " $user " ]] && flagged_users+=("$user")
+        continue
+      fi
+
+      cgroup_path="/sys/fs/cgroup/system.slice/${unit}"
+      if [[ -d "$cgroup_path" && -r "$cgroup_path/cgroup.procs" ]]; then
+        while read -r cpid; do
+          [[ -z "$cpid" ]] && continue
+          reason=$(pid_outdated "$cpid")
+          if [[ -n "$reason" ]]; then
+            flagged_services["${user:+$user:}$unit"]="$reason"
+            [[ -n "$user" && " ${flagged_users[*]} " != " $user " ]] && flagged_users+=("$user")
+            break
+          fi
+        done <"$cgroup_path/cgroup.procs"
+      fi
+    done < <(
+      {
+        if [[ -n "$user" ]]; then
+          systemctl --user --machine "$user"@ list-units --type=service --state=running --no-legend --plain
+        else
+          systemctl list-units --type=service --state=running --no-legend --plain
+        fi
+      } | awk '{print $1}'
+    )
+  }
+
+  check_services
+  for user in $(loginctl list-users --no-legend --no-ask-password | awk '{print $2}'); do
+    check_services -u "$user"
+  done
+
+  system_services=()
+  declare -A user_services
+  if (( ${#flagged_services[@]} > 0 )); then
+    echo "Services running outdated binaries:"
+    for svc in "${!flagged_services[@]}"; do
+      [[ "$svc" == *:* ]] && continue
+      printf " %-8s %-30s %s\n" "system" "$svc" "${flagged_services[$svc]}"
+      system_services+=("$svc")
+    done
+    for user in "${flagged_users[@]}"; do
+      for svc in "${!flagged_services[@]}"; do
+        [[ "$svc" != "$user":* ]] && continue
+        printf " %-8s %-30s %s\n" "$user" "$svc" "${flagged_services[$svc]}"
+        user_services["$user"]="${user_services["$user"]} ${svc#"$user":}"
+      done
+    done
+  fi
+  echo
+
+    (( ${#system_services[@]} > 0 )) &&
+      echo "Restart system services with:" &&
+      echo "systemctl restart ${system_services[*]}" | fold -s | awk '{ lines[NR] = $0 }
+        END {
+            for (i = 1; i <= NR; i++) {
+                indent = (i == 1) ? " " : "   "
+                suffix = (NR > 1 && i < NR) ? " \\" : ""
+                print indent lines[i] suffix
+            }
+        }' &&
+      echo
+    for user in "${!user_services[@]}"; do
+      [[ -n "${user_services["$user"]}" ]] &&
+        echo "Restart $user user services with:" &&
+        echo "systemctl --user --machine $user@.host restart ${user_services["$user"]# }" | fold -s | awk '{ lines[NR] = $0 }
+        END {
+            for (i = 1; i <= NR; i++) {
+                indent = (i == 1) ? " " : "   "
+                suffix = (NR > 1 && i < NR) ? " \\" : ""
+                print indent lines[i] suffix
+            }
+        }' &&
+
+        echo
+    done
+fi
+
+# Check user sessions
+if command -v loginctl &>/dev/null; then
+  declare -a flagged_sessions
+  declare -A session_leader_pid
+  while read -r session _ user _ _; do
+    [[ -z "$session" ]] && continue
+    leader_pid=$(loginctl show-session "$session" -p Leader --value 2>/dev/null || true)
+    [[ -n "$leader_pid" && "$leader_pid" != "0" ]] && session_leader_pid["$leader_pid"]="$session"
+  done < <(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1, $2, $3, $4, $5}')
+
+  declare -A user_mgr_pid_of
+  while read -r session _ user _ _; do
+    [[ -z "$user" || -n "${user_mgr_pid_of[$user]:-}" ]] && continue
+    mgr_pid=$(loginctl show-user "$user" -p MainPID --value 2>/dev/null || true)
+    [[ -n "$mgr_pid" && "$mgr_pid" != "0" ]] && user_mgr_pid_of["$user"]="$mgr_pid"
+  done < <(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1, $2, $3, $4, $5}')
+
+  seen_users=()
+  while read -r session _ user _ _; do
+    [[ -z "$user" ]] && continue
+    if [[ " ${seen_users[*]:-} " == *" $user "* ]]; then
+      continue
+    fi
+    seen_users+=("$user")
+
+    while read -r pid comm; do
+      [[ -z "$pid" ]] && continue
+      reason=$(pid_outdated "$pid")
+      [[ -z "$reason" ]] && continue
+
+      if [[ -n "${session_leader_pid[$pid]:-}" ]]; then
+        label="session #${session_leader_pid[$pid]}"
+      elif [[ "${user_mgr_pid_of[$user]:-}" == "$pid" ]]; then
+        label="user manager"
+      else
+        label="process"
+      fi
+      flagged_sessions+=("$(printf " %s @ %s: %s[%s]" "$user" "$label" "$comm" "$pid")")
+    done < <(ps -u "$user" -o pid=,comm= 2>/dev/null)
+  done < <(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1, $2, $3, $4, $5}')
+
+  echo "User sessions running outdated binaries:"
+  if [[ ${#flagged_sessions[@]} -eq 0 ]]; then
+    echo " none"
+  else
+    printf '%s\n' "${flagged_sessions[@]}"
+  fi
+
+  [[ ${#flagged_sessions[@]} -gt 0 ]] &&
+    echo &&
+    echo "Session processes can't be restarted directly — affected users should reconnect or re-login."
 fi
 
