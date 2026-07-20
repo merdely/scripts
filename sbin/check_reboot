@@ -25,7 +25,7 @@ shift $((OPTIND - 1))
 # shellcheck disable=SC1091
 [[ -r /etc/os-release ]] && source /etc/os-release
 
-# Check kernel version
+## CHECK KERNEL VERSION
 kernchecked=false
 if [[ -e /usr/bin/needs-restarting ]]; then
   kernchecked=true
@@ -61,7 +61,7 @@ if ! "$kernchecked" && [[ -x /usr/bin/pacman ]]; then
 fi
 ! "$kernchecked" && echo "Warning: Kernel reboot requirement not checked"
 
-# Check for updated libs/binaries
+## CHECK FOR UPDATED LIBS/BINARIES
 if command -v lsof &>/dev/null; then
   libs=$(lsof -nlPOXbw +c0 | awk '
     /DEL.*lib/ {
@@ -142,7 +142,7 @@ pid_outdated() {
   fi
 }
 
-# Check systemd services
+## CHECK SYSTEMD SERVICES
 if command -v systemctl &>/dev/null; then
   declare -A flagged_services
   flagged_users=()
@@ -246,7 +246,7 @@ if command -v systemctl &>/dev/null; then
     done
 fi
 
-# Check user sessions
+## CHECK USER SESSIONS
 if command -v loginctl &>/dev/null; then
   declare -a flagged_sessions
   declare -A session_leader_pid
@@ -295,5 +295,73 @@ if command -v loginctl &>/dev/null; then
   [[ ${#flagged_sessions[@]} -gt 0 ]] &&
     echo &&
     echo "Session processes can't be restarted directly — affected users should reconnect or re-login."
+fi
+
+## CHECK DOCKER CONTAINERS
+if command -v docker &>/dev/null && docker info &> /dev/null; then
+  flagged_docker_containers=()
+  while read -r cid; do
+    [[ -z "$cid" ]] && continue
+    name=$(docker inspect --format '{{.Name}}' "$cid" 2>/dev/null | sed 's#^/##')
+    [[ -z "$name" ]] && name="$cid"
+
+    while read -r pid _rest; do
+      [[ -z "$pid" || "$pid" == "PID" ]] && continue
+      reason=$(pid_outdated "$pid")
+      if [[ -n "$reason" ]]; then
+        flagged_docker_containers+=("$(printf " %s (%s): %s" "$name" "${cid:0:12}" "$reason")")
+        break
+      fi
+    done < <(docker top "$cid" -eo pid 2>/dev/null | tail -n +2)
+  done < <(docker ps -q --no-trunc 2>/dev/null)
+
+  if (( ${#flagged_docker_containers[@]} > 0 )); then
+    echo "Docker Containers running outdated binaries:"
+    printf ' %s\n' "${flagged_docker_containers[@]}"
+    echo
+    echo "Restart containers with: docker restart <container>"
+    echo
+  fi
+fi
+
+## CHECK NSPAWN CONTAINERS
+if command -v machinectl &>/dev/null; then
+  flagged_nspawn_containers=()
+  while read -r name _class _service; do
+      [[ -z "$name" ]] && continue
+      leader=$(machinectl show "$name" -p Leader --value 2>/dev/null || true)
+      [[ -z "$leader" || "$leader" == "0" ]] && continue
+      reason=$(pid_outdated "$leader")
+      if [[ -n "$reason" ]]; then
+          flagged_nspawn_containers+=("$(printf " %s (nspawn): %s" "$name" "$reason")")
+      fi
+  done < <(machinectl list --no-legend 2>/dev/null)
+
+  if (( ${#flagged_nspawn_containers[@]} > 0 )); then
+    echo "nspawn Containers running outdated binaries:"
+    printf ' %s\n' "${flagged_nspawn_containers[@]}"
+    echo
+  fi
+fi
+
+## CHECK QEMU VMS
+if command -v qemu-system &>/dev/null && command -v pgrep &>/dev/null; then
+  flagged_vms=()
+  while read -r pid cmd; do
+      [[ -z "$pid" ]] && continue
+      reason=$(pid_outdated "$pid")
+      [[ -z "$reason" ]] && continue
+      vmname=$(grep -oP '(?<=guest=)[^,]+' <<<"$cmd" || true)
+      [[ -z "$vmname" ]] && vmname="pid $pid"
+      flagged_vms+=("$(printf " %s: %s" "$vmname" "$reason")")
+  done < <(pgrep -af 'qemu-system' 2>/dev/null)
+
+  if (( ${#flagged_vms[@]} > 0 )); then
+    echo "VM hypervisor processes running outdated binaries (host-side only):"
+    printf ' %s\n' "${flagged_vms[@]}"
+    echo
+    echo "Restart/migrate affected VMs to pick up the host-side hypervisor update"
+    echo
+  fi
 fi
 
