@@ -42,7 +42,7 @@ export SEMVER_REGEX
 # TODO automate this similar to how _latest was done before
 # Define list of check types
 CHECK_LIST='(alpine_repo|appimage|aur|cat|codeberg|codeberg_tags|command|curl|curlapi|docker_copy|docker_exec|docker_inspect|docker_inspect_image|docker_logs|docker_printenv|docker_tags|flatpak|flathub|forgejo|forgejo_tags|gitdescribe|gitea|gitea_tags|gittags|github|github_tags|gitlab|gitlab_tags|pacman|pacman_repo)(_latest)?'
-CHECK_MODIFIERS='(docker_user=|prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|noskip_version_filter|skip_version_filter)'
+CHECK_MODIFIERS='(docker_user=|prejq=|postjq=|xml=|presed=|postsed=|remove=|search=|prepend=|append=|noskip_version_filter|skip_version_filter)'
 export CHECK_LIST CHECK_MODIFIERS
 
 # Store all temp files in a tempdir and delete the directory on exit
@@ -1489,14 +1489,16 @@ execute_check() { # utility_function
   # log -d -d -d "Running: ${FUNCNAME[0]} $*"
   log -d "Running: ${FUNCNAME[0]} $*"
 
-  local remove=() search=() presed=() postsed=() skipverfilter=false
+  local remove=() search=() presed=() postsed=() prepend="" append="" skipverfilter=false
   local project="" tmp="" prejqfilter="" postjqfilter="" xmlfilter="" sedstring="" tag=""
   local docker_user="$docker_user"
   local opt="" OPTARG="" OPTIND=1
-  while getopts ":p:t:J:j:x:r:s:P:S:u:vV" opt; do
+  while getopts ":A:a:p:t:J:j:x:r:s:P:S:u:vV" opt; do
     case "$opt" in
       p) project=$OPTARG ;;
       t) tag=$OPTARG ;;
+      a) append=$OPTARG ;;         # Uses the last one given
+      A) prepend=$OPTARG ;;        # Uses the last one given
       J) prejqfilter=$OPTARG ;;    # Uses last one given
       j) postjqfilter=$OPTARG ;;   # Uses last one given
       x) xmlfilter=$OPTARG ;;      # Uses last one given
@@ -1645,7 +1647,7 @@ execute_check() { # utility_function
   fi
 
   # If there is still output, print it
-  [[ -n "$out" ]] && echo "$out" && return 0
+  [[ -n "$out" ]] && echo "$prepend$out$append" && return 0
 
   # Default to printing an error message and returning 1
   log -e "Could not determine version for $check"
@@ -2424,6 +2426,16 @@ main() {
             tmpstring=${sw_name%%!!*}
             sw_name=${sw_name#docker_user=*!!}
             sw_auto_flags+=(-u "${tmpstring#docker_user=}")   # The last one will be used
+            ;;
+          prepend=*)
+            tmpstring=${sw_name%%!!*}
+            sw_name=${sw_name#prepend=*!!}
+            sw_auto_flags+=(-A "${tmpstring#prepend=}")   # The last one will be used
+            ;;
+          append=*)
+            tmpstring=${sw_name%%!!*}
+            sw_name=${sw_name#append=*!!}
+            sw_auto_flags+=(-a "${tmpstring#append=}")   # The last one will be used
             ;;
           prejq=*)
             tmpstring=${sw_name%%!!*}
