@@ -10,14 +10,14 @@
 ## libpath="${0%/*}"/../lib:$HOME/src/scripts/lib:/srv/scripts/lib
 ## PATH="$libpath" . _config 2> /dev/null || { echo "Error: Cannot load config library" >&2; exit 1; }
 ##
-## value=( $(get_config_value ~/.config/myfile mykey) )
-## value=( $(get_config_value ~/.config/myfile mysection mykey) )
+## mapfile -t value= < <(get_config_value ~/.config/myfile mykey)
+## mapfile -t value= < <(get_config_value ~/.config/myfile mysection mykey)
 
 get_config_value() {
-  # No section: variable=( $(get_config_value file key) )
-  # Section:    variable=( $(get_config_value file section key) )
+  # No section: mapfile -t variable < <(get_config_value file key)
+  # Section:    mapfile -t variable < <(get_config_value file section key)
 
-  local opt OPTARG OPTIND=1 ltrim=1 rtrim=1
+  local opt OPTARG OPTIND=1 quotes=1 ltrim=1 rtrim=1
 
   # Try to respect a global debug variable; supports true/on/yes/debug/1-999 or false/0
   local localdebug=${debug:-false} ncm=false
@@ -26,7 +26,17 @@ get_config_value() {
   ! $ncm && shopt -u nocasematch ; unset ncm
 
   # Handle options -L and -T for preserving leading/trailing whitespace in values
-  while getopts ":LT" opt;do case "$opt" in L)ltrim=0;;T)rtrim=0;;*);;esac;done;shift $((OPTIND-1))
+  while getopts ':hQLT' opt; do
+    case "$opt" in
+      Q) quotes=0 ;;
+      L) ltrim=0 ;;
+      T) rtrim=0 ;;
+      h) echo "usage: get_config_value [-S] [-L] [-R] CONFIGFILE [SECTION] KEY" ; exit ;;
+      :) echo "-$OPTARG requires an argument" ; exit 1 ;;
+      \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
 
   # Require at least two arguments (file and key with section being optional)
   (( $# < 2 )) && return 1
@@ -45,7 +55,7 @@ get_config_value() {
   (( $# >= 3 )) && section=$2 && key=$3
 
   if [[ -n "$section" ]]; then
-    awk -v section="$section" -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
+    awk -v section="$section" -v key="$key" -v quotes="${quotes:-1}" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
       BEGIN {
         in_section = 0
         section_header = "[" section "]"
@@ -54,40 +64,48 @@ get_config_value() {
       {
         # Left-trim the line for comparisons
         ltrimmed = $0
-        sub(/^[[:space:]]+/, "", ltrimmed)
+        sub(/^\s+/, "", ltrimmed)
       }
-      /^[[:space:]]*\[/ {
+      /^\s*\[/ {
         in_section = (index(ltrimmed, section_header) == 1 && \
-                      substr(ltrimmed, length(section_header) + 1) ~ /^[[:space:]]*$/)
+                      substr(ltrimmed, length(section_header) + 1) ~ /^\s*$/)
         next
       }
       in_section {
         # Check if line starts with key followed by optional whitespace then : or =
         if (index(ltrimmed, key) == 1) {
           rest = substr(ltrimmed, length(key) + 1)
-          if (rest ~ /^[[:space:]]*[:=]/) {
+          if (rest ~ /^\s*[:=]/) {
             sub(/^[^:=]+[:=]/, "", ltrimmed)
-            if (ltrim == 1) sub(/^[[:space:]]+/, "", ltrimmed)
-            if (rtrim == 1) sub(/[[:space:]]+$/, "", ltrimmed)
+            if (ltrim == 1) sub(/^\s+/, "", ltrimmed)
+            if (rtrim == 1) sub(/\s+$/, "", ltrimmed)
+            if (quotes == 1) {
+              gsub(/^"/, "", ltrimmed)
+              gsub(/"$/, "", ltrimmed)
+            }
             print ltrimmed
           }
         }
       }' "$configfile"
   else
-    awk -v key="$key" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
+    awk -v key="$key" v quotes="${quotes:-1}" -v ltrim="${ltrim:-1}" -v rtrim="${rtrim:-1}" '
       {
         # Left-trim the line for comparisons
         ltrimmed = $0
-        sub(/^[[:space:]]+/, "", ltrimmed)
+        sub(/^\\s+/, "", ltrimmed)
       }
       {
         # Check if line starts with key followed by optional whitespace then : or =
         if (index(ltrimmed, key) == 1) {
           rest = substr(ltrimmed, length(key) + 1)
-          if (rest ~ /^[[:space:]]*[:=]/) {
+          if (rest ~ /^\s*[:=]/) {
             sub(/^[^:=]+[:=]/, "", ltrimmed)
-            if (ltrim == 1) sub(/^[[:space:]]+/, "", ltrimmed)
-            if (rtrim == 1) sub(/[[:space:]]+$/, "", ltrimmed)
+            if (ltrim == 1) sub(/^\s+/, "", ltrimmed)
+            if (rtrim == 1) sub(/\s+$/, "", ltrimmed)
+            if (quotes == 1) {
+              gsub(/^"/, "", ltrimmed)
+              gsub(/"$/, "", ltrimmed)
+            }
             print ltrimmed
           }
         }
@@ -142,9 +160,9 @@ fi
 ##############################################################
 ## Examples without using the function
 
-## Without sections
-# test_key1=( $(awk -vk="test_key1" '$0~"^[[:space:]]*"k"[[:space:]]*[:=]"{sub(/^[^:=]+[:=][[:space:]]*/,"");sub(/[[:space:]]+$/,"");print}' config_test.ini) )
+## Without sections (-vQ=1 [don't strip quotes]; -vL=1 [don't strip leading spaces]; -vT=1 [don't strip trailing spaces])
+# mapfile -t test_key1 < <(awk -vk="test_key1" '$0~"^\\s*"k"\\s*[:=]"{sub(/^[^:=]+[:=]\\s*/,"");sub(/\s+$/,"");if(L=="")sub(/^"/,"");if(T=="")sub(/"$/,"");if(Q==""){sub(/^"/,"");sub(/"$/,"")};print}' config_test.ini)
 
-## With sections
-# test_key1=( $(awk -vs="test_section" -vk="test_key1" 'BEGIN{p=0}$0~/^[[:space:]]*\[/{p=0}$0~"^[[:space:]]*\\["s"\\]"{p=1}p==1&&$0~"^[[:space:]]*"k"[[:space:]]*[:=]"{sub(/^[^:=]+[:=][[:space:]]*/,"");sub(/[[:space:]]+$/,"");print}' config_test.ini) )
+## With sections (-vQ=1 [don't strip quotes]; -vL=1 [don't strip leading spaces]; -vT=1 [don't strip trailing spaces])
+# mapfile -t test_key1 < <(awk -vs="test_section" -vk="test_key1" 'BEGIN{p=0}$0~/^\\s*\[/{p=0}$0~"^\\s*\\["s"\\]"{p=1}p==1&&$0~"^\\s*"k"\\s*[:=]"{sub(/^[^:=]+[:=]/,"");if(L=="")sub(/^\s+/,"");if(T=="")sub(/\s+$/,"");if(Q==""){gsub(/^"/,"");gsub(/"$/,"")};print}' config_test.ini)
 
