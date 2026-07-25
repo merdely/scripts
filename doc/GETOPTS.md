@@ -1,5 +1,40 @@
 # Getopts examples
 
+## Long options:
+
+```bash
+# _LIB="/../lib"            # comment this line out if parseopts.sh is in the same directory as $0
+# _LIBDIR=/srv/scripts/lib  # Use a line like this to override location of parseopts.sh
+PARSEOPTS="${_LIBDIR:-"$(dirname "$0")${_LIB:-}"}/parseopts.sh"
+# shellcheck disable=SC1090,SC1091
+source "$PARSEOPTS" ; unset _LIB _LIBDIR
+
+# If using in functions, prepend following 2 lines with "local"
+OPT_SHORT="hfa:o?"
+OPT_LONG=("help" "flag" "arg:" "opt?")
+declare -a OPTRET
+parseopts "$OPT_SHORT" "${OPT_LONG[@]}" -- "$@" || exit 1
+set -- "${OPTRET[@]}" ; unset OPT_SHORT OPT_LONG OPTRET
+
+# If using in functions, change "usage" to "_usage"
+usage() { echo "usage: ${0##*/} [-h|--help] [-f|--flag] [-a|--arg ARG] [-o|--opt [OPT]]" ; exit "${1:-0}" ; }
+
+FLAG=0 ; ARG=0 ; ARG_VALUE="" ; OPT=0 ; OPT_VALUE=""   # For use outside a function
+# local flag=0 arg=0 arg_value="" opt=0 opt_value=""   # for use inside a function
+while true; do
+  case $1 in
+    -h|--help) usage ;;                         # In a function, change "usage" to "_usage"
+    -f|--flag) FLAG=1 ;;                        # In a function, use lowercase vars like "flag"
+    -a|--arg)  ARG=1 ; shift ; ARG_VALUE=$1 ;;  # In a function, use lowercase vars like "arg" and "arg_value"
+    -o|--opt)  OPT=1 ; [[ "$2" != -- ]] && { shift ; OPT_VALUE=$1 ; } ;;  # Function: use "opt"/"opt_value"
+    --) shift ; break ;;
+    *) ;;
+  esac
+  shift
+done
+# unset _usage   # If using in a function, uncomment this line
+```
+
 ## Simple example:
 
 ```bash
