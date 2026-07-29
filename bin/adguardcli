@@ -74,7 +74,7 @@ elif [ "$1" = stats ]; then
     "$adguard_server"/control/stats | $jqcmd
 elif [ "$1" = update ]; then
   ! $quiet && printf "Performing self-update: "
-  if curl -sLf "${devnull[@]}" -X POST -d '{ }' \
+  if ! curl -sLf "${devnull[@]}" -X POST -d '{ }' \
     -H 'Content-Type: application/json' \
     -H "Authorization: Basic $(printf '%s:%s' "$adguard_username" "$adguard_password"|base64)" \
     "$adguard_server"/control/update; then
@@ -85,7 +85,7 @@ elif [ "$1" = update ]; then
   echo
 else
   ! $quiet && printf "Clearing cache: "
-  if curl -sLf -o /dev/null -X POST \
+  if ! curl -sLf -o /dev/null -X POST \
     -H "Authorization: Basic $(printf '%s:%s' "$adguard_username" "$adguard_password"|base64)" \
     "$adguard_server"/control/cache_clear &> /dev/null; then
     echo
@@ -93,8 +93,12 @@ else
     exit 1
   fi
   sleep .5
-  curl -sLf "${devnull[@]}" -X POST \
+  if ! curl -sLf "${devnull[@]}" -X POST \
     -H "Authorization: Basic $(printf '%s:%s' "$adguard_username" "$adguard_password"|base64)" \
-    "$adguard_server"/control/cache_clear
+    "$adguard_server"/control/cache_clear &> /dev/null; then
+    echo
+    echo "Error: Clearing the cache (for a second time) failed"
+    exit 1
+  fi
   echo
 fi
