@@ -136,7 +136,7 @@ pid_outdated() {
 
   if [[ -r "/proc/$pid/maps" ]]; then
     local deleted_lib
-    deleted_lib=$(grep -oP '(?<=\s)/\S+\.so\S*\s+\(deleted\)' "/proc/$pid/maps" 2>/dev/null | head -1 || true)
+    deleted_lib=$(grep -oP '(?<=\s)/\S+\.so(\.[0-9]+)*\s+\(deleted\)' "/proc/$pid/maps" 2>/dev/null | head -1 || true)
     if [[ -n "$deleted_lib" ]]; then
       echo "lib replaced: $deleted_lib"
       return
