@@ -38,10 +38,12 @@ shift $((OPTIND -1))
 jqcmd="cat"
 command -v jq &> /dev/null && jqcmd='jq -r'
 
+rbw_entry="++++Home Apps - Authelia, atuin, etc"
+
 if command -v rbw &>/dev/null; then
-  adguard_username=$(rbw get -f username "++++Home Apps - Authelia, etc")
-  adguard_server=$(rbw get -f "AdGuard Home URI" "++++Home Apps - Authelia, etc")
-  adguard_password=$(rbw get -f password "++++Home Apps - Authelia, etc")
+  adguard_username=$(rbw get -f username "$rbw_entry")
+  adguard_server=$(rbw get -f "AdGuard Home URI" "$rbw_entry")
+  adguard_password=$(rbw get -f password "$rbw_entry")
   [ -z "$adguard_server" ] && echo "Error: Could not read AdGuard Server from Bitwarden" && exit 1
   [ -z "$adguard_username" ] && echo "Error: Could not read AdGuard Username from Bitwarden" && exit 1
   [ -z "$adguard_password" ] && echo "Error: Could not read AdGuard Password from Bitwarden" && exit 1
