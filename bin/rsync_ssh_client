@@ -27,8 +27,9 @@ if ! echo "$SSH_ORIGINAL_COMMAND" | grep -qE "^rsync --server --sender -v?lH?ogD
   exit 1
 fi
 
+# shellcheck disable=2086
 if [ "$uname" = Darwin ] || [ "$uname" = OpenBSD ]; then
-  /usr/bin/nice -n 19 "$SSH_ORIGINAL_COMMAND"
+  /usr/bin/nice -n 19 $SSH_ORIGINAL_COMMAND
 else
-  /usr/bin/nice -n 19 /usr/bin/ionice -c 2 "$SSH_ORIGINAL_COMMAND"
+  /usr/bin/nice -n 19 /usr/bin/ionice -c 2 $SSH_ORIGINAL_COMMAND
 fi
