@@ -3,14 +3,16 @@
 uname=$(uname -s)
 [ -z "$SSH_ORIGINAL_COMMAND" ] && echo "This script is for use with SSH + rsync + authorized_keys command" && exit 1
 
-if [ "$SSH_ORIGINAL_COMMAND" = backup_list ]; then
+if [ "$SSH_ORIGINAL_COMMAND" = backup_list ] ||
+   [ "$SSH_ORIGINAL_COMMAND" = "cat /etc/timemachine/backup_list" ]; then
   if [ "$uname" = Darwin ]; then
     cat /var/root/.timemachine/backup_list
   else
     cat /etc/timemachine/backup_list
   fi
   exit 0
-elif [ "$SSH_ORIGINAL_COMMAND" = exclude_list ]; then
+elif [ "$SSH_ORIGINAL_COMMAND" = exclude_list ] ||
+     [ "$SSH_ORIGINAL_COMMAND" = "cat /etc/timemachine/exclude_list" ]; then
   if [ "$uname" = Darwin ]; then
     cat /var/root/.timemachine/exclude_list
   else

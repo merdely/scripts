@@ -65,28 +65,28 @@ case "${clients[$1]}" in
   default)
     backup_dest=$backup_base/$1
     backup_source=$1
-    list_cmd="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key $1 "
+    list_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" "$1" cat)
     remote=true
-    ssh_cmd="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key -l root"
-    ssh_string=(-e "$ssh_cmd")
+    ssh_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" -l root)
+    ssh_string=(-e "${ssh_cmd[@]}")
     ssh_user="$1:"
     ;;
   mac)
     backup_dest=$backup_base/$1
     backup_source=$1
-    list_cmd="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key $1 "
+    list_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" "$1" cat)
     remote=true
-    ssh_cmd="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key -l root"
-    ssh_string=(-e "$ssh_cmd")
+    ssh_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" -l root)
+    ssh_string=(-e "${ssh_cmd[@]}")
     ssh_user="$1:"
     xarg=""
     ;;
   local)
     backup_dest=$backup_base/$1
     backup_source=$1
-    list_cmd="cat /etc/timemachine/"
+    list_cmd=(cat)
     remote=false
-    ssh_cmd=''
+    ssh_cmd=()
     ssh_string=()
     ssh_user=""
     ;;
@@ -96,11 +96,17 @@ case "${clients[$1]}" in
     ;;
 esac
 
+# Even though the command is 'cat /etc/timemachine/backup_list', the script
+# on the remote system points to the right file even though
+# SSH_ORIGINAL_COMMAND contains "/etc/timemachine/backup_list"
 backup_list=$(mktemp)
-"${list_cmd}backup_list" | grep -v ^# > "$backup_list"
+"${list_cmd[@]}" /etc/timemachine/backup_list | grep -v ^# > "$backup_list"
 
+# Even though the command is 'cat /etc/timemachine/exclude_list', the script
+# on the remote system points to the right file even though
+# SSH_ORIGINAL_COMMAND contains "/etc/timemachine/exclude_list"
 exclude_list=$(mktemp)
-"${list_cmd}exclude_list" | grep -v ^# > "$exclude_list"
+"${list_cmd[@]}" /etc/timemachine/exclude_list | grep -v ^# > "$exclude_list"
 
 echo "backup_source=$backup_source"
 echo "remote=$remote"
