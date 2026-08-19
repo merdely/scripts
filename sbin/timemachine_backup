@@ -30,13 +30,13 @@ usage() {
   echo "  clients[backupserver]=local"
   echo "  backup_bases[%]=/default/backup/base/location"
   echo "  backup_bases[unixserver2]=/backup/base/location/for/unixserver2"
-  exit $1
+  exit "$1"
 }
 
 testmode=false
 varg=""
 xarg=""
-while getopts ":htvx" opt; do
+while getopts ":htvxX" opt; do
   case $opt in
     t) testmode=true ;;
     v) varg="-vi" ;;
@@ -47,12 +47,13 @@ done
 shift $((OPTIND -1))
 
 declare -A clients ssh_keys backup_bases
-[ -r $config_file ] && source $config_file
+# shellcheck disable=1090
+[ -r $config_file ] && source "$config_file"
 [ ${#clients[@]} = 0 ] && echo "Error: You must define clients in $config_file" && echo && usage 1
 [ -z "${ssh_keys[%]}" ] && echo "Error: You must define at least ssh_keys[%] in $config_file" && echo && usage 1
 [ -z "${backup_bases[%]}" ] && echo "Error: You must define at least backup_bases[%] in $config_file" && echo && usage 1
 
-readonly datetime="$(date "${date_format:-+%Y-%m-%d_%H-%M-%S}")"
+datetime="$(date "${date_format:-+%Y-%m-%d_%H-%M-%S}")"
 
 backup_base=${backup_bases[%]}
 [[ -v backup_bases[$1] ]] && backup_base=${backup_bases[$1]}
@@ -96,30 +97,30 @@ case "${clients[$1]}" in
 esac
 
 backup_list=$(mktemp)
-${list_cmd}backup_list | grep -v ^# > $backup_list
+"${list_cmd}backup_list" | grep -v ^# > "$backup_list"
 
 exclude_list=$(mktemp)
-${list_cmd}exclude_list | grep -v ^# > $exclude_list
+"${list_cmd}exclude_list" | grep -v ^# > "$exclude_list"
 
 echo "backup_source=$backup_source"
 echo "remote=$remote"
-echo "backup_list=$backup_list ($(cat $backup_list | wc -l))"
-echo "exclude_list=$exclude_list ($(cat $exclude_list | wc -l))"
+echo "backup_list=$backup_list ($(cat "$backup_list" | wc -l))"
+echo "exclude_list=$exclude_list ($(cat "$exclude_list" | wc -l))"
 
 [ ! -d "$backup_dest/$datetime" ] && mkdir -p "$backup_dest/$datetime"
 
 sources=""
-for src in $(cat $backup_list); do
+while read -r src ; do
   sources="$sources root@$backup_source:$src"
-done
+done < "$backup_list"
 
-echo Backup started at $(date "+%F %T")
+echo Backup started at "$(date "+%F %T")"
 started=$(date +%s)
 
-for src in $(cat $backup_list); do
+while read -r src; do
   link_dest=""
   if [ -e "$backup_dest/latest" ]; then
-    if [ $src = / ]; then
+    if [ "$src" = / ]; then
       link_dest="--link-dest=$backup_dest/latest$src"
     else
       dir=$backup_dest/latest$src
@@ -127,23 +128,23 @@ for src in $(cat $backup_list); do
     fi
   fi
 
-  if [ $src = / ]; then
+  if [ "$src" = / ]; then
     dest=$backup_dest/$datetime$src
   else
     dest=$backup_dest/$datetime$src
     dest=${dest%/*}/
   fi
-  rsync_opts=(-ax $xarg $varg --delete $link_dest --exclude-from=$exclude_list "${ssh_string[@]}" "$ssh_user$src" "$dest")
+  rsync_opts=(-ax "$xarg" "$varg" --delete "$link_dest" --exclude-from="$exclude_list" "${ssh_string[@]}" "$ssh_user$src" "$dest")
   if $testmode || [ "$varg" != "" ]; then
-    env SSH_AUTH_SOCK=/dev/null echo rsync ${rsync_opts[@]}
+    env SSH_AUTH_SOCK=/dev/null echo rsync "${rsync_opts[@]}"
   fi
   if ! $testmode; then
-    mkdir -p $dest
+    mkdir -p "$dest"
     env SSH_AUTH_SOCK=/dev/null rsync "${rsync_opts[@]}"
   fi
-done
+done < "$backup_list"
 ended=$(date +%s)
-echo Backup completed at $(date "+%F %T")
+echo Backup completed at "$(date "+%F %T")"
 total_time=$((ended - started))
 if [ $total_time -lt 60 ]; then
   echo "Backup took $total_time seconds"
@@ -161,5 +162,5 @@ else
   ln -s "$datetime" "$backup_dest/latest"
 fi
 
-rm -f $backup_list $exclude_list
+rm -f "$backup_list" "$exclude_list"
 
