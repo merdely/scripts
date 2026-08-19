@@ -15,6 +15,7 @@ trap cleanup SIGINT
 usage() {
   echo "usage: $progname [-h] [-t] [-v] [-X] CLIENTNAME"
   echo "            -h                : Print this help text"
+  echo "            -d                : Print debug messages"
   echo "            -t                : Test mode (print rsync commands instead of running them)"
   echo "            -v                : Be verbose (rsync's -v and -i)"
   echo "            -X                : Preserve extended attributes (rsync's -X)"
@@ -36,8 +37,10 @@ usage() {
 testmode=false
 varg=""
 xarg=""
-while getopts ":htvxX" opt; do
+debug=false
+while getopts ":hdtvxX" opt; do
   case $opt in
+    d) debug=true ;;
     t) testmode=true ;;
     v) varg="-vi" ;;
     X) xarg="-X" ;;
@@ -141,6 +144,7 @@ while read -r src; do
     dest=${dest%/*}/
   fi
   rsync_opts=(-ax "$xarg" "$varg" --delete "$link_dest" --exclude-from="$exclude_list" "${ssh_string[@]}" "$ssh_user$src" "$dest")
+  "$debug" && set -x
   if $testmode || [ "$varg" != "" ]; then
     env SSH_AUTH_SOCK=/dev/null echo rsync "${rsync_opts[@]}"
   fi
@@ -148,6 +152,7 @@ while read -r src; do
     mkdir -p "$dest"
     env SSH_AUTH_SOCK=/dev/null rsync "${rsync_opts[@]}"
   fi
+  "$debug" && set +x
 done < "$backup_list"
 ended=$(date +%s)
 echo Backup completed at "$(date "+%F %T")"
