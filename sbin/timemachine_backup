@@ -70,8 +70,7 @@ case "${clients[$1]}" in
     backup_source=$1
     list_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" "$1" cat)
     remote=true
-    ssh_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" -l root)
-    ssh_string=(-e "${ssh_cmd[@]}")
+    RSYNC_RSH="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key -l root"
     ssh_user="$1:"
     ;;
   mac)
@@ -79,8 +78,7 @@ case "${clients[$1]}" in
     backup_source=$1
     list_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" "$1" cat)
     remote=true
-    ssh_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" -l root)
-    ssh_string=(-e "${ssh_cmd[@]}")
+    RSYNC_RSH="env SSH_AUTH_SOCK=/dev/null ssh -i $ssh_key -l root"
     ssh_user="$1:"
     xarg=()
     ;;
@@ -89,8 +87,7 @@ case "${clients[$1]}" in
     backup_source=$1
     list_cmd=(cat)
     remote=false
-    ssh_cmd=()
-    ssh_string=()
+    unset RSYNC_RSH
     ssh_user=""
     ;;
   *)
@@ -98,6 +95,7 @@ case "${clients[$1]}" in
     exit 1
     ;;
 esac
+export RSYNC_RSH
 
 # Even though the command is 'cat /etc/timemachine/backup_list', the script
 # on the remote system points to the right file even though
@@ -143,7 +141,7 @@ while read -r src; do
     dest=$backup_dest/$datetime$src
     dest=${dest%/*}/
   fi
-  rsync_opts=(-ax "${xarg[@]}" "${varg[@]}" --delete "$link_dest" --exclude-from="$exclude_list" "${ssh_string[@]}" "$ssh_user$src" "$dest")
+  rsync_opts=(-ax "${xarg[@]}" "${varg[@]}" --delete "$link_dest" --exclude-from="$exclude_list" "$ssh_user$src" "$dest")
   "$debug" && set -x
   if $testmode || [ "${varg[*]}" != "" ]; then
     env SSH_AUTH_SOCK=/dev/null echo rsync "${rsync_opts[@]}"
