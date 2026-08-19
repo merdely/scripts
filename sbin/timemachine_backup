@@ -35,15 +35,15 @@ usage() {
 }
 
 testmode=false
-varg=""
-xarg=""
+varg=()
+xarg=()
 debug=false
 while getopts ":hdtvxX" opt; do
   case $opt in
     d) debug=true ;;
     t) testmode=true ;;
-    v) varg="-vi" ;;
-    X) xarg="-X" ;;
+    v) varg=(-vi) ;;
+    X) xarg=(-X) ;;
     *) usage ;;
   esac
 done
@@ -82,7 +82,7 @@ case "${clients[$1]}" in
     ssh_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" -l root)
     ssh_string=(-e "${ssh_cmd[@]}")
     ssh_user="$1:"
-    xarg=""
+    xarg=()
     ;;
   local)
     backup_dest=$backup_base/$1
@@ -143,9 +143,9 @@ while read -r src; do
     dest=$backup_dest/$datetime$src
     dest=${dest%/*}/
   fi
-  rsync_opts=(-ax "$xarg" "$varg" --delete "$link_dest" --exclude-from="$exclude_list" "${ssh_string[@]}" "$ssh_user$src" "$dest")
+  rsync_opts=(-ax "${xarg[@]}" "${varg[@]}" --delete "$link_dest" --exclude-from="$exclude_list" "${ssh_string[@]}" "$ssh_user$src" "$dest")
   "$debug" && set -x
-  if $testmode || [ "$varg" != "" ]; then
+  if $testmode || [ "${varg[*]}" != "" ]; then
     env SSH_AUTH_SOCK=/dev/null echo rsync "${rsync_opts[@]}"
   fi
   if ! $testmode; then
