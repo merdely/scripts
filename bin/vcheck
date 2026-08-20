@@ -615,14 +615,16 @@ docker_container_search() { # utility_function
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
-  docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
+  # docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
+  docker_ps=$(for f in $(docker ps --format '{{.Names}}'); do docker inspect --format "$f|{{.Config.Image}}|{{.State.StartedAt}}" "$f"; done)
   log -d -d -d "docker ps output = '$docker_ps'"
 
   log -d -d "Searching image field for ${1:-}"
   out=$(awk -F '|' -v s="${1:-}" '$2 ~ s {print $1"|"$3;exit}' <<< "$docker_ps")
   log -d -d "awk output searching image field = '$out'"
   if [[ -n "$out" ]]; then
-    seconds=$(calc_seconds "${out##*|}")
+    # seconds=$(calc_seconds "${out##*|}")
+    seconds=$(( $(date +"%s") - $(date -d "${out##*|}" +"%s") ))
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
     log -d -d "Comparing ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2}"
     # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
@@ -634,7 +636,8 @@ docker_container_search() { # utility_function
   out=$(awk -F '|' -v s="${1:-}" '$1 ~ s {print $1"|"$3;exit}' <<< "$docker_ps")
   log -d -d "awk output search name field = '$out'"
   if [[ -n "$out" ]]; then
-    seconds=$(calc_seconds "${out##*|}")
+    # seconds=$(calc_seconds "${out##*|}")
+    seconds=$(( $(date +"%s") - $(date -d "${out##*|}" +"%s") ))
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
     # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
     $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return $DOCKER_TOO_OLD
@@ -756,14 +759,16 @@ docker_image_search() { # utility_function
   out=$(use_sudo_exec "$@") ; ret=$?
   case $ret in 0)echo "$out";return 0;;2|3|4);;"$DOCKER_TOO_OLD")log -d "Returning DOCKER_TOO_OLD";return $DOCKER_TOO_OLD;; *) log -d "use_sudo_exec error $ret";return 1;;esac
 
-  docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
+  # docker_ps=$(docker ps --format='{{.Names}}|{{.Image}}|{{.RunningFor}}')
+  docker_ps=$(for f in $(docker ps --format '{{.Names}}'); do docker inspect --format "$f|{{.Config.Image}}|{{.State.StartedAt}}" "$f"; done)
   log -d -d -d "docker ps output = '$docker_ps'"
 
   # Search for image by container name
   out=$(awk -F '|' -v s="${1:-}" '$1 == s {print $2"|"$3;exit}' <<< "$docker_ps")
   log -d -d "awk output = '$out'"
   if [[ -n "$out" ]]; then
-    seconds=$(calc_seconds "${out##*|}")
+    # seconds=$(calc_seconds "${out##*|}")
+    seconds=$(( $(date +"%s") - $(date -d "${out##*|}" +"%s") ))
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
     # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
     $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return $DOCKER_TOO_OLD
@@ -775,7 +780,8 @@ docker_image_search() { # utility_function
   out=$(awk -F '|' -v s="${1:-}" '$2 ~ s {print $2"|"$3;exit}' <<< "$docker_ps")
   log -d -d "awk output = '$out'"
   if [[ -n "$out" ]]; then
-    seconds=$(calc_seconds "${out##*|}")
+    # seconds=$(calc_seconds "${out##*|}")
+    seconds=$(( $(date +"%s") - $(date -d "${out##*|}" +"%s") ))
     log -d -d "${out%%|*} running for ${out##*|} ($seconds seconds)"
     # Return code DOCKER_TOO_OLD when docker_filter is enabled and container is older than seconds
     $docker_filter && (( ${seconds:-${docker_seconds:-1}} > ${docker_seconds:-2} )) && return $DOCKER_TOO_OLD
