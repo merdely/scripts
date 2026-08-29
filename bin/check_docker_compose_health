@@ -14,8 +14,9 @@ trap 'exit 1' INT TERM
 usage() {
   echo "usage: $PROGNAME [Options] [COMPOSE_FILE...|BASE_DIR...]"
   echo "Options:"
-  echo "  -i CONTAINER: Ignore container CONTAINER (may be used more than once)"
-  echo "                CONTAINER can be a regular expression (e.g. 'nginx_.*')"
+  echo "  -i CONTAINER : Ignore container CONTAINER (may be used more than once)"
+  echo "                 CONTAINER can be a regular expression (e.g. 'nginx_.*')"
+  echo "  -v           : Print verbose messages to stderr"
   exit "${1:-0}"
 }
 
@@ -52,24 +53,40 @@ process_arg() {
 
 process_compose_file() {
   [[ -z "$1" ]] && { echo "Error: ${FUNCNAME[0]} requires an argument" >&2 ; return 255 ; }
-  local services=() out="$TEMPDIR/out.txt" err="$TEMPDIR/err.txt"
+  local services=() ignore=() out="$TEMPDIR/out.txt" err="$TEMPDIR/err.txt"
   if ! docker compose -f "$1" config --format json > "$out" 2> "$err"; then
     cat "$err" >&2
     return 1
   fi
-  mapfile -t services < <(jq -r '.services | to_entries[] | .value.container_name // .key' "$out")
+  mapfile -t services < <(
+    jq -r '.services
+           | to_entries[]
+           | select(.value.labels.docker_compose_health_ignore | tostring != "false")
+           | .value.container_name // .key' "$out"
+  )
   if (( ${#services[@]} > 0 )); then
     configured_containers=("${configured_containers[@]}" "${services[@]}")
+  fi
+
+  mapfile -t ignore < <(
+    jq -r '.services
+           | to_entries[]
+           | select(.value.labels.docker_compose_health_ignore | tostring == "false")
+           | .value.container_name // .key' "$out"
+  )
+  if (( ${#ignore[@]} > 0 )); then
+    ignored_containers=("${ignored_containers[@]}" "${ignore[@]}")
   fi
 }
 
 main() {
   local OPTIND=1 OPTARG="" opt=""
-  ignore_list=()
+  local verbose=false ignore_list=()
   for i in "$@"; do [[ "$i" == "--help" ]] && usage; done
-  while getopts ":hi:" opt; do
+  while getopts ":hi:v" opt; do
     case $opt in
       i) ignore_list+=("$OPTARG") ;;
+      v) verbose=true ;;
       h) usage ;;
       :) echo "-$OPTARG requires an argument" ; exit 1 ;;
       \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
@@ -93,7 +110,7 @@ main() {
   done
 
   # Loop through compose files and find configured containers/services
-  local configured_containers=() container="" file=""
+  local configured_containers=() ignored_containers=() container="" file=""
   for file in "${compose_files[@]}"; do
     process_compose_file "$file"
   done
@@ -103,32 +120,63 @@ main() {
   eval "$(docker ps --format 'state[{{.Names}}]={{.State}} ; status[{{.Names}}]={{.HealthStatus}}')"
 
   # Loop through configured containers and make sure each one is running and healthy
-  local not_running=() unhealthy=() healthy=0 running=0 skipped=0
+  local running=() not_running=() unhealthy=() healthy=()
   for container in "${configured_containers[@]}"; do
-    [[ "$container" =~ ^($(IFS="|"; echo "${ignore_list[*]}"))$ ]] && { ((skipped++)) ; continue ; }
+    [[ "$container" =~ ^($(IFS="|"; echo "${ignore_list[*]}"))$ ]] && { ignored_containers+=("$container") ; continue ; }
     local is_healthy=true
     if [[ -z "${state[$container]}" || "${state[$container]}" != running ]]; then
       not_running+=("$container")
       is_healthy=false
     elif [[ ! "${status[$container]}" =~ ^(healthy|starting|none)$ ]]; then
       unhealthy+=("$container")
+      running+=("$container")
       is_healthy=false
-      ((running++))
     fi
-    $is_healthy && { ((healthy++)) ; ((running++)) ; }
+    $is_healthy && { healthy+=("$container") ; running+=("$container") ; }
   done
 
   local expected=0
-  expected=$(( ${#configured_containers[@]} - skipped ))
+  expected=$(( ${#configured_containers[@]} - ${#ignored_containers[@]} ))
+
+  if $verbose; then
+    echo "Configured Containers:" >&2
+    printf '%s\n' "${configured_containers[@]}" | nl >&2
+    echo >&2
+    if (( ${#running[@]} > 0 )); then
+      echo "Running Containers:" >&2
+      printf '%s\n' "${running[@]}" | nl >&2
+      echo >&2
+    fi
+    if (( ${#healthy[@]} > 0 )); then
+      echo "Healthy Containers:" >&2
+      printf '%s\n' "${healthy[@]}" | nl >&2
+      echo >&2
+    fi
+    if (( ${#unhealthy[@]} > 0 )); then
+      echo "Unhealthy Containers:" >&2
+      printf '%s\n' "${unhealthy[@]}" | nl >&2
+      echo >&2
+    fi
+    if (( ${#not_running[@]} > 0 )); then
+      echo "Not Running Containers:" >&2
+      printf '%s\n' "${not_running[@]}" | nl >&2
+      echo >&2
+    fi
+    if (( ${#ignored_containers[@]} > 0 )); then
+      echo "Ignored Containers:" >&2
+      printf '%s\n' "${ignored_containers[@]}" | nl >&2
+      echo >&2
+    fi
+  fi
 
   if (( ${#unhealthy[@]} > 0 )); then
-    echo "CRITICAL: ${#unhealthy[@]} unhealthy service(s): ${unhealthy[*]} | running=$running expected=$expected healthy=$healthy unhealthy=${#unhealthy[@]}"
+    echo "CRITICAL: ${#unhealthy[@]} unhealthy service(s): ${unhealthy[*]} | running=${#running[@]} expected=$expected healthy=${#healthy[@]} unhealthy=${#unhealthy[@]} ignored=${#ignored_containers[@]}"
     exit 2
   elif (( ${#not_running[@]} > 0 )); then
-    echo "CRITICAL: ${#not_running[@]} service(s) not running: ${not_running[*]} | running=$running expected=$expected healthy=$healthy unhealthy=${#unhealthy[@]}"
+    echo "CRITICAL: ${#not_running[@]} service(s) not running: ${not_running[*]} | running=${#running[@]} expected=$expected healthy=${#healthy[@]} unhealthy=${#unhealthy[@]} ignored=${#ignored_containers[@]}"
     exit 1
   else
-    echo "OK: All $expected services running and healthy | running=$running expected=$expected healthy=$healthy unhealthy=0"
+    echo "OK: All $expected services running and healthy | running=${#running[@]} expected=$expected healthy=${#healthy[@]} unhealthy=0 ignored=${#ignored_containers[@]}"
     exit 0
   fi
 }
