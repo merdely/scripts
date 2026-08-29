@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # Nagios check script for Docker Compose services
 # Returns:
 #   0 (OK) - All services running and healthy
@@ -6,111 +7,130 @@
 #   2 (CRITICAL) - Some services unhealthy
 #   3 (UNKNOWN) - Script error
 
-set -o pipefail
+TEMPDIR=$(mktemp -d)
+trap 'rm -Rf -- "$TEMPDIR"' EXIT
+trap 'exit 1' INT TERM
 
-progname=${0##*/}
-progname=${progname%.sh}
 usage() {
-  echo "usage: $progname [-h] COMPOSE_FILE"
+  echo "usage: $PROGNAME [Options] [COMPOSE_FILE...|BASE_DIR...]"
+  echo "Options:"
+  echo "  -i CONTAINER: Ignore container CONTAINER (may be used more than once)"
+  echo "                CONTAINER can be a regular expression (e.g. 'nginx_.*')"
   exit "${1:-0}"
 }
 
-ignore_list=()
-while getopts ":hi:" opt; do
-  case $opt in
-    i) ignore_list+=("$OPTARG") ;;
-    h) usage ;;
-    :) echo "-$OPTARG requires an argument" ; exit 1 ;;
-    \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
-  esac
-done
-shift $(( OPTIND - 1 ))
-
-# Configuration
-COMPOSE_FILE="${1:-docker-compose.yaml}"
-
-# Check if compose file exists
-if [[ ! -f "$COMPOSE_FILE" ]]; then
-    echo "UNKNOWN: Compose file $COMPOSE_FILE not found"
-    exit 3
-fi
-
-COMPOSE_DIR=${COMPOSE_FILE%/*}
-COMPOSE_CMD="docker compose"  # Use "docker-compose" for v1
-
-cd "$COMPOSE_DIR" || {
-    echo "UNKNOWN: Cannot change to directory $COMPOSE_DIR"
-    exit 3
+check_compose_file() {
+  [[ -z "$1" ]] && { echo "Error: ${FUNCNAME[0]} requires an argument" >&2 ; return 255 ; }
+  grep -q "services:" "$1"
 }
 
-# Get expected services
-EXPECTED_SERVICES=$($COMPOSE_CMD -f "$(basename "$COMPOSE_FILE")" config --services 2>/dev/null)
-if [[ $? -ne 0 ]]; then
-    echo "UNKNOWN: Failed to parse compose file"
-    exit 3
-fi
-
-EXPECTED_COUNT=$(echo "$EXPECTED_SERVICES" | wc -l)
-
-# Get running containers with their status
-CONTAINERS=$($COMPOSE_CMD -f "$(basename "$COMPOSE_FILE")" ps --format json 2>/dev/null)
-if [[ $? -ne 0 ]]; then
-    echo "UNKNOWN: Failed to get container status"
-    exit 3
-fi
-
-# Arrays to track issues
-NOT_RUNNING=()
-UNHEALTHY=()
-HEALTHY_COUNT=0
-RUNNING_COUNT=0
-
-# Parse each expected service
-while IFS= read -r service; do
-    # Get container info for this service
-    SERVICE_INFO=$(echo "$CONTAINERS" | jq -r --arg svc "$service" 'select(.Service == $svc)')
-
-    if [[ -z "$SERVICE_INFO" && " ${ignore_list[*]} " != *" $service "* ]]; then
-        # Service not running at all
-        NOT_RUNNING+=("$service")
-        continue
+process_arg() {
+  [[ -z "$1" ]] && { echo "Error: ${FUNCNAME[0]} requires an argument" >&2 ; return 255 ; }
+  local file_found=false
+  if [[ -f "$1" ]]; then
+    if check_compose_file "$1"; then
+      echo "$1"
+      file_found=true
     fi
-
-    # Check state and health
-    STATE=$(echo "$SERVICE_INFO" | jq -r '.State')
-    HEALTH=$(echo "$SERVICE_INFO" | jq -r '.Health // "none"')
-
-    if [[ "$STATE" != "running"  && " ${ignore_list[*]} " != *" $service "* ]]; then
-        NOT_RUNNING+=("$service")
-        continue
+  else
+    for file in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+      if [[ -f "$1"/"$file" ]]; then
+        if check_compose_file "$1"/"$file"; then
+          echo "$1"/"$file"
+          file_found=true
+        fi
+      fi
+    done
+    if ! $file_found; then
+      for file in "$1"/*; do
+        [[ ! -d "$file" ]] && continue
+        process_arg "$file"
+      done
     fi
+  fi
+}
 
-    RUNNING_COUNT=$((RUNNING_COUNT + 1))
+process_compose_file() {
+  [[ -z "$1" ]] && { echo "Error: ${FUNCNAME[0]} requires an argument" >&2 ; return 255 ; }
+  local services=() out="$TEMPDIR/out.txt" err="$TEMPDIR/err.txt"
+  if ! docker compose -f "$1" config --format json > "$out" 2> "$err"; then
+    cat "$err" >&2
+    return 1
+  fi
+  mapfile -t services < <(jq -r '.services | to_entries[] | .value.container_name // .key' "$out")
+  if (( ${#services[@]} > 0 )); then
+    configured_containers=("${configured_containers[@]}" "${services[@]}")
+  fi
+}
 
-    # Check health status
-    case "$HEALTH" in
-        "healthy")
-            HEALTHY_COUNT=$((HEALTHY_COUNT + 1))
-            ;;
-        "unhealthy")
-             [[ " ${ignore_list[*]} " != *" $service "* ]] && UNHEALTHY+=("$service")
-            ;;
-        "none"|"starting")
-            # No health check defined or still starting - count as healthy
-            HEALTHY_COUNT=$((HEALTHY_COUNT + 1))
-            ;;
+main() {
+  local OPTIND=1 OPTARG="" opt=""
+  ignore_list=()
+  for i in "$@"; do [[ "$i" == "--help" ]] && usage; done
+  while getopts ":hi:" opt; do
+    case $opt in
+      i) ignore_list+=("$OPTARG") ;;
+      h) usage ;;
+      :) echo "-$OPTARG requires an argument" ; exit 1 ;;
+      \?) echo "Unknown option: -$OPTARG" ; exit 1 ;;
     esac
+  done
+  shift $(( OPTIND - 1 ))
 
-done <<< "$EXPECTED_SERVICES"
+  if (( $# == 0 )) && [[ -z "$COMPOSE_FILE" ]]; then
+    usage 1
+  fi
 
-# Determine exit status and message
-if [[ ${#UNHEALTHY[@]} -gt 0 ]]; then
-    echo "CRITICAL: ${#UNHEALTHY[@]} unhealthy service(s): ${UNHEALTHY[*]} | running=$RUNNING_COUNT expected=$EXPECTED_COUNT healthy=$HEALTHY_COUNT unhealthy=${#UNHEALTHY[@]}"
+  # If no arguments were passed and COMPOSE_FILE is defined, add to arguments
+  [[ -n "$COMPOSE_FILE" ]] && set -- "$COMPOSE_FILE" "$@"
+
+  # Loop through passed arguments finding valid compose files
+  local compose_files=() arg=""
+  for arg in "$@"; do
+    local tmp=()
+    mapfile -t tmp < <(process_arg "$arg")
+    (( ${#tmp[@]} > 0 )) && compose_files=("${compose_files[@]}" "${tmp[@]}")
+  done
+
+  # Loop through compose files and find configured containers/services
+  local configured_containers=() container="" file=""
+  for file in "${compose_files[@]}"; do
+    process_compose_file "$file"
+  done
+
+  # Get a list of running containers with their state and status
+  declare -A state status
+  eval "$(docker ps --format 'state[{{.Names}}]={{.State}} ; status[{{.Names}}]={{.HealthStatus}}')"
+
+  # Loop through configured containers and make sure each one is running and healthy
+  local not_running=() unhealthy=() healthy=0 running=0 skipped=0
+  for container in "${configured_containers[@]}"; do
+    [[ "$container" =~ ^($(IFS="|"; echo "${ignore_list[*]}"))$ ]] && { ((skipped++)) ; continue ; }
+    local is_healthy=true
+    if [[ -z "${state[$container]}" || "${state[$container]}" != running ]]; then
+      not_running+=("$container")
+      is_healthy=false
+    elif [[ ! "${status[$container]}" =~ ^(healthy|starting|none)$ ]]; then
+      unhealthy+=("$container")
+      is_healthy=false
+      ((running++))
+    fi
+    $is_healthy && { ((healthy++)) ; ((running++)) ; }
+  done
+
+  local expected=0
+  expected=$(( ${#configured_containers[@]} - skipped ))
+
+  if (( ${#unhealthy[@]} > 0 )); then
+    echo "CRITICAL: ${#unhealthy[@]} unhealthy service(s): ${unhealthy[*]} | running=$running expected=$expected healthy=$healthy unhealthy=${#unhealthy[@]}"
     exit 2
-elif [[ ${#NOT_RUNNING[@]} -gt 0 ]]; then
-    echo "WARNING: ${#NOT_RUNNING[@]} service(s) not running: ${NOT_RUNNING[*]} | running=$RUNNING_COUNT expected=$EXPECTED_COUNT healthy=$HEALTHY_COUNT unhealthy=${#UNHEALTHY[@]}"
+  elif (( ${#not_running[@]} > 0 )); then
+    echo "CRITICAL: ${#not_running[@]} service(s) not running: ${not_running[*]} | running=$running expected=$expected healthy=$healthy unhealthy=${#unhealthy[@]}"
     exit 1
-else
-    echo "OK: All $EXPECTED_COUNT services running and healthy | running=$RUNNING_COUNT expected=$EXPECTED_COUNT healthy=$HEALTHY_COUNT unhealthy=0"
+  else
+    echo "OK: All $expected services running and healthy | running=$running expected=$expected healthy=$healthy unhealthy=0"
     exit 0
-fi
+  fi
+}
+
+main "$@"
