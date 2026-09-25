@@ -49,7 +49,7 @@ keys[mercury,/root/.ssh/authorized_keys.local]=$(
   echo 'restrict,command="rsync --server --sender -vlogDtpre.iLsfxCIvu . /var/lib/libvirt/images/" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOJ7HDgDz7L8EJYQ2JYpv7eKdQfdlSZlNkD/xoGnAK8J backup2@earth' | sum
 )
 keys[sinope,/home/mike/.ssh/authorized_keys.local]=$(
-  echo 'from="192.168.26.235",restrict,command="/srv/scripts/bin/picframe_mode.sh" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPibUaqgOGK0ZyE5Fi7o3LfNu23J1/wDYUjy1f+CMmKQ homeassistant' | sum
+  echo 'from="192.168.26.235",restrict,command="/home/mike/.local/bin/manage_picframe" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPibUaqgOGK0ZyE5Fi7o3LfNu23J1/wDYUjy1f+CMmKQ homeassistant' | sum
 )
 keys[carpo,/home/ha/.ssh/authorized_keys]=$(
   echo 'from="192.168.25.40",command="$HOME/bin/manage_camera",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPibUaqgOGK0ZyE5Fi7o3LfNu23J1/wDYUjy1f+CMmKQ homeassistant' | sum
