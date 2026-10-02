@@ -3,23 +3,20 @@
 uname=$(uname -s)
 [ -z "$SSH_ORIGINAL_COMMAND" ] && echo "This script is for use with SSH + rsync + authorized_keys command" && exit 1
 
-if [ "$SSH_ORIGINAL_COMMAND" = backup_list ] ||
-   [ "$SSH_ORIGINAL_COMMAND" = "cat /etc/timemachine/backup_list" ]; then
-  if [ "$uname" = Darwin ]; then
-    cat /var/root/.timemachine/backup_list
-  else
+case "$SSH_ORIGINAL_COMMAND" in
+  backup_list|cat" "/etc/timemachine/backup_list)
     cat /etc/timemachine/backup_list
-  fi
-  exit 0
-elif [ "$SSH_ORIGINAL_COMMAND" = exclude_list ] ||
-     [ "$SSH_ORIGINAL_COMMAND" = "cat /etc/timemachine/exclude_list" ]; then
-  if [ "$uname" = Darwin ]; then
-    cat /var/root/.timemachine/exclude_list
-  else
+    exit 0 ;;
+  cat" "/var/root/.timemachine/backup_list)
+    cat /var/root/.timemachine/backup_list
+    exit 0 ;;
+  exclude_list|cat" "/etc/timemachine/exclude_list)
     cat /etc/timemachine/exclude_list
-  fi
-  exit 0
-fi
+    exit 0 ;;
+  cat" "/var/root/.timemachine/exclude_list)
+    cat /var/root/.timemachine/exclude_list
+    exit 0 ;;
+esac
 
 # comment to store the flags copied from a server                      -v?lH?ogDtpX?rx?S?e\.iLsfxCI?v?u?
 if ! echo "$SSH_ORIGINAL_COMMAND" | grep -qE "^rsync --server --sender -v?lH?ogDtpX?rx?S?e\.iLsfxCI?v?u? \."; then
