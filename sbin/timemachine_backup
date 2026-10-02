@@ -125,13 +125,13 @@ echo Backup started at "$(date "+%F %T")"
 started=$(date +%s)
 
 while read -r src; do
-  link_dest=""
+  link_dest=()
   if [ -e "$backup_dest/latest" ]; then
     if [ "$src" = / ]; then
-      link_dest="--link-dest=$backup_dest/latest$src"
+      link_dest=("--link-dest=$backup_dest/latest$src")
     else
       dir=$backup_dest/latest$src
-      link_dest="--link-dest=${dir%/*}"
+      link_dest=("--link-dest=${dir%/*}")
     fi
   fi
 
@@ -141,7 +141,7 @@ while read -r src; do
     dest=$backup_dest/$datetime$src
     dest=${dest%/*}/
   fi
-  rsync_opts=(-ax "${xarg[@]}" "${varg[@]}" --delete "$link_dest" --exclude-from="$exclude_list" "$ssh_user$src" "$dest")
+  rsync_opts=(-ax "${xarg[@]}" "${varg[@]}" --delete "${link_dest[@]}" --exclude-from="$exclude_list" "$ssh_user$src" "$dest")
   "$debug" && set -x
   if $testmode || [ "${varg[*]}" != "" ]; then
     env SSH_AUTH_SOCK=/dev/null echo rsync "${rsync_opts[@]}"
