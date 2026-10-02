@@ -43,7 +43,9 @@ restrict,command="/srv/scripts/bin/rsync_ssh_client" ssh-ed25519 AAAAC3NzaC1lZDI
 declare -A keys def_keys checked
 
 def_keys[/root/.ssh/authorized_keys]=$root_key
-def_keys[/var/root/.ssh/authorized_keys]=$root_key
+def_keys[/var/root/.ssh/authorized_keys]=$(echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOgO13IYDIa4H0ebwea5xFnEQpPutuKfpKkD7pz8Dhmo mike@erdelynet.com
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEJwztKDEPYjFs0Z02V1zApEu6FuEGvKpqumbxODl5W9 root@earth
+restrict,command="/srv/scripts/bin/rsync_ssh_client" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJDsxNoLaDkuLIPH5293oREzILMYp0Q0ZBGxTzsCRHCu backup@earth' | sum)
 
 keys[pluto,/root/.ssh/authorized_keys]=$default_key
 keys[ceres,/root/.ssh/authorized_keys]=$default_key
