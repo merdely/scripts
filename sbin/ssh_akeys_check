@@ -45,6 +45,8 @@ declare -A keys def_keys checked
 def_keys[/root/.ssh/authorized_keys]=$root_key
 def_keys[/var/root/.ssh/authorized_keys]=$root_key
 
+keys[pluto,/root/.ssh/authorized_keys]=$default_key
+keys[ceres,/root/.ssh/authorized_keys]=$default_key
 keys[mercury,/root/.ssh/authorized_keys.local]=$(
   echo 'restrict,command="rsync --server --sender -vlogDtpre.iLsfxCIvu . /var/lib/libvirt/images/" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOJ7HDgDz7L8EJYQ2JYpv7eKdQfdlSZlNkD/xoGnAK8J backup2@earth' | sum
 )
