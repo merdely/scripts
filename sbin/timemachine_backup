@@ -64,6 +64,9 @@ backup_base=${backup_bases[%]}
 ssh_key=${ssh_keys[%]}
 [[ -v ssh_keys[$1] ]] && ssh_key=${ssh_keys[$1]}
 
+backup_list_file=/etc/timemachine/backup_list
+exclude_list_file=/etc/timemachine/exclude_list
+
 case "${clients[$1]}" in
   default)
     backup_dest=$backup_base/$1
@@ -74,6 +77,8 @@ case "${clients[$1]}" in
     ssh_user="$1:"
     ;;
   mac)
+    backup_list_file=/var/root/.timemachine/backup_list
+    exclude_list_file=/var/root/.timemachine/exclude_list
     backup_dest=$backup_base/$1
     backup_source=$1
     list_cmd=(env SSH_AUTH_SOCK=/dev/null ssh -i "$ssh_key" "$1" cat)
@@ -101,13 +106,13 @@ export RSYNC_RSH
 # on the remote system points to the right file even though
 # SSH_ORIGINAL_COMMAND contains "/etc/timemachine/backup_list"
 backup_list=$(mktemp)
-"${list_cmd[@]}" /etc/timemachine/backup_list | grep -v ^# > "$backup_list"
+"${list_cmd[@]}" "$backup_list_file" | grep -v ^# > "$backup_list"
 
 # Even though the command is 'cat /etc/timemachine/exclude_list', the script
 # on the remote system points to the right file even though
 # SSH_ORIGINAL_COMMAND contains "/etc/timemachine/exclude_list"
 exclude_list=$(mktemp)
-"${list_cmd[@]}" /etc/timemachine/exclude_list | grep -v ^# > "$exclude_list"
+"${list_cmd[@]}" "$exclude_list_file" | grep -v ^# > "$exclude_list"
 
 echo "backup_source=$backup_source"
 echo "remote=$remote"
