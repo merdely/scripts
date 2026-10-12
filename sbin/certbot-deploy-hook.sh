@@ -282,6 +282,6 @@ if [ -n "$mikrotik_router" ]; then
   scp -i $mikrotik_key $CA_CERT_PATH $mikrotik_user@$mikrotik_router:;
   ssh -i $mikrotik_key $mikrotik_user@$mikrotik_router "/certificate import file-name=\"${CERT_PATH##*/}\" name=\"$domain\""
   ssh -i $mikrotik_key $mikrotik_user@$mikrotik_router "/certificate import file-name=\"${CERT_KEY_PATH##*/}\" name=\"$domain\""
-  ssh -i $mikrotik_key $mikrotik_user@$mikrotik_router "/certificate import file-name=\"${CA_CERT_PATH##*/}\" name=\"$domain\""
+  ssh -i $mikrotik_key $mikrotik_user@$mikrotik_router "/certificate import file-name=\"${CA_CERT_PATH##*/}\" name=\"lets-encrypt-ca\""
   set +o xtrace
 fi
