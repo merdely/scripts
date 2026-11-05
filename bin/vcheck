@@ -598,6 +598,7 @@ curl_api() { # check_function
     machine=${url[0]#http://}
     machine=${machine#https://}
     machine=${machine%%/*}
+    machine=${machine%:*}
     printf 'machine %s login "%s" password "%s"' "$machine" "${username[0]}" "${password[0]}" > "$netrc"
     log -d -d -d -d "Netrc file: $(cat "$netrc")"
     log -d -d "Running: curl --no-progress-meter -Lo \"$out\" -X GET --netrc-file \"$netrc\" -n \"${url[0]}\""
