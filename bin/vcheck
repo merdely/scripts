@@ -600,7 +600,8 @@ curl_api() { # check_function
     #   "${url[0]}"
     netrc=$(maketemp)
     printf 'machine %s login "%s" password "%s"' "${url[0]}" "${username[0]}" "${password[0]}" > "$netrc"
-    log -d -d "Running: curl --no-progress-meter -Lo \"$out\" -X GET --netrc-file "$netrc" -n \"${url[0]}\""
+    log -d -d -d "Netrc file: $(cat "$netrc")"
+    log -d -d "Running: curl --no-progress-meter -Lo \"$out\" -X GET --netrc-file \"$netrc\" -n \"${url[0]}\""
     curl --no-progress-meter -Lo "$out" -X GET --netrc-file "$netrc" -n "${url[0]}"
   else
     log -d -d "Running: curl --no-progress-meter -Lo \"$out\" -X GET \"${url[0]}\""
