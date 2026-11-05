@@ -586,6 +586,7 @@ curl_api() { # check_function
   out=$(maketemp)
   (( ${#url[@]} == 0 ))      && { log -e "Could not read $check_name URL from $rcfile" ; return 1 ; }
   if (( ${#apikey[@]} > 0 )); then
+    log -d -d "Running: curl --no-progress-meter -Lo \"$out\" -X GET -H \"Authorization: Bearer \${apikey[0]}\" \"${url[0]}\""
     curl --no-progress-meter -Lo "$out" -X GET -H \
       "Authorization: Bearer ${apikey[0]}" \
       "${url[0]}"
@@ -593,13 +594,16 @@ curl_api() { # check_function
     (( ${#username[@]} == 0 )) && { log -e "Could not read $check_name Username from $rcfile" ; return 1 ; }
     (( ${#password[@]} == 0 )) && { log -e "Could not read $check_name Password from $rcfile" ; return 1 ; }
 
+    log -d -d "Running: curl --no-progress-meter -Lo \"$out\" -X GET -H \"Authorization: Basic TOKEN\' \"${username[0]}\" \"\${password[0]}\"|base64|tr -d '\n')\" \"${url[0]}\""
     curl --no-progress-meter -Lo "$out" -X GET -H \
       "Authorization: Basic $(printf '%s:%s' "${username[0]}" "${password[0]}"|base64|tr -d '\n')" \
       "${url[0]}"
   else
+    log -d -d "Running: curl --no-progress-meter -Lo \"$out\" -X GET \"${url[0]}\""
     curl --no-progress-meter -Lo "$out" -X GET "${url[0]}"
   fi
   log -d -d "Curl output: $out"
+  log -d -d -d "$(cat "$out")"
   cat "$out"
 }
 
