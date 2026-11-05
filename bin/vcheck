@@ -599,7 +599,10 @@ curl_api() { # check_function
     #   "Authorization: Basic $(printf '%s:%s' "${username[0]}" "${password[0]}"|base64|tr -d '\n')" \
     #   "${url[0]}"
     netrc=$(maketemp)
-    printf 'machine %s login "%s" password "%s"' "${url[0]}" "${username[0]}" "${password[0]}" > "$netrc"
+    machine=${url[0]#http://}
+    machine=${machine#https://}
+    machine=${machine%%/*}
+    printf 'machine %s login "%s" password "%s"' "$machine" "${username[0]}" "${password[0]}" > "$netrc"
     log -d -d -d "Netrc file: $(cat "$netrc")"
     log -d -d "Running: curl --no-progress-meter -Lo \"$out\" -X GET --netrc-file \"$netrc\" -n \"${url[0]}\""
     curl --no-progress-meter -Lo "$out" -X GET --netrc-file "$netrc" -n "${url[0]}"
