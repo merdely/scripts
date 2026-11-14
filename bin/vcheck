@@ -1601,7 +1601,7 @@ execute_check() { # utility_function
   if [[ -n "$out" && -n "$prejqfilter" ]]; then
     check_prog jq || return 1
     log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $prejqfilter'"
-    out=$(jq -rn --argjson j "$out" "\$j | $prejqfilter")
+    out=$(jq -r "$prejqfilter" <<< "$out")
     log -d -d -d "jq output: $out"
   fi
 
@@ -1630,7 +1630,7 @@ execute_check() { # utility_function
   if [[ -n "$out" && -n "$postjqfilter" ]]; then
     check_prog jq || return 1
     log -d -d -d "Using jq -rn --argjson j '\$out' '\$j | $postjqfilter'"
-    out=$(jq -rn --argjson j "$out" "\$j | $postjqfilter")
+    out=$(jq -r "$postjqfilter" <<< "$out")
     log -d -d -d "jq output: $out"
   fi
 
